@@ -7920,6 +7920,9 @@
           "AvailableValue": {
             "type": "string"
           },
+          "DerivedFromManualFacts": {
+            "type": "boolean"
+          },
           "Join": {
             "type": "string"
           },
@@ -11711,6 +11714,16 @@
           },
           "Runtime": {
             "type": "integer"
+          },
+          "SeriesStatus": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "SpokenLanguages": {
             "type": "array",

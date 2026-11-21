@@ -20,14 +20,24 @@ var (
 		`(?i)(?:^|[^a-z0-9])(?:S(\d+)[ ._-]*)?E(\d+)(?:v\d+)?((?:[ ._-]*E\d+(?:v\d+)?|\s*[-+&]\s*(?:S\d+[ ._-]*)?E?\d+(?:v\d+)?)*)(?:\b|_)`,
 	)
 	coverageMemberPattern = regexp.MustCompile(`(?i)([ ._-]*E|\s*[-+&]\s*(?:S(\d+)[ ._-]*)?E?)(\d+)(?:v\d+)?`)
-	seasonLabelSeparators = strings.NewReplacer(".", " ", "_", " ", "-", " ")
-	seasonLabelWords      = regexp.MustCompile(`(?i)\b(?:season|series)\s*(\d{1,4})\b`)
+	seasonLabelSeparators = strings.NewReplacer(".", " ", "-", " ")
+	seasonLabelWords      = regexp.MustCompile(`(?i)\b(?:seasons?|series)\s*(\d{1,4})\b`)
+	seasonLabelChain      = regexp.MustCompile(`(?i)\b(?:S(?:\d{2}|\d{4})){2,}(?:E\d+(?:v\d+)?)*\b`)
+	seasonLabelRange      = regexp.MustCompile(
+		`(?i)(?:^|[^a-z0-9])(seasons?|series|s)[ .-]*(\d{1,4})([ .]*(?:[-–—,&+]|\b(?:to|through|and)\b)[ .]*)(s?)(\d{1,4})\b(?:\s*\(\d+[pi]\))?`,
+	)
 )
 
 // SeasonLabelStatus checks explicit season labels in a filename against one
-// selected season. Unlabeled filenames can still supply episode-only evidence.
-func SeasonLabelStatus(file string, season int) api.MetadataEvidenceStatus {
-	name := seasonLabelSeparators.Replace(filepath.Base(file))
+// selected season. A season range must contain only that season. A known
+// individual episode can disambiguate a resolution-suffixed absolute label.
+// Unlabeled filenames can still supply episode-only evidence.
+func SeasonLabelStatus(file string, season, episode int) api.MetadataEvidenceStatus {
+	base := strings.ReplaceAll(filepath.Base(file), "_", ".")
+	name := seasonLabelSeparators.Replace(base)
+	name = seasonLabelChain.ReplaceAllStringFunc(name, func(chain string) string {
+		return strings.ReplaceAll(strings.ToUpper(chain), "S", " S")
+	})
 	status := api.MetadataEvidenceStatusUnavailable
 	compact := false
 	for _, pattern := range []*regexp.Regexp{seasonEpisodePattern, seasonOnlyPattern, seasonLabelWords} {
@@ -44,6 +54,31 @@ func SeasonLabelStatus(file string, season int) api.MetadataEvidenceStatus {
 			compact = compact || pattern != seasonLabelWords
 			status = api.MetadataEvidenceStatusComplete
 		}
+	}
+	for _, match := range seasonLabelRange.FindAllStringSubmatch(withoutDailyDates(base), -1) {
+		compactRange := strings.EqualFold(match[1], "s")
+		if compactRange && match[4] == "" {
+			// A bare separator after S01 can introduce an episode or an air date.
+			switch strings.Trim(strings.ToLower(match[3]), " .") {
+			case "to", "through", "and":
+			default:
+				continue
+			}
+		}
+		start, end := parseInt(match[2]), parseInt(match[5])
+		first, last := min(start, end), max(start, end)
+		if compact && !compactRange && first >= 1900 && last <= 2099 && (season < first || season > last) {
+			// A year range outside the compact season can belong to the title.
+			continue
+		}
+		if episode > 0 && season == start && episode == end && strings.EqualFold(match[1], "season") && match[4] == "" &&
+			strings.TrimSpace(match[3]) == "-" && strings.Contains(match[3], " - ") && animeResolutionPattern.MatchString(match[0]) {
+			continue
+		}
+		if start != season || end != season {
+			return api.MetadataEvidenceStatusContradictory
+		}
+		status = api.MetadataEvidenceStatusComplete
 	}
 	return status
 }
@@ -157,13 +192,17 @@ func Coverage(season int, seasonKnown bool, source string, files []string, inven
 	return facts
 }
 
-func coverageMembers(season int, name string) ([]int, api.MetadataEvidenceStatus) {
-	name = strings.ReplaceAll(name, "_", ".")
+func withoutDailyDates(name string) string {
 	for _, date := range dailyPattern.FindAllString(name, -1) {
 		if parseDailyDate(date) != "" {
 			name = strings.ReplaceAll(name, date, "")
 		}
 	}
+	return name
+}
+
+func coverageMembers(season int, name string) ([]int, api.MetadataEvidenceStatus) {
+	name = withoutDailyDates(strings.ReplaceAll(name, "_", "."))
 	matches := coveragePattern.FindAllStringSubmatch(name, -1)
 	if len(matches) == 0 {
 		return nil, api.MetadataEvidenceStatusUnavailable

@@ -60,6 +60,7 @@ type TMDBClient interface {
 	FindByExternalID(ctx context.Context, input tmdb.FindInput) (tmdb.FindResult, error)
 	SearchID(ctx context.Context, input tmdb.SearchInput) (tmdb.SearchOutcome, error)
 	FetchMetadata(ctx context.Context, input tmdb.MetadataInput) (tmdb.MetadataResult, error)
+	GetSeriesStatus(ctx context.Context, tmdbID int) (string, error)
 	GetEpisodeDetails(ctx context.Context, tmdbID, season, episode int) (tmdb.EpisodeDetails, error)
 	GetSeasonDetails(ctx context.Context, tmdbID, season int) (tmdb.SeasonDetails, error)
 	DailyToSeasonEpisode(ctx context.Context, tmdbID int, date time.Time) (int, int, error)
@@ -1399,6 +1400,18 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	}
 	meta = s.applyTVEpisodeMetadata(ctx, meta, &downstreamIDs, &metadata, tmdbClient, tvdbClient, tvmazeClient)
 	ids.Category = downstreamIDs.Category
+	if tmdbClient != nil && meta.TVPack && ids.Category == api.CanonicalCategoryTV && !keepProvider(effectiveOverrides.KeepTMDB) &&
+		usableTMDBMetadata(metadata.TMDB, downstreamIDs.TMDBID, ids.Category) &&
+		metadata.TMDB.SeriesStatus == nil {
+		status, err := tmdbClient.GetSeriesStatus(ctx, downstreamIDs.TMDBID)
+		if err == nil {
+			cached := *metadata.TMDB
+			cached.SeriesStatus = new(status)
+			metadata.TMDB = &cached
+		} else {
+			logger.Debugf("metadata: tmdb series status lookup failed: %v", err)
+		}
+	}
 
 	needsPTBR := requiresTMDBLocalizedPTBRRefresh(meta.MetadataRequirements, ids.Category, meta, downstreamIDs, metadata) ||
 		s.registry.NeedsLocalizedMetadata(meta.EvidenceTrackers, "pt-BR") || s.registry.NeedsLocalizedMetadata(meta.MatchedEvidenceTrackers, "pt-BR")
@@ -2540,6 +2553,7 @@ func mapTMDBMetadata(ids api.ExternalIdentity, result tmdb.MetadataResult) *api.
 		ReleaseDate:         result.ReleaseDate,
 		FirstAirDate:        result.FirstAirDate,
 		LastAirDate:         result.LastAirDate,
+		SeriesStatus:        result.SeriesStatus,
 		OriginCountry:       append([]string{}, result.OriginCountry...),
 		OriginalLanguage:    result.OriginalLanguage,
 		SpokenLanguages:     append([]string(nil), result.SpokenLanguages...),

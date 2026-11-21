@@ -18,7 +18,7 @@ import (
 )
 
 func validationPolicy() trackers.ValidationPolicyBinding {
-	return trackers.ValidationPolicyBinding{ID: "unit3d-sam-policy-v1", Check: checkRequirements}
+	return trackers.ValidationPolicyBinding{ID: "unit3d-sam-policy-v2", Check: checkRequirements}
 }
 
 func checkRequirements(ctx context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
@@ -87,6 +87,9 @@ func packageFailure(subject api.TrackerValidationSubject) string {
 		return "TV uploads must contain only the selected season"
 	}
 	if subject.TVPack {
+		if disc {
+			return "a full-disc season pack requires verified season membership for every submitted programme"
+		}
 		if !verifiedSeasonPack(subject) {
 			return "season packs require verified coverage of the selected season for every main video"
 		}
@@ -98,7 +101,7 @@ func packageFailure(subject api.TrackerValidationSubject) string {
 		return "individual TV uploads must contain exactly one episode"
 	}
 	if slices.ContainsFunc(subject.FileList, func(file string) bool {
-		return seasonep.IsVideoFile(file) && seasonep.SeasonLabelStatus(file, subject.SeasonInt) == api.MetadataEvidenceStatusContradictory
+		return seasonep.IsVideoFile(file) && seasonep.SeasonLabelStatus(file, subject.SeasonInt, subject.EpisodeInt) == api.MetadataEvidenceStatusContradictory
 	}) {
 		return "TV uploads must contain only the selected season"
 	}
@@ -107,7 +110,7 @@ func packageFailure(subject api.TrackerValidationSubject) string {
 
 func verifiedSeasonPack(subject api.TrackerValidationSubject) bool {
 	season := subject.SeasonInt
-	sourceLabel := seasonep.SeasonLabelStatus(subject.SourcePath, season)
+	sourceLabel := seasonep.SeasonLabelStatus(subject.SourcePath, season, 0)
 	coverage := seasonep.Coverage(
 		season,
 		season > 0 || sourceLabel == api.MetadataEvidenceStatusComplete,
@@ -126,7 +129,7 @@ func verifiedSeasonPack(subject api.TrackerValidationSubject) bool {
 			continue
 		}
 		found = true
-		label := seasonep.SeasonLabelStatus(file, season)
+		label := seasonep.SeasonLabelStatus(file, season, 0)
 		if label == api.MetadataEvidenceStatusContradictory {
 			return false
 		}
@@ -144,6 +147,9 @@ func verifiedSeasonPack(subject api.TrackerValidationSubject) bool {
 
 func prohibitedDiscExtras(subject api.TrackerValidationSubject) bool {
 	facts := subject.PackageFacts
+	if facts.ExternalFileCount != 0 {
+		return true
+	}
 	if facts.KnownFileCount == 1 && slices.Contains(facts.Extensions, ".iso") {
 		return false
 	}
@@ -188,7 +194,7 @@ func fileNameWords(value string) []string {
 
 func discLayoutFile(source, discType, file, extension string) bool {
 	relative, err := filepath.Rel(source, file)
-	if err != nil || !filepath.IsLocal(relative) {
+	if err != nil {
 		return false
 	}
 	switch strings.ToUpper(discType) {
@@ -277,6 +283,9 @@ func completedSeries(subject api.TrackerValidationSubject) (ended, known bool) {
 	}
 	identity := subject.Identity
 	var statuses []string
+	if data := currentSAMTMDB(subject.SourcePath, identity, metadata); data != nil && data.SeriesStatus != nil {
+		statuses = append(statuses, *data.SeriesStatus)
+	}
 	if metadata.TVDB != nil && identity.TVDBID > 0 && metadata.TVDB.TVDBID == identity.TVDBID {
 		statuses = append(statuses, metadata.TVDB.Status)
 	}

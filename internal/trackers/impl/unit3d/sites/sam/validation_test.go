@@ -45,6 +45,23 @@ func TestSAMValidatesContentAndLanguageEvidence(t *testing.T) {
 		rule string
 	}{
 		{name: "allowed ended pack"},
+		{"ended series with only TMDB metadata", func(s *api.UploadSubject) {
+			s.Identity.TMDBID = 789
+			s.ProviderMetadata.TVDB = nil
+			s.ProviderMetadata.TMDB = &api.TMDBMetadata{
+				TMDBID:       789,
+				Category:     "TV",
+				SeriesStatus: new("Ended"),
+			}
+		}, ""},
+		{"ongoing TMDB status conflicts with ended TVDB status", func(s *api.UploadSubject) {
+			s.Identity.TMDBID = 789
+			s.ProviderMetadata.TMDB = &api.TMDBMetadata{
+				TMDBID:       789,
+				Category:     "TV",
+				SeriesStatus: new("Returning Series"),
+			}
+		}, "sam_pack_status"},
 		{"same-season numbered parts", func(s *api.UploadSubject) {
 			s.PackageInventory.Files[0] = filepath.Join(s.SourcePath, "Example.S01.Part.1.mkv")
 			s.PackageInventory.Files[1] = filepath.Join(s.SourcePath, "Example.S01.Part.2.mkv")
@@ -56,6 +73,29 @@ func TestSAMValidatesContentAndLanguageEvidence(t *testing.T) {
 		{"spelled-out conflicting season", func(s *api.UploadSubject) {
 			s.PackageInventory.Files[0] = filepath.Join(s.SourcePath, "Example.Season 01 E01.mkv")
 			s.PackageInventory.Files[1] = filepath.Join(s.SourcePath, "Example.Series 02 E02.mkv")
+		}, "sam_package"},
+		{"season range starts with the selected season", func(s *api.UploadSubject) {
+			s.PackageInventory.Files[0] = filepath.Join(s.SourcePath, "Example.Season.01-02.E01.mkv")
+		}, "sam_package"},
+		{"plural season range starts with the selected season", func(s *api.UploadSubject) {
+			s.PackageInventory.Files[0] = filepath.Join(s.SourcePath, "Example.Seasons.01-02.E01.mkv")
+		}, "sam_package"},
+		{"range spelled out cannot establish membership for a part", func(s *api.UploadSubject) {
+			s.PackageInventory.Files[0] = filepath.Join(s.SourcePath, "Example.Seasons.01.to.03.mkv")
+		}, "sam_package"},
+		{"compact season range with an explicit connector", func(s *api.UploadSubject) {
+			s.PackageInventory.Files[0] = filepath.Join(s.SourcePath, "Example.S01.to.03.Part.1.mkv")
+		}, "sam_package"},
+		{"adjacent compact season labels list multiple seasons", func(s *api.UploadSubject) {
+			s.PackageInventory.Files[0] = filepath.Join(s.SourcePath, "Example.S01S02.E01.mkv")
+		}, "sam_package"},
+		{"adjacent seasons with an episode include the entire chain", func(s *api.UploadSubject) {
+			s.PackageInventory.Files[0] = filepath.Join(s.SourcePath, "Example.S01S01S02E01.mkv")
+		}, "sam_package"},
+		{"selected year-numbered season is part of a range", func(s *api.UploadSubject) {
+			s.SeasonInt = 2025
+			s.PackageInventory.Files[0] = filepath.Join(s.SourcePath, "Example.Seasons.2025-2026.S2025E01.mkv")
+			s.PackageInventory.Files[1] = filepath.Join(s.SourcePath, "Example.S2025E02.mkv")
 		}, "sam_package"},
 		{"unpadded season may identify a part without an episode number", func(s *api.UploadSubject) {
 			s.PackageInventory.Files[0] = filepath.Join(s.SourcePath, "Example.Season 1 Part 1.mkv")
@@ -212,6 +252,19 @@ func TestSAMUsesSelectedDVDProgrammeInsteadOfDiscFileCounts(t *testing.T) {
 	if reason := packageFailure(episodicDisc); reason != "" {
 		t.Fatalf("one episode split across VOB files rejected: %s", reason)
 	}
+	pack := episodicDisc
+	pack.TVPack = true
+	if reason := packageFailure(pack); !strings.Contains(reason, "every submitted programme") {
+		t.Fatalf("disc pack without programme membership evidence: %q", reason)
+	}
+	iso := episode
+	iso.TVPack = true
+	iso.DiscType = "BDMV"
+	iso.SourcePath = filepath.Join(root, "Example.S01.3D.iso")
+	iso.PackageInventory.Files = []string{iso.SourcePath}
+	if reason := packageFailure(api.NewTrackerValidationSubject(iso, "SAM")); !strings.Contains(reason, "every submitted programme") {
+		t.Fatalf("season-labeled ISO without programme membership evidence: %q", reason)
+	}
 	episodicDisc.MultipleEpisodes = true
 	if reason := packageFailure(episodicDisc); reason == "" {
 		t.Fatal("a multi-episode DVD passed individual episode validation")
@@ -286,6 +339,7 @@ func TestSAMAcceptsNativeBluRayResourcesAndRejectsUnrelatedFiles(t *testing.T) {
 	for _, file := range []string{
 		filepath.Join(root, "BDMV", "notes.txt"),
 		filepath.Join(root, "BDMV", "Other", "Another.Movie.mp3"),
+		filepath.Join(t.TempDir(), "External.srt"),
 	} {
 		withExtra := meta
 		withExtra.PackageInventory.Files = append(slices.Clone(meta.PackageInventory.Files), file)
@@ -321,16 +375,29 @@ func TestSAMRejectsSelectedAuxiliaryVideoWithoutRejectingFeatureTitles(t *testin
 func TestSAMVerifiesSpelledOutSeasonForIndividualEpisode(t *testing.T) {
 	for _, test := range []struct {
 		filename string
+		episode  int
 		valid    bool
 	}{
-		{"Example.Season 01 E01.mkv", true},
-		{"Example.Series 02 E01.mkv", false},
-		{"Example.Season 2 E01.mkv", false},
-		{"Example.Series.2025.S01E01.mkv", true},
+		{"Example.Season 01 E01.mkv", 1, true},
+		{"Example.Series 02 E01.mkv", 1, false},
+		{"Example.Season 2 E01.mkv", 1, false},
+		{"Example.Season.01-03.E01.mkv", 1, false},
+		{"Example.S01-S03.E01.mkv", 1, false},
+		{"Example.Season.01-2026.01.02.E02.mkv", 2, true},
+		{"Example.Season.01-2026.01.02_E02.mkv", 2, true},
+		{"Example.S01-2026.01.02.E02.mkv", 2, true},
+		{"[GRP] Example S01 - 02 (1080p).mkv", 2, true},
+		{"[GRP] Example Season 01 - 102 (1080p).mkv", 102, true},
+		{"[GRP] Example Seasons 01 - 102 (1080p).mkv", 102, false},
+		{"[GRP] Example Season 01 - S102 (1080p).mkv", 102, false},
+		{"[GRP] Example Season - 01 to 102 (1080p).mkv", 102, false},
+		{"Example.Series.01-01.E01.mkv", 1, true},
+		{"Example.Series.2025.S01E01.mkv", 1, true},
+		{"Example.Series.2025-2026.S01E01.mkv", 1, true},
 	} {
 		subject := samSeasonPack(t)
 		subject.TVPack = false
-		subject.EpisodeInt = 1
+		subject.EpisodeInt = test.episode
 		subject.PackageInventory.Files = []string{filepath.Join(subject.SourcePath, test.filename)}
 		if reason := packageFailure(api.NewTrackerValidationSubject(subject, "SAM")); (reason == "") != test.valid {
 			t.Errorf("%s validity = %t, want %t (reason %q)", test.filename, reason == "", test.valid, reason)

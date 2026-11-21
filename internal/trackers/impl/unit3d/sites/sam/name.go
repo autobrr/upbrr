@@ -18,7 +18,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/sam/v3", trackers.StructuredNamePolicy{Defaults: applyNameDefaults})
+	return trackers.StructuredReleaseNamePolicy("unit3d/sam/v4", trackers.StructuredNamePolicy{Defaults: applyNameDefaults})
 }
 
 func applyNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, cfg config.TrackerConfig) error {
@@ -34,6 +34,7 @@ func applyNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, cfg 
 	if err := applySAMYear(editor, meta); err != nil {
 		return err
 	}
+	editor.AllowDerivedAudioMarkerDefaults()
 	if err := editor.Omit(api.NameRoleDualAudio); err != nil {
 		return fmt.Errorf("reset SAM audio marker: %w", err)
 	}
@@ -43,6 +44,14 @@ func applyNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, cfg 
 	}
 	if err := unit3d.ApplyLocalizedAudioMarker(editor, meta, cfg, marker); err != nil {
 		return fmt.Errorf("apply SAM audio marker: %w", err)
+	}
+	if group, ok := editor.Component(api.NameRoleGroup); !ok || !group.Present {
+		roles := editor.PresentRoles()
+		if len(roles) > 0 {
+			if err := editor.InsertAfter(api.NameRoleDualAudio, marker, roles[len(roles)-1]); err != nil {
+				return fmt.Errorf("append SAM audio marker: %w", err)
+			}
+		}
 	}
 	return nil
 }
@@ -60,7 +69,7 @@ func applySAMEnglishTitle(editor *trackers.NameEditor, meta api.UploadSubject) e
 		meta.Identity.TVDBID > 0 && tvdb.TVDBID == meta.Identity.TVDBID {
 		english = strings.TrimSpace(tvdb.NameEnglish)
 	}
-	if data := currentSAMTMDB(meta); english == "" && data != nil {
+	if data := currentSAMTMDB(meta.SourcePath, meta.Identity, meta.ProviderMetadata); english == "" && data != nil {
 		english = samTMDBEnglishTitle(data.LocalizedTitles)
 	}
 	if data := meta.ProviderMetadata.IMDB; english == "" && data != nil && meta.Identity.IMDBID > 0 && data.IMDBID == meta.Identity.IMDBID {
@@ -117,13 +126,12 @@ func samIMDBEnglishTitle(akas []api.IMDBAKA) string {
 	return ""
 }
 
-func currentSAMTMDB(meta api.UploadSubject) *api.TMDBMetadata {
-	data := meta.ProviderMetadata.TMDB
-	if data == nil || meta.Identity.TMDBID <= 0 || data.TMDBID != meta.Identity.TMDBID ||
-		!meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) {
+func currentSAMTMDB(sourcePath string, identity api.ExternalIdentity, metadata api.SourceScopedMetadata) *api.TMDBMetadata {
+	data := metadata.TMDB
+	if data == nil || identity.TMDBID <= 0 || data.TMDBID != identity.TMDBID || !metadata.IsCurrentFor(sourcePath, identity) {
 		return nil
 	}
-	if category, err := api.NormalizeCanonicalCategory(data.Category); err != nil || category != meta.Identity.Category {
+	if category, err := api.NormalizeCanonicalCategory(data.Category); err != nil || category != identity.Category {
 		return nil
 	}
 	return data
@@ -151,7 +159,7 @@ func applySAMYear(editor *trackers.NameEditor, meta api.UploadSubject) error {
 	}
 	year := trackers.PreferredYear(meta, 0)
 	if year == 0 && !meta.EffectiveMetadata.YearProvenance.IsManual() {
-		if data := currentSAMTMDB(meta); data != nil {
+		if data := currentSAMTMDB(meta.SourcePath, meta.Identity, meta.ProviderMetadata); data != nil {
 			year = data.Year
 		}
 	}

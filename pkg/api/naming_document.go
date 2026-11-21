@@ -76,8 +76,11 @@ type ReleaseNameComponent struct {
 	AvailableValue string
 	Present        bool
 	Manual         bool
-	Join           string
-	AttachTo       []ReleaseNameRole `json:"AttachTo,omitempty"`
+	// DerivedFromManualFacts identifies audio markers derived from language corrections
+	// whose presentation was not explicitly overridden.
+	DerivedFromManualFacts bool `json:",omitempty"`
+	Join                   string
+	AttachTo               []ReleaseNameRole `json:"AttachTo,omitempty"`
 }
 
 // ReleaseNameDocument is the canonical structured representation of one

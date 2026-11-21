@@ -2037,6 +2037,7 @@ export type ReleaseFeature = string;
 export type ReleaseNameComponent = Readonly<{
   AttachTo?: readonly ReleaseNameRole[];
   AvailableValue: string;
+  DerivedFromManualFacts?: boolean;
   Join: string;
   Manual: boolean;
   Present: boolean;
@@ -2822,6 +2823,7 @@ export type TMDBMetadata = Readonly<{
   ReleaseDate: string;
   RetrievedAKA: string;
   Runtime: number;
+  SeriesStatus?: string | null;
   SpokenLanguages?: readonly string[];
   TMDBID: number;
   TMDBLogo: string;

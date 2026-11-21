@@ -414,6 +414,10 @@ func (s *stubTMDB) FetchAniListMetadata(_ context.Context, malID int) (tmdb.AniL
 	return s.anilistMetadata, nil
 }
 
+func (s *stubTMDB) GetSeriesStatus(_ context.Context, _ int) (string, error) {
+	return "", internalerrors.ErrNotFound
+}
+
 func (s *stubTMDB) GetEpisodeDetails(_ context.Context, _, _, _ int) (tmdb.EpisodeDetails, error) {
 	s.episodeCalls++
 	return s.episodeDetails, nil

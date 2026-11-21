@@ -2462,16 +2462,20 @@ func (m *BlurayMetadata) SelectCandidate(releaseID string, auto bool, reason str
 // TMDBMetadata is the shared TMDB metadata snapshot returned to CLI and WebUI
 // callers during upload preparation and review.
 type TMDBMetadata struct {
-	TMDBID              int
-	IMDBID              int
-	TVDBID              int
-	Category            string
-	Title               string
-	OriginalTitle       string
-	Year                int
-	ReleaseDate         string
-	FirstAirDate        string
-	LastAirDate         string
+	TMDBID        int
+	IMDBID        int
+	TVDBID        int
+	Category      string
+	Title         string
+	OriginalTitle string
+	Year          int
+	ReleaseDate   string
+	FirstAirDate  string
+	LastAirDate   string
+	// SeriesStatus is the matched television record's reported lifecycle status.
+	// A nil value means the status has not been collected. An empty status was
+	// collected from a record that did not report its lifecycle.
+	SeriesStatus        *string `json:",omitempty"`
 	OriginCountry       []string
 	OriginalLanguage    string
 	Overview            string
