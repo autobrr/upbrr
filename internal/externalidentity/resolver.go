@@ -24,7 +24,7 @@ import (
 
 // ContractVersion changes whenever identity resolution semantics become
 // incompatible with a previously resolved identity.
-const ContractVersion = "external-identity-v16-tmdb-spoken-languages"
+const ContractVersion = "external-identity-v17-tentative-imdb"
 
 // CompatibleStoredIdentity preserves manual pins and clears while discarding
 // automatic IDs and dependencies produced before the current identity contract.
@@ -542,6 +542,9 @@ func CandidateDiagnostics(value []api.ExternalIdentityCandidate) []api.Preparati
 		category, _ := api.NormalizeCanonicalCategory(string(candidate.Category))
 		candidate.Provider = provider
 		candidate.Category = category
+		if candidate.TentativeConfidence != nil {
+			candidate.TentativeConfidence = new(*candidate.TentativeConfidence)
+		}
 		candidate.Cast = append([]string{}, candidate.Cast...)
 		candidate.Directors = append([]string{}, candidate.Directors...)
 		candidates = append(candidates, candidate)

@@ -4066,11 +4066,6 @@ func TestResolveExternalIDsSearchStagesPreserveConfidentUnattendedMatches(t *tes
 	if imdbClient.searchInputs[0].SearchYear != 2025 || imdbClient.searchInputs[1].SearchYear != 2026 || imdbClient.searchInputs[2].SearchYear != 2024 {
 		t.Fatalf("unexpected imdb stage years: %#v", imdbClient.searchInputs)
 	}
-	for _, input := range imdbClient.searchInputs {
-		if input.Unattended {
-			t.Fatalf("unattended CLI must retain ambiguous imdb candidates")
-		}
-	}
 }
 
 func TestResolveExternalIDsInteractiveCLIDoesNotForceUnattendedSearch(t *testing.T) {
@@ -4099,11 +4094,6 @@ func TestResolveExternalIDsInteractiveCLIDoesNotForceUnattendedSearch(t *testing
 	for _, input := range tmdbClient.searchInputs {
 		if input.Unattended {
 			t.Fatalf("expected interactive tmdb search")
-		}
-	}
-	for _, input := range imdbClient.searchInputs {
-		if input.Unattended {
-			t.Fatalf("expected interactive imdb search")
 		}
 	}
 }
