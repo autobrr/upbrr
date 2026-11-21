@@ -1157,6 +1157,18 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 					metadata.TMDB.LogoLanguagePreference = logoPreference
 					// This fetch always requests artwork; an empty successful result is reusable.
 					metadata.TMDB.LogoLookupPending = canSelectLogo && !tmdbResult.LogoLookupAttempted
+					if metadata.TMDB.LogoLookupPending {
+						previous := retainedMetadata.TMDB
+						artworkCategory := ids.Category
+						if artworkCategory == "" {
+							artworkCategory = api.CanonicalCategoryMovie // TMDB defaults an unspecified category to movies.
+						}
+						if usableTMDBMetadata(previous, ids.TMDBID, artworkCategory) &&
+							sourceScopedMetadataMatches(retainedMetadata.SourcePath, ids.SourcePath) {
+							metadata.TMDB.Logo, metadata.TMDB.TMDBLogo = previous.Logo, previous.TMDBLogo
+							metadata.TMDB.LogoLanguagePreference = previous.LogoLanguagePreference
+						}
+					}
 				}
 				if tmdbLinksAgree && !overrideIMDB && !clearedIMDB && ids.IMDBID == 0 && tmdbResult.IMDbID != 0 && tmdbResult.IMDbID != rejectedTVDBIMDbID &&
 					tmdbResult.IMDbID != unverifiedTVDBIMDbID {

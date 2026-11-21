@@ -87,6 +87,79 @@ func TestRetainedTMDBMetadataReselectsLogoWithoutTitleRefetch(t *testing.T) {
 	}
 }
 
+func TestTMDBTitleRefetchKeepsOnlyMatchingLogoOnLookupFailure(t *testing.T) {
+	const imageURL = "https://image.tmdb.org/t/p/original/"
+	for _, tc := range []struct {
+		name        string
+		previousID  int
+		previousCat string
+		success     bool
+		newLogo     string
+		wantLogo    string
+	}{
+		{"same title on failure", 42, "movie", false, "", "old.png"},
+		{"different title on failure", 41, "movie", false, "", ""},
+		{"different category on failure", 42, "tv", false, "", ""},
+		{"successful replacement", 42, "movie", true, "new.png", "new.png"},
+		{"successful empty result", 42, "movie", true, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := filepath.Join(t.TempDir(), "example.mkv")
+			client := &logoOnlyTMDB{metadata: tmdb.MetadataResult{
+				Title:               "Refetched title",
+				TMDBType:            "Movie",
+				LogoLookupAttempted: tc.success,
+				TMDBLogo:            tc.newLogo,
+			}}
+			if tc.newLogo != "" {
+				client.metadata.Logo = imageURL + tc.newLogo
+			}
+			svc := newTestService(t, &fakeRepo{},
+				WithConfig(config.Config{Description: config.DescriptionSettingsConfig{LogoLanguage: "ja"}}),
+				WithTMDBClient(client),
+				WithIMDBClient(&stubIMDB{}),
+				WithTVDBClient(&stubTVDB{}),
+				WithTVmazeClient(&stubTVmaze{}),
+			)
+			result, err := svc.resolveExternalIdentity(t.Context(), preparationstate.State{
+				SourcePath:      source,
+				StoredDataFresh: true,
+				Identity: api.ExternalIdentity{
+					SourcePath: source,
+					TMDBID:     tc.previousID,
+					Category:   api.CanonicalCategoryMovie,
+				},
+				ExternalIDOverrides: api.ExternalIDOverrides{TMDBID: new(42)},
+				ProviderMetadata: api.SourceScopedMetadata{SourcePath: source, TMDB: &api.TMDBMetadata{
+					TMDBID:                 tc.previousID,
+					Category:               tc.previousCat,
+					Title:                  "Previous title",
+					Logo:                   imageURL + "old.png",
+					TMDBLogo:               "old.png",
+					LogoLookupAttempted:    true,
+					LogoLanguagePreference: "pt",
+				}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantURL, wantPreference := "", "ja"
+			if tc.wantLogo != "" {
+				wantURL = imageURL + tc.wantLogo
+			}
+			if tc.wantLogo == "old.png" {
+				wantPreference = "pt"
+			}
+			got := result.ProviderMetadata.TMDB
+			if got == nil || got.Title != "Refetched title" || got.Logo != wantURL || got.TMDBLogo != tc.wantLogo ||
+				got.LogoLanguagePreference != wantPreference || got.LogoLookupPending == tc.success || client.metaCalls != 1 || client.calls != 0 {
+				t.Fatalf("refetch metadata = %+v, title calls = %d, extra logo calls = %d; want artwork %q, preference %q, and pending=%t",
+					got, client.metaCalls, client.calls, tc.wantLogo, wantPreference, !tc.success)
+			}
+		})
+	}
+}
+
 func TestOrdinaryPreparationRetriesFailedLogoPreferenceAfterRestart(t *testing.T) {
 	fixture := newCorrectionEvidenceFixture(t)
 	fixture.input.Instructions.Identity.KeepTMDB = new(true)
