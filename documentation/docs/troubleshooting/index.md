@@ -112,6 +112,10 @@ Multi-disc support accepts extracted, homogeneous DVD or BDMV directory collecti
 
 Mixed DVD/BDMV collections are rejected. Nested or multi-disc HD DVD collections are unsupported; only an existing single direct or immediate `HVDVD_TS` layout remains compatible. ISO images and optical drives are not discovered as multi-disc inputs, so extract or copy each disc into a directory layout first. Directory symlinks are also rejected.
 
+For a DVD collection, the first disc with a selected video title supplies the primary MediaInfo
+report. A disc with only fallback IFO data keeps its own diagnostic report but cannot become the
+primary. If no disc has a selected title, there is no primary report.
+
 ## Automatic DVD menu capture fails
 
 Automatic capture accepts an extracted DVD directory containing `VIDEO_TS`, `VIDEO_TS` itself, or a supported multi-disc DVD collection parent. Multi-disc results are grouped by disc; a partial-coverage warning means the collection-wide capture cap or available menus left at least one disc uncovered. Automatic capture does not accept ISO images, optical drives, or Blu-ray menus.

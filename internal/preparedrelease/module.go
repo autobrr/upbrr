@@ -224,7 +224,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 		ctx,
 		api.NewPreparationProgressUpdate(api.PreparationPhasePreparedCache, api.PreparationProgressRunning, "Checking prepared generation compatibility."),
 	)
-	compatibility, err := preparationCompatibility(input, sourceFingerprint, resolved.Corrections.Revision)
+	compatibility, err := preparationCompatibilityForSource(input, sourceFingerprint, resolved.Corrections.Revision, layout.DiscType)
 	if err != nil {
 		api.EmitPreparationProgress(
 			ctx,
@@ -479,7 +479,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 		resolved.Corrections.Revision,
 		finalCorrections,
 		func(revision uint64) (api.PreparationCompatibility, error) {
-			committedCompatibility, err := preparationCompatibility(input, sourceFingerprint, revision)
+			committedCompatibility, err := preparationCompatibilityForSource(input, sourceFingerprint, revision, layout.DiscType)
 			if err == nil {
 				release.Compatibility = committedCompatibility
 			}

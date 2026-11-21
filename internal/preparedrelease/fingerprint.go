@@ -332,6 +332,18 @@ func preparationCompatibility(input api.PrepareInput, sourceFingerprint string, 
 	}, nil
 }
 
+// preparationCompatibilityForSource retires DVD generations whose root reports
+// could have been written by a different disc than the canonical title.
+func preparationCompatibilityForSource(
+	input api.PrepareInput, sourceFingerprint string, revision uint64, discType string,
+) (api.PreparationCompatibility, error) {
+	compatibility, err := preparationCompatibility(input, sourceFingerprint, revision)
+	if err == nil && discType == "DVD" {
+		compatibility.PolicyFingerprint, err = fingerprintJSON([]string{"dvd-primary-report-v1", compatibility.PolicyFingerprint})
+	}
+	return compatibility, err
+}
+
 func fingerprintJSON(value any) (string, error) {
 	payload, err := json.Marshal(value)
 	if err != nil {

@@ -805,6 +805,7 @@ func (s *Service) collectDiscEvidence(
 	}
 
 	resources := make([]preparationstate.DiscResource, 0, len(request.Layout.Discs))
+	var dvdPrimarySelected bool
 	for _, disc := range request.Layout.Discs {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("metadata: disc analysis canceled: %w", err)
@@ -903,21 +904,21 @@ func (s *Service) collectDiscEvidence(
 				fingerprint += ":" + request.Input.VerifiedSource.Identity.Digest
 			}
 			reportDir := artifactDir
-			if len(resources) == 0 {
-				// The selected primary disc owns the release-root reports too.
+			if disc.Type != "DVD" && len(resources) == 0 {
 				reportDir = releaseTemp
 			}
 			miProgress := progress.Begin(ctx, "Inspect disc MediaInfo reports")
 			miProgress.Update(len(resources), len(request.Layout.Discs), "Reports may be retained or newly inspected.")
 			result, err := s.mi.Export(ctx, mediainfo.Request{
-				SourcePath:        disc.Root,
-				OwnerSource:       meta.SourcePath,
-				SourceFingerprint: fingerprint,
-				DiscType:          disc.Type,
-				VideoPath:         resource.VideoPath,
-				TempRoot:          tmpRoot,
-				ArtifactDir:       reportDir,
-				Release:           meta.Release,
+				SourcePath:           disc.Root,
+				OwnerSource:          meta.SourcePath,
+				SourceFingerprint:    fingerprint,
+				DiscType:             disc.Type,
+				VideoPath:            resource.VideoPath,
+				TempRoot:             tmpRoot,
+				ArtifactDir:          reportDir,
+				PreferDVDPrimaryRoot: disc.Type == "DVD" && !dvdPrimarySelected,
+				Release:              meta.Release,
 			})
 			miMessage := "Disc MediaInfo reports ready (retained or inspected)."
 			if err != nil {
@@ -937,6 +938,7 @@ func (s *Service) collectDiscEvidence(
 			resource.DVDVOBMediaInfoJSON = result.VOBJSON
 			resource.DVDVOBMediaInfoText = result.VOBText
 			if disc.Type == "DVD" {
+				dvdPrimarySelected = dvdPrimarySelected || result.VOBSet != ""
 				doc, err := loadMediaInfoDocFromJSONPayload(result.VOBJSON)
 				if err != nil {
 					return fmt.Errorf("metadata: parse DVD title MediaInfo: %w", err)
@@ -950,6 +952,11 @@ func (s *Service) collectDiscEvidence(
 		resources = append(resources, resource)
 	}
 
+	if request.Layout.DiscType == "DVD" && s.mi != nil && !dvdPrimarySelected {
+		if err := mediainfo.WithdrawPrimaryReports(ctx, releaseTemp); err != nil {
+			return fmt.Errorf("metadata: withdraw unusable DVD primary reports: %w", err)
+		}
+	}
 	meta.Discs = resources
 	applyPrimaryDiscCompatibility(meta)
 	return nil
@@ -1029,6 +1036,9 @@ func applyPrimaryDiscCompatibility(meta *preparationstate.State) {
 		meta.FileList = append(meta.FileList, disc.FileList...)
 	}
 	for _, disc := range meta.Discs {
+		if disc.Type == "DVD" && strings.TrimSpace(disc.DVDVOBSet) == "" {
+			continue
+		}
 		if len(disc.SelectedPlaylists) == 0 && strings.TrimSpace(disc.DVDVOBSet) == "" &&
 			strings.TrimSpace(disc.VideoPath) == "" && strings.TrimSpace(disc.DVDIFOPath) == "" && strings.TrimSpace(disc.MediaInfoJSONPath) == "" {
 			continue

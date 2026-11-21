@@ -41,7 +41,9 @@ type Request struct {
 	Secondary bool
 	// ArtifactDir optionally selects a directory within the owning release folder.
 	ArtifactDir string
-	Release     api.ReleaseInfo
+	// PreferDVDPrimaryRoot places a selected DVD title at the release root, not a fallback IFO.
+	PreferDVDPrimaryRoot bool
+	Release              api.ReleaseInfo
 }
 
 // Result identifies persisted MediaInfo artifacts and optional DVD evidence.
@@ -125,7 +127,7 @@ func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 		}
 		tmpDir = filepath.Join(releaseDir, "mediainfo", fmt.Sprintf("%x", sha256.Sum256([]byte(canonical))))
 	}
-	if req.ArtifactDir != "" {
+	if req.ArtifactDir != "" && (!req.PreferDVDPrimaryRoot || target.VOBSet == "") {
 		tmpDir = filepath.Clean(req.ArtifactDir)
 	}
 	if !pathutil.IsWithinRoot(releaseDir, tmpDir) {
@@ -351,6 +353,9 @@ func selectDVDTarget(ctx context.Context, source string) (targetSelection, error
 	ifo, vobPath, vobSet, err := selectBestIFO(ctx, videoTS)
 	if err != nil {
 		return targetSelection{}, err
+	}
+	if vobPath == "" {
+		vobSet = ""
 	}
 
 	return targetSelection{
