@@ -11632,6 +11632,9 @@
           "Logo": {
             "type": "string"
           },
+          "LogoLanguagePreference": {
+            "type": "string"
+          },
           "LogoLookupAttempted": {
             "type": "boolean"
           },

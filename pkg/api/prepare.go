@@ -42,7 +42,9 @@ type PrepareInput struct {
 	// MetadataRequirements is the tracker-ID-free union of selected metadata demands.
 	// It affects canonical collection but is not a reusable prepared-release fact.
 	MetadataRequirements MetadataRequirementSet `json:"-"`
-	Force                bool
+	// LogoLanguagePreference binds the server-configured TMDB selection order to reuse.
+	LogoLanguagePreference string `json:"-"`
+	Force                  bool
 	// RequirePrepared rejects collection when no compatible prepared generation exists.
 	RequirePrepared bool
 }

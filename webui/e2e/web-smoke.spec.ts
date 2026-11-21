@@ -673,6 +673,35 @@ test("embedded settings omit retired controls and keep path mapping pairs togeth
   }
 });
 
+test("embedded settings save ordered TMDB logo language codes", async ({ page }) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await page.goto(new URL("settings", app.url).toString());
+    await page.getByRole("button", { name: "Description", exact: true }).click();
+    await page.getByLabel("Show advanced", { exact: true }).check();
+    const picker = page.getByRole("button", { name: "Preferred logo languages", exact: true });
+    await picker.click();
+    const search = page.getByRole("searchbox", { name: "Search Preferred logo languages" });
+    await search.fill("Brazil");
+    await page.getByRole("checkbox", { name: /Brazilian Portuguese/ }).check();
+    await search.fill("Japanese");
+    await page.getByRole("checkbox", { name: /Japanese/ }).check();
+    await search.press("Escape");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(
+      page.getByRole("status").filter({ hasText: "Settings saved and applied." }),
+    ).toBeVisible();
+    const response = await page.request.get(new URL("api/app/GetConfig", app.url).toString());
+    expect(response.ok()).toBe(true);
+    expect(JSON.parse(await response.json()).Description.LogoLanguage).toBe("pt,ja");
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 test.describe("Settings help", () => {
   test.use({ hasTouch: true });
 

@@ -2800,6 +2800,7 @@ export type TMDBMetadata = Readonly<{
   Localized: Readonly<Record<string, TMDBLocalizedData>>;
   LocalizedTitles: Readonly<Record<string, string>>;
   Logo: string;
+  LogoLanguagePreference?: string;
   LogoLookupAttempted: boolean;
   MALID: number;
   MismatchedIMDbID: number;

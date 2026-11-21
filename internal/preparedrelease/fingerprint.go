@@ -314,12 +314,14 @@ func preparationCompatibility(input api.PrepareInput, sourceFingerprint string, 
 		Search               api.ClientSearchPolicy
 		MetadataRequirements api.MetadataRequirementSet
 		// Refresh old requested-hash metadata for source validation and wrapper lookup.
-		InfoHashPolicyVersion int `json:",omitempty"`
+		InfoHashPolicyVersion  int    `json:",omitempty"`
+		LogoLanguagePreference string `json:",omitempty"`
 	}{
-		Policy:                input.Policy,
-		Search:                input.Search,
-		MetadataRequirements:  input.MetadataRequirements,
-		InfoHashPolicyVersion: infoHashPolicyVersion,
+		Policy:                 input.Policy,
+		Search:                 input.Search,
+		MetadataRequirements:   input.MetadataRequirements,
+		InfoHashPolicyVersion:  infoHashPolicyVersion,
+		LogoLanguagePreference: input.LogoLanguagePreference,
 	})
 	if err != nil {
 		return api.PreparationCompatibility{}, fmt.Errorf("prepared release: fingerprint policy: %w", err)
