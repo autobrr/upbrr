@@ -190,6 +190,7 @@ func TestTentativeIMDbUsesVerifiedProviderEvidence(t *testing.T) {
 	for _, tc := range []struct {
 		name, category, imdbType                        string
 		tmdbID, tmdbIMDb, sceneIMDb, wantIMDb, wantTMDB int
+		lateMAL                                         int
 		tvdbLinks                                       api.TVDBRemoteLinks
 	}{
 		{
@@ -202,7 +203,8 @@ func TestTentativeIMDbUsesVerifiedProviderEvidence(t *testing.T) {
 			wantTMDB: 42,
 		},
 		{
-			name:      "unknown category defaults to movie before dependent lookup",
+			name:      "unknown category defaults to movie and resolves late linked metadata",
+			lateMAL:   123,
 			imdbType:  "movie",
 			sceneIMDb: 555001,
 			wantIMDb:  555001,
@@ -210,6 +212,7 @@ func TestTentativeIMDbUsesVerifiedProviderEvidence(t *testing.T) {
 		},
 		{
 			name:      "late TMDB resource contradicts the corroborated IMDb ID",
+			lateMAL:   123,
 			imdbType:  "movie",
 			sceneIMDb: 555001,
 			tmdbIMDb:  555009,
@@ -231,6 +234,21 @@ func TestTentativeIMDbUsesVerifiedProviderEvidence(t *testing.T) {
 			tmdbIMDb:  555001,
 			wantTMDB:  42,
 			tvdbLinks: api.TVDBRemoteLinks{Status: api.MetadataEvidenceStatusContradictory, Links: []api.TVDBRemoteLink{{Provider: api.IdentityProviderIMDB, State: "conflicting"}}},
+		},
+		{
+			name:     "IMDb-specific TVDB contradiction blocks confirmation despite sibling mismatch",
+			category: "tv",
+			imdbType: "tvSeries",
+			tmdbIMDb: 555001,
+			wantTMDB: 42,
+			tvdbLinks: api.TVDBRemoteLinks{Status: api.MetadataEvidenceStatusContradictory, Links: []api.TVDBRemoteLink{
+				{
+					Provider: api.IdentityProviderTMDB,
+					State:    "valid",
+					ID:       99,
+				},
+				{Provider: api.IdentityProviderIMDB, State: "conflicting"},
+			}},
 		},
 		{
 			name:      "unrelated TVDB contradiction does not block confirmation",
@@ -286,7 +304,11 @@ func TestTentativeIMDbUsesVerifiedProviderEvidence(t *testing.T) {
 					Title:          "Example",
 					IMDbID:         tc.tmdbIMDb,
 					ExternalIMDbID: tc.tmdbIMDb,
+					MALID:          tc.lateMAL,
 				},
+			}
+			if tc.lateMAL != 0 {
+				tmdbClient.anilistMetadata = tmdb.AniListMetadataResult{MALID: tc.lateMAL, AniListID: 456}
 			}
 			if tc.category == "tv" {
 				tmdbClient.searchOutcome = tmdb.SearchOutcome{TMDBID: 42, Category: "tv"}
@@ -326,6 +348,15 @@ func TestTentativeIMDbUsesVerifiedProviderEvidence(t *testing.T) {
 			if tc.category == "" && tc.wantTMDB != 0 &&
 				(got.Identity.Dependencies.TMDB.IMDBID != tc.wantIMDb || got.ProviderMetadata.TMDB == nil || imdbClient.infoCalls != 1) {
 				t.Fatalf("late TMDB lookup is not derived from one verified IMDb read: %+v; reads=%d", got.Identity, imdbClient.infoCalls)
+			}
+			if tc.lateMAL != 0 && tc.wantTMDB != 0 {
+				if got.Identity.MALID != tc.lateMAL || got.ProviderMetadata.AniList == nil ||
+					got.ProviderMetadata.AniList.AniListID != 456 || tmdbClient.anilistCalls != 1 {
+					t.Fatalf("late linked MAL metadata missing or fetched repeatedly: MAL=%d, AniList=%+v, calls=%d",
+						got.Identity.MALID, got.ProviderMetadata.AniList, tmdbClient.anilistCalls)
+				}
+			} else if tmdbClient.anilistCalls != 0 {
+				t.Fatalf("fetched AniList without an accepted MAL link: %v", tmdbClient.anilistInputs)
 			}
 		})
 	}

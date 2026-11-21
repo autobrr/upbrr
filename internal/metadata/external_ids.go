@@ -878,11 +878,15 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			!metadata.TVmaze.BackdropLookupAttempted && !tvmazeMetadataFetchAttempted
 	}
 
+	shouldFetchAniList := func() bool {
+		return anilistClient != nil && shouldFetchAniListMetadata(ids.MALID, metadata.AniList) && !anilistFetchAttempted
+	}
+
 	shouldRunFetchPass := func() bool {
 		if shouldFetchTMDBMetadata() {
 			return true
 		}
-		if anilistClient != nil && shouldFetchAniListMetadata(ids.MALID, metadata.AniList) && !anilistFetchAttempted {
+		if shouldFetchAniList() {
 			return true
 		}
 		if shouldFetchIMDBMetadata() || shouldFetchTVDBMetadata() || shouldRefreshTVDBDisambiguation() || shouldFetchTVmazeMetadata() {
@@ -915,7 +919,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		if fetchTMDB {
 			tmdbLogoFetchAttempted = true
 		}
-		fetchAniList := anilistClient != nil && shouldFetchAniListMetadata(ids.MALID, metadata.AniList) && !anilistFetchAttempted
+		fetchAniList := shouldFetchAniList()
 		if fetchAniList {
 			anilistFetchAttempted = true
 		}
@@ -1455,13 +1459,13 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		tvdbIMDbConflict := false
 		if ids.TVDBID > 0 && shouldUseTVDBForCategory(meta, ids) && metadata.TVDB != nil && metadata.TVDB.TVDBID == ids.TVDBID {
 			links := metadata.TVDB.RemoteLinks
-			if !tvdbSiblingLinksMismatch(links, tvdbSiblingTargets(&ids, effectiveOverrides)) {
+			// A sibling mismatch disqualifies TVDB from voting, but cannot erase its IMDb contradiction.
+			tvdbIMDbConflict = slices.ContainsFunc(links.Links, func(link api.TVDBRemoteLink) bool {
+				return link.Provider == api.IdentityProviderIMDB && link.State == "conflicting"
+			})
+			if links.Status == api.MetadataEvidenceStatusComplete && !tvdbSiblingLinksMismatch(links, tvdbSiblingTargets(&ids, effectiveOverrides)) {
 				for _, link := range links.Links {
-					if link.Provider != api.IdentityProviderIMDB {
-						continue
-					}
-					tvdbIMDbConflict = tvdbIMDbConflict || link.State == "conflicting"
-					if links.Status == api.MetadataEvidenceStatusComplete && link.State == "valid" {
+					if link.Provider == api.IdentityProviderIMDB && link.State == "valid" {
 						linkedIMDb = append(linkedIMDb, imdbCorroboration{link.ID, independentlyResolved(ids.TVDBID, ids.Dependencies.TVDB)})
 						break // Duplicate TVDB links are not independent.
 					}
@@ -1495,6 +1499,12 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 					if ids.TMDBID != 0 {
 						if err := runFetchPass(false); err != nil {
 							return preparationstate.State{}, err
+						}
+						// The TMDB pass can discover a MAL ID after the normal follow-ups.
+						if shouldFetchAniList() {
+							if err := runFetchPass(false); err != nil {
+								return preparationstate.State{}, err
+							}
 						}
 					}
 				}
