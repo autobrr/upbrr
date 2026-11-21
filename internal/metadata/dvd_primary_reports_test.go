@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/externalidentity"
 	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
@@ -162,6 +163,51 @@ func TestDVDPreparationPublishesRootReportsForCanonicalPrimary(t *testing.T) {
 			assertPair(textPath, jsonPath, tc.primary)
 
 			if tc.primary == 1 {
+				// Prepare and hydrate through separate modules so the restart
+				// cannot reuse the first module's in-memory report paths.
+				identity, err := externalidentity.NewWithCandidateSource(repo, collector)
+				if err != nil {
+					t.Fatal(err)
+				}
+				module, err := preparedrelease.New(repo, identity, collector)
+				if err != nil {
+					t.Fatal(err)
+				}
+				prepared, err := module.Prepare(t.Context(), input)
+				if err != nil {
+					t.Fatal(err)
+				}
+				assertPair(textPath, jsonPath, tc.primary)
+				for _, report := range []string{textPath, jsonPath} {
+					if err := os.Remove(report); err != nil {
+						t.Fatal(err)
+					}
+				}
+				restarted, err := preparedrelease.New(repo, identity, collector)
+				if err != nil {
+					t.Fatal(err)
+				}
+				reused, err := restarted.Prepare(t.Context(), input)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if reused.Release.Generation != prepared.Release.Generation ||
+					reused.Release.Disc.PrimaryDiscID != prepared.Release.Disc.PrimaryDiscID ||
+					reused.Release.Disc.PrimaryDiscID != result.Disc.PrimaryDiscID {
+					t.Fatalf("restart did not reuse the saved primary: %+v", reused.Release.Disc)
+				}
+				subject, err := restarted.ResolveUploadSubject(t.Context(), api.UploadSubjectInput{Release: api.ReleaseRef{
+					SourcePath: root,
+					Generation: reused.Release.Generation,
+				}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if subject.MediaInfoTextPath != textPath || subject.MediaInfoJSONPath != jsonPath {
+					t.Fatalf("hydrated report paths = %q and %q, want the root pair", subject.MediaInfoTextPath, subject.MediaInfoJSONPath)
+				}
+				assertPair(subject.MediaInfoTextPath, subject.MediaInfoJSONPath, tc.primary)
+
 				// Reprepare the same collection after its sole usable title disappears.
 				path := filepath.Join(root, "Disc 2", "VIDEO_TS", "VTS_01_1.VOB")
 				if err := os.Remove(path); err != nil {
