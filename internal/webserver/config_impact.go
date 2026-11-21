@@ -37,7 +37,10 @@ func configImpactDetails(previous, next config.Config) []api.ConfigImpactDetail 
 	if !configValueEqual(previous.TorrentCreation, next.TorrentCreation) {
 		add(api.ConfigImpactTrackers)
 	}
-	if !configValueEqual(previous.Description, next.Description) {
+	previousPTP, _ := config.TrackerConfigByName(previous.Trackers.Trackers, "PTP")
+	nextPTP, _ := config.TrackerConfigByName(next.Trackers.Trackers, "PTP")
+	if !configValueEqual(previous.Description, next.Description) ||
+		previousPTP.ScreenshotBlankLineEnabled() != nextPTP.ScreenshotBlankLineEnabled() {
 		add(api.ConfigImpactDescription)
 	}
 	if previous.ScreenshotHandling.Screens != next.ScreenshotHandling.Screens {
@@ -68,8 +71,10 @@ func configImpactDetails(previous, next config.Config) []api.ConfigImpactDetail 
 	for _, impact := range impacts {
 		result = append(result, api.ConfigImpactDetail{Kind: impact})
 	}
-	if !configValueEqual(previous.Trackers, next.Trackers) {
-		changed := changedTrackerImpactIDs(previous.Trackers, next.Trackers)
+	previousTrackers := previous.Trackers.WithoutScreenshotSpacing()
+	nextTrackers := next.Trackers.WithoutScreenshotSpacing()
+	if !configValueEqual(previousTrackers, nextTrackers) {
+		changed := changedTrackerImpactIDs(previousTrackers, nextTrackers)
 		result = append(result, api.ConfigImpactDetail{Kind: api.ConfigImpactTrackers, TrackerIDs: changed})
 	}
 	return result

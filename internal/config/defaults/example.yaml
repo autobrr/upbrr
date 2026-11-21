@@ -339,6 +339,7 @@ trackers:
   PTP:
     link_dir_name: ""
     add_web_source_to_desc: true
+    screenshot_blank_line: true
     ApiUser: ""
     ApiKey: ""
     username: ""

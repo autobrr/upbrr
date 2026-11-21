@@ -164,6 +164,7 @@ const fieldGroups: Record<string, Array<{ title: string; keys: string[] }>> = {
         "UseItalianTitle",
         "PTGenAPI",
         "AddWebSourceToDesc",
+        "ScreenshotBlankLine",
         "UseMetadataName",
         "FaviconURL",
       ],

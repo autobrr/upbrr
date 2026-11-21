@@ -172,3 +172,21 @@ func TestConfigImpactsClassifiesEveryMainSettingsField(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigImpactPTPScreenshotSpacingInvalidatesOnlyDescriptions(t *testing.T) {
+	makeConfig := func(spacing *bool) config.Config {
+		return config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"PTP": {ScreenshotBlankLine: spacing},
+		}}}
+	}
+	legacy, enabled, disabled := makeConfig(nil), makeConfig(new(true)), makeConfig(new(false))
+	if got := ConfigImpactDetails(legacy, enabled); len(got) != 0 {
+		t.Fatalf("default backfill invalidates retained work: %v", got)
+	}
+	for _, pair := range [][2]config.Config{{enabled, disabled}, {disabled, enabled}} {
+		got := ConfigImpactDetails(pair[0], pair[1])
+		if len(got) != 1 || got[0].Kind != api.ConfigImpactDescription {
+			t.Fatalf("screenshot spacing invalidates more than descriptions: %v", got)
+		}
+	}
+}

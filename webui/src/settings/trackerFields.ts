@@ -166,6 +166,10 @@ const trackerFieldMeta: Record<string, FieldMeta> = {
     label: "Include streaming service in description",
     help: "Include the known streaming service name in PTP WEB-DL descriptions.",
   }),
+  ScreenshotBlankLine: boolField("ScreenshotBlankLine", {
+    label: "Blank line between generated screenshots",
+    help: "Leave an empty line between generated screenshots. Turning this off does not change reviewed descriptions.",
+  }),
   UseMetadataName: boolField("UseMetadataName", {
     label: "Metadata-name preference (compatibility)",
     help: "Retained for compatibility; not currently used to choose the release name.",
