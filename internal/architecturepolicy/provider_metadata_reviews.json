@@ -1316,8 +1316,8 @@
     "sha256": "233d72f4f4dee91fa978f23657b35ed9dc948c6f3679e6b4054361993e75dcf2"
   },
   "internal/trackers/impl/unit3d/name.go:applyLocalizedNameDefaults": {
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
-    "sha256": "cfa1dbff84cec212b964eb4513cbe68f5514e9da2cab28531f5090fe994cdf37"
+    "reason": "Shared group and audio formatting was extracted. Localized alternate-title selection still uses current provider evidence and explicit manual language and component precedence.",
+    "sha256": "e011b479a26ab101b48d3f9c14ad4ada7dd35f06ee38569d4b02a9ca31134213"
   },
   "internal/trackers/impl/unit3d/name.go:resolveOriginalLanguage": {
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
@@ -1535,9 +1535,41 @@
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input",
     "sha256": "4d2bbdc68a8798ee6fa3b4ddf29fa6ac56818e031d69ccce3613a24e3a600b54"
   },
+  "internal/trackers/impl/unit3d/sites/sam/name.go:applySAMEnglishTitle": {
+    "reason": "Manual title metadata and components take precedence. Reads current matched TVDB, TMDB, or IMDb English title evidence, then uses a verified MAL-matched AniList English title for movies only.",
+    "sha256": "90768b78476da89b29c120e99304bf38bc6c72720102b9ac812c68d7f9600008"
+  },
+  "internal/trackers/impl/unit3d/sites/sam/name.go:applySAMYear": {
+    "reason": "An explicit manual clear remains absent and prevents an automatic SAM name. Fallback to TMDB requires the prepared source, selected ID, and canonical category.",
+    "sha256": "9ce70e857bdad32db76c05eb1579e3e7f40c8dcddc37b988a5ae642d4f5025ff"
+  },
+  "internal/trackers/impl/unit3d/sites/sam/name.go:currentSAMTMDB": {
+    "reason": "Filters provider evidence by prepared source, generation, selected TMDB ID, and canonical category. Callers apply manual title and year authority.",
+    "sha256": "7d66cf2fbf408f6832558ba20bff796e37f7877ecc0793747f77f7c8ac23f775"
+  },
+  "internal/trackers/impl/unit3d/sites/sam/name.go:samIMDBEnglishTitle": {
+    "reason": "Accepts a unique unqualified English title, preferring the US listing. The caller checks source, generation, selected IMDb ID and manual title precedence.",
+    "sha256": "fa429aa64f72c9f8fe5c0b4ad2310fa5608b1b24009e73b299ab4868cff86546"
+  },
   "internal/trackers/impl/unit3d/sites/sam/profile.go:Profile": {
-    "reason": "Adds a canonical category-family catalog covering TV and anime together without provider reads. Existing localized naming and finalized anime upload classification preserve prepared-provider and manual-precedence paths.",
-    "sha256": "fbcdb07300b49bc8c08e977214e76f40c4d606d16ab056fefb8ffc295d678284"
+    "reason": "Preserves strict TMDB readiness while requesting per-resource inspection. SAM reads provider facts only for matched name and pack-status evidence.",
+    "sha256": "6c09ba0ca4b65a2ac03582bfd327b0c6471ef4eca6838e0be340a3b73835559e"
+  },
+  "internal/trackers/impl/unit3d/sites/sam/validation.go:checkRequirements": {
+    "reason": "Checks the selected source and finalized language and genre evidence. The series-status condition uses matched provider evidence.",
+    "sha256": "121fc189eb75536a62441941bb53968405dcf48fb3767d980c202c596a50a011"
+  },
+  "internal/trackers/impl/unit3d/sites/sam/validation.go:completedSeries": {
+    "reason": "Uses statuses only from the current prepared source and matching TMDB television, TVDB, or TVmaze records. Checks each provider independently and holds the pack if a selected record reports a conflicting status.",
+    "sha256": "fef18e033e8af12a9bd38633501158c8e19247626423277ba6edfe1a1d3a54d0"
+  },
+  "internal/trackers/impl/unit3d/sites/sam/validation.go:prohibitedContent": {
+    "reason": "Uses only finalized genre facts, including the authoritative manual selection or clear. Only explicit pornographic labels establish a block.",
+    "sha256": "ba902f1b8ab8ed6da9c7630bbe3c73c6083bf0bf2314451f6d1230dfa43b86fa"
+  },
+  "internal/trackers/impl/unit3d/sites/sam/validation.go:validationPolicy": {
+    "reason": "Binds the reviewed validation function, which preserves finalized manual facts and uses matched provider status only for season packs.",
+    "sha256": "39844cbc775d9b96cfdfbef61e3ad6a0f0b11633330c244423dc429c56b9c7fe"
   },
   "internal/trackers/impl/unit3d/sites/tik/profile.go:Profile": {
     "reason": "Adds a provider-independent category-family catalog. Existing upload taxonomy preserves explicit site overrides before manual language/genre facts and automatic TMDB evidence; preview/search regressions cover corrected language and enabled/disabled site flags.",

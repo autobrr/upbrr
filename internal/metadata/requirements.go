@@ -16,6 +16,13 @@ import (
 // precedence. Instructions must belong to that generation.
 // Unknown fields remain unsatisfied; this does not authorize tracker rules.
 func PreparedRequirementsSatisfied(set api.MetadataRequirementSet, release api.PreparedRelease, instructions api.ReleaseFactInstructions) bool {
+	if set.InspectProgrammeTracks && release.Disc.Type == "" && release.Source.Classification.DiscType == "" {
+		files := release.Media.MediaFileFacts
+		if !release.Media.TrackCoverageComplete || files.ExpectedFileCount <= 0 || len(files.Files) != files.ExpectedFileCount ||
+			slices.ContainsFunc(files.Files, func(file api.MediaFileFact) bool { return file.ResourceID == "" }) {
+			return false
+		}
+	}
 	meta := preparationstate.State{
 		SourcePath:           release.Source.SourcePath,
 		Release:              api.ReleaseInfo{Title: release.Naming.Title, Year: release.Naming.Year},

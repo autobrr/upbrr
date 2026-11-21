@@ -1306,6 +1306,39 @@ func TestPreparedIndependentManualProviderIDsSurviveRefreshAndRestart(t *testing
 	}
 }
 
+func TestTMDBSeriesStatusReplaysLegacyProviderSnapshot(t *testing.T) {
+	fixture := newCorrectionEvidenceFixtureForSource(t, "Example.Series.S01.1080p.WEB-DL.H264-GRP.mkv")
+	fixture.input.Instructions.Identity.TMDBID = nil
+	fixture.tmdbSeriesStatus = "Ended"
+	module, repo := fixture.open(t)
+	update := api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit}
+	initial := prepareCorrectionEvidence(t, module, fixture.input, update).Release
+	if !initial.Episode.Pack || initial.Identity.Provenance.TMDB == api.IdentityProvenanceExplicit || initial.ProviderMetadata.TMDB == nil ||
+		!initial.ProviderMetadata.TMDB.LogoLookupAttempted || initial.ProviderMetadata.TMDB.SeriesStatus == nil {
+		t.Fatalf("expected automatically resolved TMDB metadata with a completed logo lookup, got %#v", initial.ProviderMetadata.TMDB)
+	}
+	initial.Compatibility.ContractVersion = "prepared-release-v86-capture-source"
+	initial.ProviderMetadata.TMDB.SeriesStatus = nil
+	localized := api.TMDBLocalizedData{Title: "Série de Exemplo", EpisodeTitle: "Primeira Temporada"}
+	initial.ProviderMetadata.TMDB.Localized = map[string]api.TMDBLocalizedData{"pt-BR": localized}
+	if err := repo.CommitPreparedRelease(t.Context(), initial); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	module, _ = fixture.open(t)
+	input := api.PrepareInput{SourcePath: fixture.input.SourcePath, ExternalFreshness: api.ExternalFreshnessReuse}
+	upgraded := prepareCorrectionEvidence(t, module, input, update).Release
+	if upgraded.Generation <= initial.Generation || upgraded.ProviderMetadata.TMDB == nil ||
+		upgraded.ProviderMetadata.TMDB.SeriesStatus == nil || *upgraded.ProviderMetadata.TMDB.SeriesStatus != "Ended" {
+		t.Fatalf("prepared generation %d did not recover TMDB status: %#v", upgraded.Generation, upgraded.ProviderMetadata.TMDB)
+	}
+	if upgraded.ProviderMetadata.TMDB.Localized["pt-BR"] != localized {
+		t.Fatal("series status refresh lost previously collected localization")
+	}
+}
+
 func preserveCorrectionGeneration(t *testing.T, release *api.PreparedRelease) {
 	t.Helper()
 	original, err := release.Clone()
@@ -1329,6 +1362,7 @@ type correctionEvidenceFixture struct {
 	tmdbExternalIDs      string
 	tmdbSpokenLanguages  []string
 	tmdbOriginalLanguage string
+	tmdbSeriesStatus     string
 	tmdbAnime            bool
 	noTMDBResults        bool
 	tvmaze               TVmazeClient
@@ -1432,6 +1466,9 @@ func newCorrectionEvidenceFixtureForSource(t *testing.T, filename string) *corre
 			t.Errorf("unexpected HTTP destination: %s", request.URL.Host)
 		case key == "/3/tv/555001":
 			body = `{"id":555001,"name":"Example Series","original_name":"Example Series","first_air_date":"2026-01-01","original_language":"en","type":"Scripted","seasons":[{"season_number":1,"air_date":"2026-01-01"}]}`
+			if fixture.tmdbSeriesStatus != "" {
+				body = strings.TrimSuffix(body, "}") + `,"status":` + strconv.Quote(fixture.tmdbSeriesStatus) + "}"
+			}
 			if fixture.tmdbAnime {
 				body = strings.Replace(body, `"original_language":"en"`, `"original_language":"ja","genres":[{"id":16,"name":"Animation"}]`, 1)
 			}

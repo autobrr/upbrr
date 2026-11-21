@@ -12,6 +12,17 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// AllowDerivedAudioMarkerDefaults lets a tracker format audio markers derived
+// from corrected facts while preserving explicit naming overrides.
+func (e *NameEditor) AllowDerivedAudioMarkerDefaults() {
+	for i := range e.document.Components {
+		component := &e.document.Components[i]
+		if component.DerivedFromManualFacts && (component.Role == api.NameRoleDualAudio || component.Role == api.NameRoleDubbed) {
+			component.Manual = false
+		}
+	}
+}
+
 // ApplyEnglishAudioNameDefaults applies the exclusive original-plus-English
 // naming convention only for trackers that explicitly opt into it. Manual
 // presentation choices remain owned by NameEditor, independently of factual tags.

@@ -490,6 +490,20 @@ test("embedded video comparisons match three native sources and retain reviewed 
       (await (
         await page.request.get(new URL("api/app/GetActiveInput", app.url).toString())
       ).json()) as ActiveInputSnapshot;
+    const selectHDS = async () => {
+      await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+      await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
+      await page.getByRole("checkbox", { name: "HDS", exact: true }).check();
+      await expect
+        .poll(async () => {
+          const current = (await snapshot()).current;
+          return {
+            trackers: current?.selection?.trackerIds,
+            status: current?.operation?.status,
+          };
+        })
+        .toEqual({ trackers: ["HDS"], status: "completed" });
+    };
     const verifyComparisonBytes = async (current: ReleaseWorkflowCurrent) => {
       for (const cell of current.media!.comparisons!.rows.flatMap((row) => row.cells)) {
         const query = new URLSearchParams({
@@ -511,18 +525,7 @@ test("embedded video comparisons match three native sources and retain reviewed 
     };
     try {
       await fetchMetadata(page, app.url, workspace.sourcePath);
-      await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
-      await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
-      await page.getByRole("checkbox", { name: "HDS", exact: true }).check();
-      await expect
-        .poll(async () => {
-          const current = (await snapshot()).current;
-          return {
-            trackers: current?.selection?.trackerIds,
-            status: current?.operation?.status,
-          };
-        })
-        .toEqual({ trackers: ["HDS"], status: "completed" });
+      await selectHDS();
       expect((await snapshot()).current?.dupes).toBeUndefined();
       await page.getByRole("button", { name: "Screenshots", exact: true }).click();
       const comparison = page.getByRole("region", { name: "Comparisons", exact: true });
@@ -795,9 +798,7 @@ test("embedded video comparisons match three native sources and retain reviewed 
 
       const hostedBeforeReopen = workspace.fake.counters.imageUploads;
       await fetchMetadata(page, app.url, workspace.sourcePath);
-      await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
-      await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
-      await page.getByRole("checkbox", { name: "HDS", exact: true }).check();
+      await selectHDS();
       await page.getByRole("button", { name: "Screenshots", exact: true }).click();
       await comparison
         .getByRole("button", { name: "Restore retained comparisons", exact: true })

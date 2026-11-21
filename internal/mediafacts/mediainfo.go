@@ -65,7 +65,7 @@ func HDRSourceFromMediaInfo(doc MediaInfoDocument) api.HDRSourceEvidence {
 }
 
 var (
-	mediaInfoSectionPattern        = regexp.MustCompile(`(?i)^(general|video|audio|text)(?:\s*#\d+)?$`)
+	mediaInfoSectionPattern        = regexp.MustCompile(`(?i)^(general|video|audio|text|menu|image|other)(?:\s*#\d+)?$`)
 	mediaInfoWhitespacePattern     = regexp.MustCompile(`\s+`)
 	dolbyVisionNamedProfilePattern = regexp.MustCompile(`(?i)\bprofile(?:\s+id)?[\s:]+(\d+(?:\.\d+)?)`)
 	dolbyVisionCodecProfilePattern = regexp.MustCompile(`(?i)\bdvhe\.(\d{2})`)

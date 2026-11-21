@@ -149,6 +149,8 @@ type MetadataResult struct {
 	ReleaseDate  string
 	FirstAirDate string
 	LastAirDate  string
+	// SeriesStatus is the reported lifecycle status after collecting a TV record.
+	SeriesStatus *string
 	IMDbID       int
 	TVDBID       int
 	// ExternalIMDbID and ExternalTVDBID retain TMDB's returned references

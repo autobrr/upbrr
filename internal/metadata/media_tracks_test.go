@@ -7,14 +7,144 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/sam"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestSAMFormatsCorrectedAudioWithoutOverridingExplicitNameChoices(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name       string
+		language   string
+		omitMarker *bool
+		omitGroup  *bool
+		marker     string
+	}{
+		{"Brazilian correction derives multi", "pt-BR", nil, nil, "MULTI"},
+		{"withdrawing Brazilian audio removes the generic marker", "fr", nil, nil, ""},
+		{"explicit omission is preserved", "pt-BR", new(true), nil, ""},
+		{"clearing the release group keeps the computed marker", "pt-BR", nil, new(true), "MULTI"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			const source = "Example.2026.1080p.WEB-DL.H264-GRP.mkv"
+			meta := preparationstate.State{
+				SourcePath:  source,
+				Type:        "WEBDL",
+				Source:      "WEB",
+				VideoEncode: "H.264",
+				Tag:         "-GRP",
+				Release: api.ReleaseInfo{
+					Title:      "Example",
+					Year:       2026,
+					Resolution: "1080p",
+				},
+				ReleaseNameOverrides:  api.ReleaseNameOverrides{NoDual: test.omitMarker, NoTag: test.omitGroup},
+				TrackCoverageComplete: true,
+				Identity: api.ExternalIdentity{
+					Category:   api.CanonicalCategoryMovie,
+					TMDBID:     123,
+					SourcePath: source,
+					Generation: 1,
+				},
+				ProviderMetadata: api.SourceScopedMetadata{
+					SourcePath: source,
+					Generation: 1,
+					TMDB: &api.TMDBMetadata{
+						TMDBID:           123,
+						Category:         "MOVIE",
+						Title:            "Example",
+						Year:             2026,
+						OriginalLanguage: "ja",
+					},
+				},
+			}
+			for i, language := range []string{"ja", "en", "pt"} {
+				meta.MediaTracks = append(meta.MediaTracks, api.MediaTrackFacts{
+					ID:                  strconv.Itoa(i),
+					Kind:                api.MediaTrackAudio,
+					Role:                api.AudioRoleProgramme,
+					ResourceID:          "movie",
+					ManifestFingerprint: "manifest",
+					Languages:           []string{language},
+				})
+			}
+			if err := applyTrackLanguageOverrides(&meta, []api.TrackLanguageCorrection{{
+				TrackID:             "2",
+				ManifestFingerprint: "manifest",
+				Languages:           []string{test.language},
+			}}); err != nil {
+				t.Fatal(err)
+			}
+			meta.AudioLanguages = aggregateTrackLanguages(meta.MediaTracks, api.MediaTrackAudio)
+			meta.Audio = applyAudioLanguagePrefix("AAC 2.0", meta)
+			applyReleaseNameValueOverrides(&meta)
+			RebuildReleaseName(&meta, api.NopLogger{})
+			subject := trackerLookupSubject(meta)
+			facts := api.MediaFacts{
+				OriginalLanguage:      "ja",
+				TrackCoverageComplete: true,
+				Tracks:                meta.MediaTracks,
+			}
+			subject.LanguageFacts = mediafacts.ResolveLanguages(facts)
+			subject.ManualLanguages = facts.ManualLanguages()
+			subject.MediaFileFacts = api.MediaFileFacts{ExpectedFileCount: 1, Files: []api.MediaFileFact{{ResourceID: "movie", Primary: true}}}
+			binding := unit3d.NewWithProfile(sam.Profile()).ReleaseNamePolicy()
+			prepared, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{Tracker: "SAM", Meta: subject}, binding)
+			if failure != nil {
+				t.Fatalf("prepare name: %v: %v", failure, failure.Unwrap())
+			}
+			name, err := prepared.ReviewedUploadName()
+			if err != nil || strings.Contains(name, "Dual-Audio") || strings.Contains(name, " MULTI") != (test.marker == "MULTI") ||
+				strings.HasSuffix(name, "-GRP") != (test.omitGroup == nil) ||
+				prepared.Projection.DuplicateCriteria.Name != name {
+				t.Fatalf("upload = %q, search = %q, err = %v, want marker %q", name, prepared.Projection.DuplicateCriteria.Name, err, test.marker)
+			}
+		})
+	}
+}
+
+func TestSAMDuplicateEvidenceUsesMeasuredDTSProfiles(t *testing.T) {
+	t.Parallel()
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"DTS","Format_AdditionalFeatures":"XLL","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","Language":"ja","StreamOrder":"1"}]}}`)
+	tracks, _, _, _, err := mediaTrackFacts(preparationstate.State{SourcePath: "Example.mkv"}, doc)
+	if err != nil || len(tracks) != 1 {
+		t.Fatalf("measured tracks = %+v, err = %v", tracks, err)
+	}
+	policy := sam.Profile().DupePolicy
+	target, _ := policy.TargetEvidence(api.UploadSubject{
+		LanguageFacts:  mediafacts.ResolveLanguages(api.MediaFacts{TrackCoverageComplete: true, Tracks: tracks}),
+		MediaFileFacts: api.MediaFileFacts{ExpectedFileCount: 1, Files: []api.MediaFileFact{{ResourceID: tracks[0].ResourceID}}},
+	})
+	for _, test := range []struct {
+		format string
+		want   api.DupeRelation
+	}{
+		{"DTS XBR", api.DupeRelationCoexists},
+		{"DTS\nCommercial name : DTS-HD High Resolution Audio", api.DupeRelationCoexists},
+		{"DTS XLL", ""},
+		{"DTS", ""},
+	} {
+		report := "General\nVideo\nFormat : AVC\nAudio\nLanguage : Japanese\nChannel(s) : 6 channels\nFormat : " + test.format
+		decision := policy.CompareEvidence(api.DupeEvidenceContext{
+			Target:             api.TrackerDuplicateTarget{Evidence: target},
+			Candidate:          api.TrackerDuplicateTarget{Evidence: policy.CandidateEvidence(api.DupeEntry{MediaInfo: report})},
+			Relation:           api.DupeRelationSameSlot,
+			SameWorkAndContent: true,
+		})
+		if decision.Relation != test.want {
+			t.Errorf("%q: decision = %+v, want relation %q", test.format, decision, test.want)
+		}
+	}
+}
 
 func TestMediaTrackFactsMeasuredStreamOrder(t *testing.T) {
 	t.Parallel()

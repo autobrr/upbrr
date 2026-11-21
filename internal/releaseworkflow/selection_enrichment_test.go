@@ -142,6 +142,41 @@ func TestCandidateContinuationIdentifiesReadinessForChangedTrackerSelection(t *t
 	}
 }
 
+func TestContinueRecollectsRestoredPreparationForNewProgrammeDemand(t *testing.T) {
+	t.Parallel()
+	preparer := testPreparer()
+	basePrepare := preparer.PrepareFunc
+	var collected atomic.Bool
+	preparer.PrepareFunc = func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+		if !input.RequirePrepared && input.MetadataRequirements.InspectProgrammeTracks {
+			collected.Store(true)
+		}
+		return basePrepare(ctx, input)
+	}
+	clock := &selectionEnrichmentClock{}
+	readiness := selectionDemandEvaluator{programmeOnly: true}
+	module, repository := newTestModule(t, preparer, WithClock(clock), WithInputReadinessEvaluator(readiness))
+	current := executeCommand(t, module, CreateWorkflowCommand{Instructions: api.ReleaseFactInstructions{}})
+	current = executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		Input:            api.PrepareInput{SourcePath: t.TempDir()},
+		TrackerIDs:       []api.TrackerID{"ALPHA"},
+	})
+	restored, err := New(repository, module.private, preparer, WithClock(clock), WithInputReadinessEvaluator(readiness))
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err = restored.Current(t.Context(), testOwnerID, current.Workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current = continueForSelectionEnrichment(t, restored, current, []api.TrackerID{"BETA"}, true)
+	if !collected.Load() || current.Release == nil || current.InputReadiness != nil {
+		t.Fatalf("retained primary-only release was not replaced by a programme collection: %+v", current.InputReadiness)
+	}
+}
+
 func continueForSelectionEnrichment(
 	t *testing.T,
 	module *Module,
@@ -179,7 +214,9 @@ func continueForSelectionEnrichment(
 	return updated
 }
 
-type selectionDemandEvaluator struct{}
+type selectionDemandEvaluator struct {
+	programmeOnly bool
+}
 
 type selectionEnrichmentClock struct{ ticks atomic.Int64 }
 
@@ -187,10 +224,13 @@ func (c *selectionEnrichmentClock) Now() time.Time {
 	return time.Unix(c.ticks.Add(1), 0).UTC()
 }
 
-func (selectionDemandEvaluator) Requirements(
+func (e selectionDemandEvaluator) Requirements(
 	_ context.Context,
 	trackerIDs []api.TrackerID,
 ) (api.MetadataRequirementSet, error) {
+	if e.programmeOnly {
+		return api.MetadataRequirementSet{Version: "selection-demand-v1", InspectProgrammeTracks: trackerIDs[0] == "BETA"}, nil
+	}
 	if trackerIDs[0] != "BETA" && trackerIDs[0] != "GAMMA" {
 		return api.MetadataRequirementSet{Version: "selection-demand-v1"}, nil
 	}

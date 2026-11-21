@@ -2887,6 +2887,23 @@
           "revision"
         ]
       },
+      "DupeAudioTrack": {
+        "type": "object",
+        "properties": {
+          "channels": {
+            "type": "integer"
+          },
+          "codec": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "language"
+        ]
+      },
       "DupeComparisonEvidence": {
         "type": "object",
         "properties": {
@@ -3076,6 +3093,12 @@
           },
           "personalRelease": {
             "type": "boolean"
+          },
+          "programmeAudio": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DupeAudioTrack"
+            }
           }
         }
       },
@@ -7680,6 +7703,9 @@
       "ReleaseAssessments": {
         "type": "object",
         "properties": {
+          "CaptureSource": {
+            "type": "string"
+          },
           "MediaInfoEncodeSettings": {
             "$ref": "#/components/schemas/EncodeSettingsStatus"
           },
@@ -7893,6 +7919,9 @@
           },
           "AvailableValue": {
             "type": "string"
+          },
+          "DerivedFromManualFacts": {
+            "type": "boolean"
           },
           "Join": {
             "type": "string"
@@ -11685,6 +11714,16 @@
           },
           "Runtime": {
             "type": "integer"
+          },
+          "SeriesStatus": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "SpokenLanguages": {
             "type": "array",

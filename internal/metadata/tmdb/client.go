@@ -623,6 +623,7 @@ func (c *Client) getJSON(ctx context.Context, path string, params map[string]str
 		return c.uncachedJSON(ctx, path, params, target)
 	}
 	domain := "tmdb.response.v1"
+	var isEmpty func() bool
 	switch target.(type) {
 	case *episodeDetailsResponse:
 		// Older typed evidence erased absent seasons into zero.
@@ -630,6 +631,10 @@ func (c *Client) getJSON(ctx context.Context, path string, params map[string]str
 	case *mediaResponse:
 		// Older typed evidence discarded the spoken-language collection.
 		domain = "tmdb.media-response.v2"
+	case *seriesStatusResponse:
+		domain = "tmdb.series-status.v1"
+		// A successful response with no status still completes the lookup.
+		isEmpty = func() bool { return false }
 	}
 	err := evidence.JSON(
 		ctx,
@@ -637,7 +642,7 @@ func (c *Client) getJSON(ctx context.Context, path string, params map[string]str
 		[]any{c.baseURL, c.apiKey, path, params},
 		target,
 		errNotFound,
-		nil,
+		isEmpty,
 		func() error { return c.uncachedJSON(ctx, path, params, target) },
 	)
 	if err != nil {

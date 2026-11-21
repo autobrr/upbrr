@@ -27,6 +27,19 @@ const imageBaseURL = "https://image.tmdb.org/t/p/original"
 
 var yearPattern = regexp.MustCompile(`(18|19|20)\d{2}`)
 
+// GetSeriesStatus returns the reported lifecycle status of a matched TV record.
+// An empty status means TMDB did not report its lifecycle.
+func (c *Client) GetSeriesStatus(ctx context.Context, tmdbID int) (string, error) {
+	if tmdbID <= 0 {
+		return "", errNotFound
+	}
+	var media seriesStatusResponse
+	if err := c.getJSON(ctx, fmt.Sprintf("/tv/%d", tmdbID), map[string]string{"api_key": c.apiKey}, &media); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(media.Status), nil
+}
+
 // GetSeriesExternalIDs returns the series' numeric IMDb and TVDB IDs, respectively.
 // It reuses endpoint evidence without collecting or replacing kept naming metadata.
 func (c *Client) GetSeriesExternalIDs(ctx context.Context, id int) (int, int, error) {
@@ -71,6 +84,9 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 	if category == "TV" {
 		title = media.Name
 		originalTitle = media.OriginalName
+		if media.Status != nil {
+			result.SeriesStatus = new(strings.TrimSpace(*media.Status))
+		}
 	}
 	result.Title = title
 	result.OriginalTitle = metautil.FirstNonEmpty(originalTitle, title)
@@ -944,6 +960,10 @@ func (p *lockPool) lock(key string) *lockHandle {
 
 // JSON response types.
 
+type seriesStatusResponse struct {
+	Status string `json:"status"`
+}
+
 type mediaResponse struct {
 	Title            string  `json:"title"`
 	Name             string  `json:"name"`
@@ -952,6 +972,7 @@ type mediaResponse struct {
 	ReleaseDate      string  `json:"release_date"`
 	FirstAirDate     string  `json:"first_air_date"`
 	LastAirDate      string  `json:"last_air_date"`
+	Status           *string `json:"status,omitempty"`
 	Runtime          int     `json:"runtime"`
 	EpisodeRunTime   []int   `json:"episode_run_time"`
 	Type             string  `json:"type"`

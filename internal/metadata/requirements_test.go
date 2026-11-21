@@ -180,6 +180,28 @@ func TestPreparedRequirementsSatisfied(t *testing.T) {
 	}
 }
 
+func TestPreparedProgrammeDemandReusesOnlyMeasuredCoverage(t *testing.T) {
+	t.Parallel()
+	release := api.PreparedRelease{
+		Media: api.MediaFacts{
+			TrackCoverageComplete: true,
+			MediaFileFacts: api.MediaFileFacts{
+				ExpectedFileCount: 2,
+				Files:             []api.MediaFileFact{{ResourceID: "episode-1"}},
+			},
+		},
+	}
+	set := api.MetadataRequirementSet{InspectProgrammeTracks: true}
+	instructions := api.ReleaseFactInstructions{}
+	if PreparedRequirementsSatisfied(set, release, instructions) {
+		t.Fatal("partial programme coverage satisfied the inspection demand")
+	}
+	release.Media.MediaFileFacts.Files = append(release.Media.MediaFileFacts.Files, api.MediaFileFact{ResourceID: "episode-2"})
+	if !PreparedRequirementsSatisfied(set, release, instructions) {
+		t.Fatal("complete programme coverage required a refresh")
+	}
+}
+
 func TestRequiresProviderMetadataRefresh(t *testing.T) {
 	t.Parallel()
 

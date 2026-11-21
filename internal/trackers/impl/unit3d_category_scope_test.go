@@ -162,6 +162,9 @@ func TestUnit3DCategorySearchIncludesUploadAndRelatedCategories(t *testing.T) {
 			if test.modify != nil {
 				test.modify(&meta)
 			}
+			if test.tracker == "SAM" {
+				addSAMCategoryScopeEvidence(&meta)
+			}
 			wantScope := scopes[test.tracker][test.category]
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				query := r.URL.Query()
@@ -276,6 +279,51 @@ func unit3DCategoryScopeSubject(t *testing.T, category api.CanonicalCategory) ap
 	}
 }
 
+func addSAMCategoryScopeEvidence(meta *api.UploadSubject) {
+	files := []string{meta.SourcePath}
+	if meta.TVPack {
+		meta.SourcePath = filepath.Dir(meta.SourcePath)
+		files = []string{
+			filepath.Join(meta.SourcePath, "Example.S01E01.mkv"),
+			filepath.Join(meta.SourcePath, "Example.S01E02.mkv"),
+		}
+		meta.Identity.TVDBID = 321
+		meta.ProviderMetadata = api.SourceScopedMetadata{
+			SourcePath: meta.SourcePath,
+			TVDB:       &api.TVDBMetadata{TVDBID: 321, Status: "Ended"},
+		}
+	}
+	meta.PackageInventory = api.PackageInventory{Status: api.MetadataEvidenceStatusComplete, Files: files}
+	media := api.MediaFacts{
+		OriginalLanguage:      "en",
+		TrackCoverageComplete: true,
+		MediaFileFacts:        api.MediaFileFacts{ExpectedFileCount: len(files)},
+	}
+	for i := range files {
+		resource := fmt.Sprintf("programme-%d", i)
+		media.MediaFileFacts.Files = append(media.MediaFileFacts.Files, api.MediaFileFact{
+			ResourceID:      resource,
+			Primary:         i == 0,
+			VideoTrackCount: 1,
+		})
+		media.Tracks = append(media.Tracks,
+			api.MediaTrackFacts{
+				ResourceID: resource,
+				Kind:       api.MediaTrackAudio,
+				Role:       api.AudioRoleProgramme,
+				Languages:  []string{"en"},
+			},
+			api.MediaTrackFacts{
+				ResourceID: resource,
+				Kind:       api.MediaTrackSubtitle,
+				Languages:  []string{"pt-BR"},
+			},
+		)
+	}
+	meta.LanguageFacts = mediafacts.ResolveLanguages(media)
+	meta.MediaFileFacts = mediafacts.ResolveFiles(media, meta.Release.Resolution)
+}
+
 func TestUnit3DCategorySearchCollectsOrdinaryAndSpecialPages(t *testing.T) {
 	t.Parallel()
 
@@ -288,7 +336,8 @@ func TestUnit3DCategorySearchCollectsOrdinaryAndSpecialPages(t *testing.T) {
 		case "1":
 			next := query.Clone()
 			next.Set("page", "2")
-			_, _ = fmt.Fprintf(w, `{"data":[{"id":101,"attributes":{"name":"Example.Show.S01E02.1080p.WEB-DL-GRP","tmdb":123}}],"links":{"next":"https://samaritano.cc/api/torrents/filter?%s"}}`, next.Encode())
+			const report = "General\nFormat : Matroska\n\nVideo\nFormat : AVC\n\nAudio\nFormat : AAC\nLanguage : English\nChannel(s) : 2 channels\n"
+			_, _ = fmt.Fprintf(w, `{"data":[{"id":101,"attributes":{"name":"Example.Show.S01E02.1080p.WEB-DL-GRP","tmdb":123,"media_info":%q}}],"links":{"next":"https://samaritano.cc/api/torrents/filter?%s"}}`, report, next.Encode())
 		case "2":
 			_, _ = w.Write([]byte(`{"data":[{"id":102,"attributes":{"name":"Example.Show.S01E02.2160p.WEB-DL-GRP","tmdb":123}}],"links":{"next":null}}`))
 		default:
@@ -326,6 +375,15 @@ func TestUnit3DCategorySearchCollectsOrdinaryAndSpecialPages(t *testing.T) {
 	if len(entries) != 2 || entries[0].ID != "101" || entries[1].ID != "102" ||
 		!result.SearchEvidence().EffectiveComplete() || result.SearchEvidence().Pages != 2 {
 		t.Fatalf("broad paginated collection = %+v, evidence=%+v", entries, result.SearchEvidence())
+	}
+	policy, _ := registry.LookupDupePolicy("SAM")
+	audio := policy.CandidateEvidence(entries[0]).ProgrammeAudio
+	if !slices.Equal(audio, []api.DupeAudioTrack{{
+		Language: "en",
+		Codec:    "aac",
+		Channels: 2,
+	}}) {
+		t.Fatalf("SAM candidate programme audio = %+v", audio)
 	}
 }
 

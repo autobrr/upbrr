@@ -58,6 +58,73 @@ func TestEpisodeSeasonPresenceDoesNotTrustLegacyEvidence(t *testing.T) {
 	}
 }
 
+func TestSeriesStatusLookupPreservesLegacyTVEvidence(t *testing.T) {
+	t.Parallel()
+	const path = "/tv/555001"
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == path {
+			if r.URL.Query().Get("language") != "" {
+				http.Error(w, "localized TV detail unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			requests.Add(1)
+			_, _ = fmt.Fprint(w, `{"name":"Example Series","status":"Ended"}`)
+			return
+		}
+		_, _ = fmt.Fprint(w, `{}`)
+	}))
+	t.Cleanup(server.Close)
+	repo, err := db.OpenContext(t.Context(), filepath.Join(t.TempDir(), "metadata.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.MigrateContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(t.TempDir(), "source.mkv")
+	ctx, scope := evidence.WithScope(t.Context(), repo, source, "fingerprint", api.ExternalFreshnessLoad, nil)
+	client := NewClient(server.Client(), nil, "synthetic-key")
+	client.baseURL = server.URL
+	params := map[string]string{"api_key": client.apiKey}
+	legacy := mediaResponse{Name: "Previously cached series"}
+	if err := evidence.JSON(ctx, "tmdb.media-response.v2", []any{client.baseURL, client.apiKey, path, params}, &legacy, errNotFound, nil, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	const germanTitle = "Beispielserie"
+	localized := mediaResponse{Name: germanTitle}
+	localizedParams := map[string]string{"api_key": client.apiKey, "language": "de-DE"}
+	if err := evidence.JSON(ctx, "tmdb.media-response.v2", []any{client.baseURL, client.apiKey, path, localizedParams}, &localized, errNotFound, nil, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := scope.Err(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		ctx, scope := evidence.WithScope(t.Context(), repo, source, "fingerprint", api.ExternalFreshnessLoad, nil)
+		previousRequests := requests.Load()
+		result, err := client.FetchMetadata(ctx, MetadataInput{
+			TMDBID:          555001,
+			Category:        "TV",
+			SkipAnimeLookup: true,
+		})
+		if err != nil || result.Title != legacy.Name || result.SeriesStatus != nil || requests.Load() != previousRequests {
+			t.Fatalf("legacy title = %q, status = %v, primary requests = %d, err = %v", result.Title, result.SeriesStatus, requests.Load(), err)
+		}
+		if result.LocalizedTitles["de"] != germanTitle {
+			t.Fatalf("cached German title was not retained: %v", result.LocalizedTitles)
+		}
+		status, err := client.GetSeriesStatus(ctx, 555001)
+		if err != nil || status != "Ended" || requests.Load() != 1 {
+			t.Fatalf("series status = %q, status requests = %d, err = %v", status, requests.Load(), err)
+		}
+		if err := scope.Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestFetchMetadataUsesGermanDetailFallbackWhenTranslationsFail(t *testing.T) {
 	var translationsRequested atomic.Bool
 	var localizedRequested atomic.Bool

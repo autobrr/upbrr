@@ -519,6 +519,8 @@ type NamingRequirement string
 // ReleaseAssessments contains concrete source-derived assessments. Operations
 // decide whether these facts block work.
 type ReleaseAssessments struct {
+	// CaptureSource records CAM or R5 evidence independently of the normalized source.
+	CaptureSource           string `json:",omitempty"`
 	MediaInfoUniqueID       UniqueIDStatus
 	MediaInfoEncodeSettings EncodeSettingsStatus
 	VideoBitrate            VideoBitrateAssessment

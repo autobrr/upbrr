@@ -578,10 +578,13 @@ func (s *Service) projectAdapterResult(
 	case DispositionResolved:
 		raw := trimEntries(adapterResult.Entries())
 		candidates := make([]TrackerCandidate, len(raw))
+		policy := s.duplicatePolicy(tracker, meta)
 		for index, rawCandidate := range raw {
 			candidates[index] = NormalizeCandidate(rawCandidate, tracker)
+			if policy.CandidateEvidence != nil {
+				candidates[index].Evidence = policy.CandidateEvidence(rawCandidate)
+			}
 		}
-		policy := s.duplicatePolicy(tracker, meta)
 		search := adapterResult.SearchEvidence()
 		evaluation := Evaluate(duplicateTargetForEvaluation(meta), candidates, policy, search)
 		effectiveComplete := search.EffectiveComplete()

@@ -881,6 +881,9 @@ func mergeGeneratedNameAvailability(
 			component.AvailableValue = source.Value
 		}
 		component.Manual = generatedNameRoleIsManual(component.Role, meta, request)
+		component.DerivedFromManualFacts = component.Manual &&
+			(component.Role == api.NameRoleDualAudio || component.Role == api.NameRoleDubbed) &&
+			!releaseNameRoleIsManual(component.Role, meta.ReleaseNameOverrides)
 	}
 	alignAudioMarkerLayout(document, available)
 }
