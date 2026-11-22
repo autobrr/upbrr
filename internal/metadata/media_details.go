@@ -352,40 +352,55 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	return meta, nil
 }
 
-// applySceneDetection runs srrdb scene/rename detection and copies the result
-// onto meta. It is best-effort for transient srrdb/network failures (skip scene,
-// never block the upload), but context cancellation/deadline is propagated so the
-// pipeline aborts rather than continuing into tracker rules. Detection is gated
-// by config (scene_detection) via a nil detector.
-func (s *Service) applySceneDetection(ctx context.Context, meta preparationstate.State) (preparationstate.State, error) {
+// detectScene returns best-effort scene evidence and propagates cancellation.
+// An optional NFO failure does not discard an otherwise valid scene match.
+func (s *Service) detectScene(ctx context.Context, meta preparationstate.State) (*SceneResult, error) {
 	logger := logging.FromContext(ctx, s.logger)
 
 	if s.scene == nil {
-		return meta, nil
+		return nil, nil
 	}
 	result, err := s.scene.Detect(ctx, meta)
 	if err != nil {
 		switch {
 		case isContextError(ctx, err):
-			return meta, fmt.Errorf("metadata: scene detect: %w", err)
+			return nil, fmt.Errorf("metadata: scene detect: %w", err)
 		case isSceneNFOError(err):
 			logger.Warnf("metadata: scene nfo side effect failed: %s", redaction.RedactValue(err.Error(), nil))
 			// The primary match may still be present alongside a recoverable NFO
 			// side-effect error; apply it when it carries data.
 			if !sceneResultHasData(result) {
-				return meta, nil
+				return nil, nil
 			}
 		default:
 			// Transient srrdb/network failure: skip scene, never block the upload.
 			logger.Debugf("metadata: scene detect skipped: %s", redaction.RedactValue(err.Error(), nil))
-			return meta, nil
+			return nil, nil
 		}
 	}
-	applySceneResult(&meta, result)
+	return &result, nil
+}
+
+// applySceneDetection applies scene facts after naming fields are initialized.
+// A scene lookup made for tentative identity is reused without a second vote.
+func (s *Service) applySceneDetection(ctx context.Context, meta preparationstate.State) (preparationstate.State, error) {
+	logger := logging.FromContext(ctx, s.logger)
+	result := meta.CollectedScene
+	if result == nil || !sceneResultHasData(*result) && meta.Identity.IMDBID != 0 {
+		var err error
+		result, err = s.detectScene(ctx, meta)
+		if err != nil {
+			return meta, err
+		}
+	}
+	if result == nil {
+		return meta, nil
+	}
+	applySceneResult(&meta, *result)
 	// Backfill scene-discovered IMDb only when resolution found none and no
 	// explicit provider anchor or IMDb clear constrains the identity.
 	effectiveOverrides := effectiveProviderOverrides(meta.ExternalIDOverrides, meta.Identity)
-	if meta.Identity.IMDBID == 0 && result.IMDBID > 0 && !clearedProviderOverride(effectiveOverrides.IMDBID) &&
+	if meta.CollectedScene == nil && meta.Identity.IMDBID == 0 && result.IMDBID > 0 && !clearedProviderOverride(effectiveOverrides.IMDBID) &&
 		!hasPositiveProviderOverride(effectiveOverrides) {
 		meta.Identity.IMDBID = result.IMDBID
 	}

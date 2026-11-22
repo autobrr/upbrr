@@ -35,31 +35,8 @@ type SceneDetector interface {
 	Detect(ctx context.Context, meta preparationstate.State) (SceneResult, error)
 }
 
-// SceneResult captures scene metadata from external sources. NFO fields are
-// best-effort side-effect outputs and may be empty on an otherwise valid match.
-type SceneResult struct {
-	IsScene   bool
-	SceneName string
-	TMDBID    int
-	IMDBID    int
-	TVDBID    int
-	TVmazeID  int
-	MALID     int
-	// Service is the normalized service code parsed from a saved scene NFO.
-	Service string
-	// ServiceLongName is the display name matching Service when one is known.
-	ServiceLongName string
-	// NFOPath is the local filesystem path to a saved scene NFO.
-	NFOPath string
-	// NFONew reports whether NFOPath was downloaded during this detection run.
-	NFONew bool
-	// Renamed reports that a scene release was identified via the imdb: fallback
-	// (the exact r: name missed) and the on-disk basename differs from the
-	// canonical scene media filename, i.e. the release was renamed/modified.
-	Renamed bool
-	// RenamedReason is an operator-facing explanation set when Renamed is true.
-	RenamedReason string
-}
+// SceneResult carries a matched release and optional NFO evidence.
+type SceneResult = preparationstate.SceneResult
 
 type sceneNFOError struct {
 	err error

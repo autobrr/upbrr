@@ -475,6 +475,7 @@ func (s *stubIMDB) GetEpisodeInfo(_ context.Context, _ string, _ bool) (imdb.Epi
 }
 
 type stubTVDB struct {
+	externalFn               func(imdbID string) (int, string, error)
 	searchResults            []tvdb.SeriesSearchResult
 	searchID                 int
 	searchTitles             []string
@@ -517,6 +518,9 @@ func (s *stubTVDB) GetByExternalID(_ context.Context, imdbID, tmdbID string, tvM
 	s.externalIMDbIDs = append(s.externalIMDbIDs, imdbID)
 	s.externalTMDBIDs = append(s.externalTMDBIDs, tmdbID)
 	s.tvMovieCalls = append(s.tvMovieCalls, tvMovie)
+	if s.externalFn != nil {
+		return s.externalFn(imdbID)
+	}
 	if tvMovie && s.idWhenTVMovie != 0 {
 		return s.idWhenTVMovie, s.nameWhenTVMovie, nil
 	}
@@ -585,6 +589,7 @@ func (s *stubTVDB) GetEpisodeTranslation(_ context.Context, episodeID int, _ str
 }
 
 type stubTVmaze struct {
+	searchFn           func(tvmaze.SearchInput) tvmaze.SearchResult
 	result             tvmaze.SearchResult
 	episodeData        *tvmaze.EpisodeData
 	calls              int
@@ -598,6 +603,9 @@ type stubTVmaze struct {
 func (s *stubTVmaze) Search(_ context.Context, input tvmaze.SearchInput) (tvmaze.SearchResult, error) {
 	s.calls++
 	s.inputs = append(s.inputs, input)
+	if s.searchFn != nil {
+		return s.searchFn(input), nil
+	}
 	return s.result, nil
 }
 
@@ -4066,11 +4074,6 @@ func TestResolveExternalIDsSearchStagesPreserveConfidentUnattendedMatches(t *tes
 	if imdbClient.searchInputs[0].SearchYear != 2025 || imdbClient.searchInputs[1].SearchYear != 2026 || imdbClient.searchInputs[2].SearchYear != 2024 {
 		t.Fatalf("unexpected imdb stage years: %#v", imdbClient.searchInputs)
 	}
-	for _, input := range imdbClient.searchInputs {
-		if input.Unattended {
-			t.Fatalf("unattended CLI must retain ambiguous imdb candidates")
-		}
-	}
 }
 
 func TestResolveExternalIDsInteractiveCLIDoesNotForceUnattendedSearch(t *testing.T) {
@@ -4099,11 +4102,6 @@ func TestResolveExternalIDsInteractiveCLIDoesNotForceUnattendedSearch(t *testing
 	for _, input := range tmdbClient.searchInputs {
 		if input.Unattended {
 			t.Fatalf("expected interactive tmdb search")
-		}
-	}
-	for _, input := range imdbClient.searchInputs {
-		if input.Unattended {
-			t.Fatalf("expected interactive imdb search")
 		}
 	}
 }

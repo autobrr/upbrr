@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -88,6 +89,9 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 		return info, nil
 	}
 
+	if actual := getString(titleData, "id"); actual != "" && metautil.NormalizeIMDbID(actual) != id {
+		return info, errors.New("imdb: title resource does not match requested ID")
+	}
 	info.IMDbID = id
 	info.IMDbURL = "https://www.imdb.com/title/" + id
 	info.Title = getString(titleData, "titleText", "text")
@@ -302,9 +306,8 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 
 // Search tries increasingly broad title variants in order, pausing one second
 // between remote attempts. Individual request failures are treated as no results.
-// A single result or a sufficiently separated similarity winner is selected;
-// Unattended selects the top ambiguous candidate, while interactive mode returns
-// candidates with a zero IMDbID. Quickie validates only the first result.
+// A sufficiently confident result is selected. Weak matches, including a lone
+// weak result, remain tentative candidates. Quickie validates only the first result.
 func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, error) {
 	logger := logging.FromContext(ctx, c.logger)
 
@@ -393,27 +396,22 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 		return SearchResult{}, nil
 	}
 
-	if len(results) == 1 {
-		imdbID = metautil.ParseIMDbNumeric(getStringFromMap(results[0], "node", "title", "id"))
-		if imdbID != 0 {
-			logger.Infof("imdb: search auto-selected single result id=%d", imdbID)
-			return SearchResult{IMDbID: imdbID, AutoSelected: true}, nil
-		}
-	}
-
-	if len(results) > 1 {
+	if len(results) > 0 {
 		candidates := rankCandidates(results, filename, searchYear)
 		if len(candidates) == 0 {
 			return SearchResult{}, nil
 		}
 		best := candidates[0]
-		if best.confidenceScore >= 0.85 {
+		if best.IMDbID != 0 && best.Confidence >= 0.85 {
 			second := 0.0
 			for _, candidate := range candidates[1:] {
-				second = max(second, candidate.confidenceScore)
+				second = max(second, candidate.Confidence)
 			}
-			if best.confidenceScore-second >= 0.10 {
+			if best.Confidence-second >= 0.10 {
 				logger.Infof("imdb: search auto-selected id=%d similarity=%.2f", best.IMDbID, best.Similarity)
+				if len(results) == 1 {
+					return SearchResult{IMDbID: best.IMDbID, AutoSelected: true}, nil
+				}
 				return SearchResult{
 					IMDbID:       best.IMDbID,
 					Candidates:   candidates,
@@ -421,15 +419,7 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 				}, nil
 			}
 		}
-		if input.Unattended {
-			logger.Infof("imdb: search unattended auto-selected id=%d similarity=%.2f", best.IMDbID, best.Similarity)
-			return SearchResult{
-				IMDbID:       best.IMDbID,
-				Candidates:   candidates,
-				AutoSelected: true,
-			}, nil
-		}
-		return SearchResult{IMDbID: 0, Candidates: candidates}, nil
+		return SearchResult{Candidates: candidates, Tentative: true}, nil
 	}
 
 	return SearchResult{}, nil
@@ -835,14 +825,14 @@ func rankCandidates(results []map[string]any, filename string, searchYear int) [
 			similarity += 0.2
 		}
 		candidates = append(candidates, Candidate{
-			IMDbID:          imdbID,
-			Title:           text,
-			Year:            year,
-			Type:            getStringFromMap(title, "titleType", "text"),
-			Plot:            plot,
-			PosterURL:       posterURL,
-			Similarity:      similarity,
-			confidenceScore: confidenceScore,
+			IMDbID:     imdbID,
+			Title:      text,
+			Year:       year,
+			Type:       getStringFromMap(title, "titleType", "text"),
+			Plot:       plot,
+			PosterURL:  posterURL,
+			Similarity: similarity,
+			Confidence: confidenceScore,
 		})
 	}
 
@@ -851,11 +841,11 @@ func rankCandidates(results []map[string]any, filename string, searchYear int) [
 	})
 
 	if len(candidates) > 0 {
-		best := candidates[0].confidenceScore
+		best := candidates[0].Confidence
 		if best >= 0.90 {
 			filtered := make([]Candidate, 0, len(candidates))
 			for _, cand := range candidates {
-				if cand.confidenceScore >= 0.75 {
+				if cand.Confidence >= 0.75 {
 					filtered = append(filtered, cand)
 				}
 			}
