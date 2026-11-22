@@ -288,7 +288,7 @@ func (s *Service) planDisc(ctx context.Context, meta api.ScreenshotSubject, coun
 				info.SourcePath,
 				redaction.RedactValue(resolveErr.Error(), nil),
 			)
-		} else if duration, probeErr := probeVideoDuration(ctx, s.runner, cmd, info.SourcePath); probeErr != nil {
+		} else if duration, probeErr := probeVideoDuration(ctx, s.runner, cmd, info.SourcePath, info.DVDVOB); probeErr != nil {
 			if ctx.Err() != nil {
 				return api.ScreenshotPlan{}, fmt.Errorf("screenshots: duration fallback canceled: %w", ctx.Err())
 			}
@@ -620,6 +620,7 @@ func (s *Service) captureDisc(
 				capture := captureRequest{
 					HDRFacts:      info.HDRFacts,
 					Playlist:      info.Playlist,
+					DVDVOB:        info.DVDVOB,
 					InputPath:     candidate.SourcePath,
 					OutputPath:    output,
 					Timestamp:     candidate.Timestamp,
@@ -887,6 +888,7 @@ func (s *Service) previewDisc(
 			WidthScale:     info.WidthScale,
 			HeightScale:    info.HeightScale,
 			Playlist:       info.Playlist,
+			DVDVOB:         info.DVDVOB,
 			InputPath:      candidate.SourcePath,
 			Timestamp:      candidate.Timestamp,
 			ToneMap:        shouldTonemap(meta, s.cfg),
@@ -1175,18 +1177,11 @@ func (s *Service) removeTrackerImageReference(
 		if trackerDir == "" {
 			trackerDir = "tracker"
 		}
+		dir := filepath.Join(tmpDir, trackerDir)
 		filtered := make([]string, 0, len(record.ImageURLs))
 		removed := false
 		for idx, urlValue := range record.ImageURLs {
-			matched := false
-			for _, candidate := range trackerImageArtifactPaths(tmpDir, trackerDir, urlValue, idx) {
-				candidateAbs, err := filepath.Abs(candidate)
-				if err == nil && pathutil.SamePath(candidateAbs, absTarget) {
-					matched = true
-					break
-				}
-			}
-			if matched {
+			if trackerImageArtifactMatchesDeletion(dir, urlValue, idx, absTarget) {
 				removed = true
 				if s.logger != nil {
 					s.logger.Tracef("screenshots: tracker image match tracker=%s file=%s", strings.TrimSpace(record.Tracker), absTarget)
@@ -1894,14 +1889,40 @@ func buildTrackerImageFilename(rawURL string, index int) string {
 	return fmt.Sprintf("%s_%x%s", strings.TrimSuffix(legacy, ext), digest[:6], ext)
 }
 
-// trackerImageArtifactPaths uses the direct source as the artifact key for
-// wsrv proxies, excluding older proxy-keyed thumbnails from reuse.
-func trackerImageArtifactPaths(tmpDir string, trackerDir string, rawURL string, index int) []string {
+// trackerImageArtifactMatchesDeletion matches a file that may already be absent.
+// The URL digest identifies hashed artifacts even after URL-list positions shift.
+func trackerImageArtifactMatchesDeletion(dir, rawURL string, index int, target string) bool {
+	rawURL = trackerImageArtifactURL(rawURL)
+	if rawURL == "" {
+		return false
+	}
+	if pathutil.SamePath(filepath.Join(dir, legacyTrackerImageFilename(rawURL, index)), target) {
+		return true
+	}
+
+	name := filepath.Base(target)
+	prefix, suffix := hashedTrackerImageNameParts(rawURL)
+	if len(name) <= len(prefix)+len(suffix) {
+		return false
+	}
+	ordinal := name[len(prefix) : len(name)-len(suffix)]
+	position, err := strconv.Atoi(ordinal)
+	return err == nil && position > 0 && pathutil.SamePath(filepath.Join(dir, prefix+ordinal+suffix), target)
+}
+
+// trackerImageArtifactURL keys wsrv images by their direct source, excluding
+// older proxy-keyed thumbnails from reuse and deletion matching.
+func trackerImageArtifactURL(rawURL string) string {
 	if imagehost.IsWsrvProxyURL(rawURL) {
-		rawURL = imagehost.DirectImageURL(rawURL)
-		if rawURL == "" {
-			return nil
-		}
+		return imagehost.DirectImageURL(rawURL)
+	}
+	return rawURL
+}
+
+func trackerImageArtifactPaths(tmpDir string, trackerDir string, rawURL string, index int) []string {
+	rawURL = trackerImageArtifactURL(rawURL)
+	if rawURL == "" {
+		return nil
 	}
 	dir := filepath.Join(tmpDir, trackerDir)
 	exact := filepath.Join(dir, buildTrackerImageFilename(rawURL, index))

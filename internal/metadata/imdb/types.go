@@ -29,6 +29,7 @@ type Info struct {
 	Stars            []Person
 	Editions         []string
 	EditionDetails   map[string]EditionDetail
+	EditionRuntimes  []EditionDetail
 	Akas             []AKA
 	Episodes         []Episode
 	SeasonsSummary   []SeasonSummary
@@ -81,8 +82,7 @@ type SeasonSummary struct {
 }
 
 // SearchInput controls release-hint parsing and automatic candidate selection.
-// Quickie examines only the first result; Unattended permits selection of an
-// otherwise ambiguous top-ranked candidate.
+// Quickie examines only the first result.
 type SearchInput struct {
 	Filename          string
 	SearchYear        int
@@ -92,16 +92,16 @@ type SearchInput struct {
 	ParsedTitle       string
 	DurationMinutes   int
 	Quickie           bool
-	Unattended        bool
 	Debug             bool
 }
 
-// SearchResult retains ranked candidates even when interactive ambiguity leaves
-// IMDbID unset. AutoSelected reports that no manual choice remains.
+// SearchResult keeps ranked candidates when no automatic choice is safe.
+// Tentative identifies a weak suggestion, not a selected IMDbID.
 type SearchResult struct {
 	IMDbID       int
 	Candidates   []Candidate
 	AutoSelected bool
+	Tentative    bool
 }
 
 type Candidate struct {
@@ -112,8 +112,8 @@ type Candidate struct {
 	Plot       string
 	PosterURL  string
 	Similarity float64
-	// confidenceScore retains the identity score before the ranking-only year bonus.
-	confidenceScore float64
+	// Confidence excludes the year bonus used only for ranking.
+	Confidence float64
 }
 
 type EpisodeLookup struct {

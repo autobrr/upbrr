@@ -426,6 +426,27 @@ test("embedded tracker settings use the catalog for entries, reset, and unsuppor
     await expect(page.getByText("Unsupported tracker entries")).toBeVisible();
     await expect(page.getByText("OLD", { exact: true })).toBeVisible();
 
+    const save = page.getByRole("button", { name: "Save", exact: true });
+    const expectSaveFeedback = async (width: number) => {
+      await page.setViewportSize({ width, height: 844 });
+      const rejectedMessage = "The settings could not be saved.";
+      await page.route(
+        "**/api/app/SaveConfig",
+        (route) => route.fulfill({ status: 400, json: { error: rejectedMessage } }),
+        { times: 1 },
+      );
+      await save.click();
+      const error = page.getByRole("alert").filter({ hasText: rejectedMessage });
+      await expect(error).toBeInViewport();
+      await expect(save).toBeEnabled();
+
+      await save.click();
+      await expect(error).toHaveCount(0);
+      await expect(
+        page.getByRole("status").filter({ hasText: "Settings saved and applied." }),
+      ).toBeInViewport();
+    };
+
     const entryControls = page.locator(".settings-map__header .settings-map__controls");
     const trackerSelector = entryControls.locator("select");
     await expect(trackerSelector.locator('option[value="OLD"]')).toHaveCount(0);
@@ -448,8 +469,7 @@ test("embedded tracker settings use the catalog for entries, reset, and unsuppor
     }
     await bluCard.getByLabel("API key", { exact: true }).fill("e2e-blu-activation");
 
-    await page.getByRole("button", { name: "Save", exact: true }).click();
-    await expect(page.getByText("Settings saved and applied.")).toBeVisible();
+    await expectSaveFeedback(1280);
     await page.getByRole("button", { name: "Reload", exact: true }).click();
 
     bluCard = page
@@ -460,7 +480,7 @@ test("embedded tracker settings use the catalog for entries, reset, and unsuppor
     await expect(bluCard).toHaveCount(0);
     await expect(trackerSelector.locator('option[value="BLU"]')).toHaveCount(1);
 
-    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expectSaveFeedback(390);
     await page.getByRole("button", { name: "Reload", exact: true }).click();
     await expect(
       page.locator("details.settings-card").filter({
@@ -647,6 +667,35 @@ test("embedded settings omit retired controls and keep path mapping pairs togeth
       ).toBe(true);
     }
     await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("embedded settings save ordered TMDB logo language codes", async ({ page }) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await page.goto(new URL("settings", app.url).toString());
+    await page.getByRole("button", { name: "Description", exact: true }).click();
+    await page.getByLabel("Show advanced", { exact: true }).check();
+    const picker = page.getByRole("button", { name: "Preferred logo languages", exact: true });
+    await picker.click();
+    const search = page.getByRole("searchbox", { name: "Search Preferred logo languages" });
+    await search.fill("Brazil");
+    await page.getByRole("checkbox", { name: /Brazilian Portuguese/ }).check();
+    await search.fill("Japanese");
+    await page.getByRole("checkbox", { name: /Japanese/ }).check();
+    await search.press("Escape");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(
+      page.getByRole("status").filter({ hasText: "Settings saved and applied." }),
+    ).toBeVisible();
+    const response = await page.request.get(new URL("api/app/GetConfig", app.url).toString());
+    expect(response.ok()).toBe(true);
+    expect(JSON.parse(await response.json()).Description.LogoLanguage).toBe("pt,ja");
   } finally {
     await app?.stop();
     await workspace.cleanup();

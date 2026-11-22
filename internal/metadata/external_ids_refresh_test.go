@@ -4,11 +4,13 @@
 package metadata
 
 import (
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"slices"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/externalidentity"
 	"github.com/autobrr/upbrr/internal/metadata/imdb"
 	"github.com/autobrr/upbrr/internal/metadata/tmdb"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
@@ -113,6 +115,70 @@ func TestResolveExternalIDsRefreshesChangedProviderIDs(t *testing.T) {
 			}
 			if imdbClient.infoCalls != tc.wantCalls || tmdbClient.metaCalls != tc.wantCalls || imdbClient.episodeLookupCalls != 1 {
 				t.Fatalf("fetch calls: IMDb=%d TMDB=%d parent=%d, want %d per provider and one parent lookup", imdbClient.infoCalls, tmdbClient.metaCalls, imdbClient.episodeLookupCalls, tc.wantCalls)
+			}
+		})
+	}
+}
+
+func TestCollectExternalIdentityRefreshesLegacyIMDbEditionEvidence(t *testing.T) {
+	for _, wantRows := range []int{1, 0} {
+		name := "with runtimes"
+		if wantRows == 0 {
+			name = "without runtimes"
+		}
+		t.Run(name, func(t *testing.T) {
+			source := filepath.Join(t.TempDir(), "Example.Movie.2026.mkv")
+			info := imdb.Info{
+				IMDbID: "tt1234567",
+				Title:  "Example Movie",
+				Type:   "movie",
+			}
+			if wantRows > 0 {
+				info.EditionRuntimes = []imdb.EditionDetail{{Seconds: 6001}}
+			}
+			client := &stubIMDB{info: info}
+			service := newTestService(t, &fakeRepo{}, WithIMDBClient(client), WithTMDBClient(&stubTMDB{}))
+			state := preparationstate.State{
+				SourcePath:        source,
+				StoredDataFresh:   true,
+				ExternalFreshness: api.ExternalFreshnessLoad,
+				Identity: api.ExternalIdentity{
+					SourcePath: source,
+					IMDBID:     1234567,
+					Category:   api.CanonicalCategoryMovie,
+					Provenance: api.IdentityProvenanceSet{IMDB: api.IdentityProvenanceExplicit},
+					Overrides:  api.IdentityOverrideState{IMDB: api.OverrideStateValue},
+					Resolution: api.IdentityResolutionKey{ContractVersion: externalidentity.ContractVersion},
+				},
+				ProviderMetadata: api.SourceScopedMetadata{
+					SourcePath: source,
+					IMDB: &api.IMDBMetadata{
+						IMDBID: 1234567,
+						Title:  "Example Movie",
+						Type:   "movie",
+					},
+				},
+				Release: api.ReleaseInfo{Category: "MOVIE", Title: "Example Movie"},
+			}
+			for range 2 {
+				got, err := service.collectExternalIdentityEvidence(t.Context(), state)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got.Identity.IMDBID != 1234567 || got.Identity.Overrides.IMDB != api.OverrideStateValue || client.infoCalls != 1 {
+					t.Fatalf("expected one refresh without changing the pin: id=%d override=%s calls=%d", got.Identity.IMDBID, got.Identity.Overrides.IMDB, client.infoCalls)
+				}
+				if md := got.ProviderMetadata.IMDB; md == nil || len(md.EditionRuntimes) != wantRows {
+					t.Fatalf("expected refreshed IMDb metadata with %d rows", wantRows)
+				}
+				encoded, err := json.Marshal(got.ProviderMetadata)
+				if err != nil {
+					t.Fatal(err)
+				}
+				state.ProviderMetadata = api.SourceScopedMetadata{}
+				if err := json.Unmarshal(encoded, &state.ProviderMetadata); err != nil {
+					t.Fatal(err)
+				}
 			}
 		})
 	}

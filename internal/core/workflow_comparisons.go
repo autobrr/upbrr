@@ -2110,8 +2110,8 @@ func (c *Core) ReleaseWorkflowMediaArtifactPath(
 	return path, nil
 }
 
-// RestoreComparisons rebinds only comparison-owned media after preparation changes.
-// It preserves corrections and pixels, never ordinary media or prior approval.
+// RestoreComparisons rebinds checked comparison pixels and corrections. For the
+// same workflow and prepared release it also restores compatible ordinary media.
 func (b workflowMediaBuilder) RestoreComparisons(ctx context.Context, release api.ReleaseRef,
 	projections api.TrackerReleaseProjectionSet, previous api.MediaArtifactSet, private any, _ time.Time,
 ) (api.MediaArtifactSet, releaseworkflow.RetainedMediaResource, error) {
@@ -2122,6 +2122,57 @@ func (b workflowMediaBuilder) RestoreComparisons(ctx context.Context, release ap
 	snapshot, retained, err := b.mediaMutationBase(release, projections, nil, nil)
 	if err != nil {
 		return api.MediaArtifactSet{}, nil, err
+	}
+	samePreparedRelease := previous.Release.ID != "" && previous.Release == projections.Release &&
+		previous.ReleaseRef == release && previous.WorkflowID == projections.WorkflowID
+	if samePreparedRelease {
+		// Limit cache reuse to ordinary images this comparison snapshot already owned.
+		ordinaryAssets := make(map[string]retainedOrdinaryImage)
+		for _, artifact := range previous.Artifacts {
+			switch artifact.Kind {
+			case api.MediaArtifactScreenshot, api.MediaArtifactDVDMenu:
+				image := old.ArtifactImages[artifact.ID]
+				if image.Path != "" {
+					ordinaryAssets[normalizedUploadImagePath(image.Path)] = retainedOrdinaryImage{artifact: artifact, image: image}
+				}
+			case api.MediaArtifactComparison, api.MediaArtifactHostedImage:
+			}
+		}
+		if len(ordinaryAssets) > 0 {
+			ordinary, ordinaryPrivate, err := b.restoreCachedMedia(ctx, release, projections, ordinaryAssets)
+			if err != nil {
+				return api.MediaArtifactSet{}, nil, err
+			}
+			if len(ordinary.Artifacts) > 0 {
+				snapshot = ordinary
+				snapshot.SavedImagePlanID = previous.SavedImagePlanID
+				retained = ordinaryPrivate
+				retained.dvdMenuSubject = old.dvdMenuSubject
+				for id, menu := range retained.DVDMenuImages {
+					index := slices.IndexFunc(old.DVDMenus, func(prior api.DVDMenuCaptureImage) bool {
+						return pathing.SamePath(prior.Path, menu.Path)
+					})
+					if index >= 0 {
+						menu.Discovery = old.DVDMenus[index].Discovery
+						retained.DVDMenuImages[id] = menu
+					}
+				}
+				rebuildWorkflowMediaLocalSlices(&retained, snapshot)
+			}
+		}
+		snapshot.AutomaticScreenshotSelection = previous.AutomaticScreenshotSelection
+		if len(previous.FailedHosts) > 0 {
+			scope, err := workflowMediaHostAccountScope(b.config, "")
+			if err != nil {
+				return api.MediaArtifactSet{}, nil, err
+			}
+			// Legacy snapshots have no scope record. Keep their explicit retry
+			// requirement until a new hosting operation records current policy.
+			if old.imageHostingScope == "" || old.imageHostingScope == scope {
+				snapshot.FailedHosts = slices.Clone(previous.FailedHosts)
+				retained.imageHostingScope = old.imageHostingScope
+			}
+		}
 	}
 	plan, err := previous.Comparisons.Clone()
 	if err != nil {
@@ -2304,13 +2355,38 @@ func (b workflowMediaBuilder) RestoreComparisons(ctx context.Context, release ap
 			snapshot.Artifacts = append(snapshot.Artifacts, artifact)
 			continue
 		}
-		source := old.HostedSources[artifact.ID]
-		if artifact.Kind != api.MediaArtifactHostedImage || !kept[source] {
+		if artifact.Kind != api.MediaArtifactHostedImage {
 			continue
+		}
+		source := old.HostedSources[artifact.ID]
+		link := old.HostedImages[artifact.ID]
+		if !kept[source] {
+			if !samePreparedRelease || source == "" ||
+				(artifact.Purpose != api.ScreenshotPurposeFinal && artifact.Purpose != api.ScreenshotPurposeMenu) {
+				continue
+			}
+			scope, err := workflowMediaHostAccountScope(b.config, link.Host)
+			linkURL := hostedImageURL(link)
+			if err != nil || scope != link.AccountScope || linkURL == "" || linkURL != artifact.URL || artifact.Source != string(source) {
+				continue
+			}
+			if !artifact.SourceUnavailable {
+				image, available := retained.ArtifactImages[source]
+				if !available {
+					image = old.ArtifactImages[source]
+				}
+				if image.Path == "" || !pathing.SamePath(image.Path, link.ImagePath) ||
+					(link.ContentSHA256 != "" && image.ContentSHA256 != "" && !strings.EqualFold(link.ContentSHA256, image.ContentSHA256)) {
+					continue
+				}
+				// The prior published URL remains removable if its file can
+				// no longer be restored as a usable release screenshot.
+				artifact.SourceUnavailable = !available
+			}
 		}
 		snapshot.Artifacts = append(snapshot.Artifacts, artifact)
 		retained.HostedSources[artifact.ID] = source
-		retained.HostedImages[artifact.ID] = old.HostedImages[artifact.ID]
+		retained.HostedImages[artifact.ID] = link
 	}
 	plan.Problems = comparisons.Validate(plan)
 	plan.Fingerprint, err = comparisons.ReviewFingerprint(plan)

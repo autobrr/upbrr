@@ -140,6 +140,30 @@ func (s State) requiresMediaInfoUniqueID() bool {
 	return false
 }
 
+// SceneResult captures scene metadata from external sources. NFO fields are
+// best-effort side-effect outputs and may be empty on an otherwise valid match.
+type SceneResult struct {
+	IsScene   bool
+	SceneName string
+	TMDBID    int
+	IMDBID    int
+	TVDBID    int
+	TVmazeID  int
+	MALID     int
+	// Service is the normalized service code parsed from a saved scene NFO.
+	Service string
+	// ServiceLongName is the display name matching Service when one is known.
+	ServiceLongName string
+	// NFOPath is the local filesystem path to a saved scene NFO.
+	NFOPath string
+	// NFONew reports whether NFOPath was downloaded during this detection run.
+	NFONew bool
+	// Renamed reports a mismatch between the local and canonical scene media filename.
+	Renamed bool
+	// RenamedReason is an operator-facing explanation set when Renamed is true.
+	RenamedReason string
+}
+
 // State is mutable, source-scoped collection evidence used only during
 // preparation. Release remains detached parser evidence; ResolvedNaming is
 // rebuilt from Release and current canonical evidence whenever the release name
@@ -162,6 +186,9 @@ type State struct {
 	Bluray                     *api.BluraySelection
 	BlurayDetails              *api.BlurayDetailRequest
 	LookupWarnings             []string
+	EditionRuntimeSeconds      float64
+	EditionFrameRate           float64
+	EditionOriginalFrameRate   float64
 	Paths                      []string
 	DiscType                   string
 	Discs                      []DiscResource
@@ -200,6 +227,8 @@ type State struct {
 	EffectiveMetadata          api.EffectiveMetadata
 	PersonalRelease            bool
 	InfoHash                   string
+	// CollectedScene holds the early, IMDb-independent scene check for tentative matches.
+	CollectedScene *SceneResult
 	// ClientEvidence retains the complete detached preparation-owned client snapshot.
 	ClientEvidence ClientEvidenceSnapshot
 	// DiscoveredTorrentPath is a reusable local metainfo path found during client discovery.

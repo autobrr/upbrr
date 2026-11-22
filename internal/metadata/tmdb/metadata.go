@@ -6,6 +6,7 @@ package tmdb
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/redaction"
 )
 
 const imageBaseURL = "https://image.tmdb.org/t/p/original"
@@ -152,12 +154,12 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 	result.Genres, result.GenreIDs = genresFromMedia(media.Genres)
 
 	var (
-		external     externalIDsResponse
-		videos       videosResponse
-		keywords     keywordsResponse
-		credits      creditsResponse
-		images       imagesResponse
-		translations TranslationResponse
+		external       externalIDsResponse
+		videos         videosResponse
+		keywords       keywordsResponse
+		credits        creditsResponse
+		logo, logoName string
+		translations   TranslationResponse
 
 		externalErr     error
 		videosErr       error
@@ -206,10 +208,7 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 	})
 	if input.AddLogo {
 		group.Go(func() error {
-			endpoint := path + "/images"
-			if err := c.getJSON(ctx, endpoint, map[string]string{"api_key": c.apiKey}, &images); err != nil {
-				imagesErr = err
-			}
+			logo, logoName, imagesErr = c.SelectLogo(ctx, input.TMDBID, category, input.LogoLanguages)
 			return nil
 		})
 	}
@@ -258,11 +257,10 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 	}
 
 	if input.AddLogo && imagesErr == nil {
-		logo, logoName := selectLogo(images.Logos, input.LogoLanguages)
 		result.Logo = logo
 		result.TMDBLogo = logoName
 	} else if input.AddLogo && imagesErr != nil {
-		logger.Warnf("tmdb: logo lookup failed: %v", imagesErr)
+		logger.Warnf("tmdb: logo lookup failed: %s", redaction.RedactValue(imagesErr.Error(), nil))
 	}
 	result.LogoLookupAttempted = input.AddLogo && imagesErr == nil
 
@@ -652,42 +650,31 @@ func uniqueNames(creators []creator) []string {
 	return out
 }
 
+// SelectLogo queries or reuses full image evidence so another preference can be
+// applied without fetching unrelated TMDB endpoints.
+func (c *Client) SelectLogo(ctx context.Context, id int, category string, languages []string) (string, string, error) {
+	kind := "movie"
+	if strings.EqualFold(strings.TrimSpace(category), "TV") {
+		kind = "tv"
+	}
+	var images imagesResponse
+	path := fmt.Sprintf("/%s/%d/images", kind, id)
+	if err := c.getJSON(ctx, path, map[string]string{"api_key": c.apiKey}, &images); err != nil && !errors.Is(err, errNotFound) {
+		return "", "", err
+	}
+	logo, name := selectLogo(images.Logos, languages)
+	return logo, name, nil
+}
+
 func selectLogo(logos []logoImage, languages []string) (string, string) {
-	langs := normalizeLanguages(languages)
-	for _, lang := range langs {
+	for _, lang := range slices.Concat(languages, []string{"en", ""}) {
 		for _, logo := range logos {
-			if logo.ISO6391 == lang {
+			if logo.ISO6391 == lang && logo.FilePath != "" {
 				return imageBaseURL + logo.FilePath, strings.TrimPrefix(logo.FilePath, "/")
 			}
 		}
 	}
-	for _, logo := range logos {
-		if logo.ISO6391 == "" {
-			return imageBaseURL + logo.FilePath, strings.TrimPrefix(logo.FilePath, "/")
-		}
-	}
 	return "", ""
-}
-
-func normalizeLanguages(languages []string) []string {
-	items := make([]string, 0)
-	seen := make(map[string]struct{})
-	add := func(value string) {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			return
-		}
-		if _, ok := seen[value]; ok {
-			return
-		}
-		seen[value] = struct{}{}
-		items = append(items, value)
-	}
-	for _, lang := range languages {
-		add(lang)
-	}
-	add("en")
-	return items
 }
 
 func parseYear(value string) int {

@@ -26,7 +26,7 @@ import (
 
 // ContractVersion changes whenever prepared fact semantics or the private seed
 // contract become incompatible, forcing persisted generations to be recomputed.
-const ContractVersion = "prepared-release-v85-partial-season"
+const ContractVersion = "prepared-release-v88-imdb-edition-cadence"
 
 // Store is the prepared-release persistence port. Implementations must commit
 // facts, identity, and provider metadata as one generation transaction.
@@ -224,7 +224,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 		ctx,
 		api.NewPreparationProgressUpdate(api.PreparationPhasePreparedCache, api.PreparationProgressRunning, "Checking prepared generation compatibility."),
 	)
-	compatibility, err := preparationCompatibility(input, sourceFingerprint, resolved.Corrections.Revision)
+	compatibility, err := preparationCompatibilityForSource(input, sourceFingerprint, resolved.Corrections.Revision, layout.DiscType)
 	if err != nil {
 		api.EmitPreparationProgress(
 			ctx,
@@ -247,7 +247,11 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 	// and WebUI calls carry their resolved selection directly and remain reusable.
 	reuseAllowed := layout.DiscType != "BDMV" || input.Instructions.Playlist.Set
 	forceClientRefresh := input.Controls.ForceRecheck != nil && *input.Controls.ForceRecheck
-	if hasCurrent && reuseAllowed && !input.Force && !input.ExternalFreshness.RequiresRefresh() && !forceClientRefresh &&
+	tmdb := current.ProviderMetadata.TMDB
+	// A failed logo lookup must not pin the fallback artwork in an otherwise
+	// compatible generation. Exact-generation consumers can still use it.
+	retryLogo := tmdb != nil && tmdb.LogoLookupPending && !input.RequirePrepared
+	if hasCurrent && reuseAllowed && !retryLogo && !input.Force && !input.ExternalFreshness.RequiresRefresh() && !forceClientRefresh &&
 		!input.Controls.CaptureHDRMetadata && input.Controls.BlurayDetails == nil &&
 		(input.ExternalFreshness != api.ExternalFreshnessLoad || input.RequirePrepared) &&
 		current.Compatibility == compatibility {
@@ -304,9 +308,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 		}
 		m.logPreparedFacts(ctx, current, cache, resolved.Corrections.Revision)
 		return cloneResult(api.PrepareResult{
-			Diagnostics: append(
-				externalidentity.CandidateDiagnostics(current.ProviderMetadata.IdentityCandidates),
-				sourceSeasonDiagnostics(owned)...),
+			Diagnostics:           append(preparedMetadataDiagnostics(current), sourceSeasonDiagnostics(owned)...),
 			Release:               current,
 			EffectiveInstructions: input.Instructions,
 			Corrections:           resolved.Corrections,
@@ -479,7 +481,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 		resolved.Corrections.Revision,
 		finalCorrections,
 		func(revision uint64) (api.PreparationCompatibility, error) {
-			committedCompatibility, err := preparationCompatibility(input, sourceFingerprint, revision)
+			committedCompatibility, err := preparationCompatibilityForSource(input, sourceFingerprint, revision, layout.DiscType)
 			if err == nil {
 				release.Compatibility = committedCompatibility
 			}
@@ -493,6 +495,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 
 	diagnostics := append([]api.PreparationDiagnostic(nil), collected.Diagnostics...)
 	diagnostics = append(diagnostics, identityResult.Diagnostics...)
+	diagnostics = append(diagnostics, imdbEditionDiagnostics(release)...)
 	owned := envelope{
 		completeFacts: true,
 		result: api.PrepareResult{
@@ -1062,11 +1065,15 @@ func resourcesFromManifest(manifest api.SourceManifest, input api.PrepareInput) 
 	}
 }
 
+func preparedMetadataDiagnostics(release api.PreparedRelease) []api.PreparationDiagnostic {
+	return append(externalidentity.CandidateDiagnostics(release.ProviderMetadata.IdentityCandidates), imdbEditionDiagnostics(release)...)
+}
+
 func envelopeFromPersisted(release api.PreparedRelease, input api.PrepareInput) envelope {
 	return envelope{
 		result: api.PrepareResult{
 			Release:               release,
-			Diagnostics:           externalidentity.CandidateDiagnostics(release.ProviderMetadata.IdentityCandidates),
+			Diagnostics:           preparedMetadataDiagnostics(release),
 			EffectiveInstructions: input.Instructions,
 		},
 		resources: resourcesFromManifest(release.Source, input),

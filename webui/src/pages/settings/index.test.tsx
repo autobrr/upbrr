@@ -147,6 +147,31 @@ describe("SettingsPage", () => {
     expect(screen.queryByText("Copyright (c) 2026 autobrr")).not.toBeInTheDocument();
   });
 
+  it("announces save feedback before the editable tracker settings", () => {
+    const props = {
+      ...baseProps,
+      settingsSection: "trackers",
+      setSettingsSection: vi.fn(),
+    };
+    const { rerender } = render(<SettingsPage {...props} />);
+    const success = screen.getByRole("status");
+    const error = screen.getByRole("alert");
+    const trackerHeading = screen.getByRole("heading", { name: "Trackers" });
+
+    rerender(<SettingsPage {...props} settingsError="Correct the configuration and retry." />);
+    expect(error).toHaveTextContent("Correct the configuration and retry.");
+    expect(
+      error.compareDocumentPosition(trackerHeading) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    rerender(<SettingsPage {...props} settingsSaved="Settings saved and applied." />);
+    expect(error).toBeEmptyDOMElement();
+    expect(success).toHaveTextContent("Settings saved and applied.");
+    expect(
+      success.compareDocumentPosition(trackerHeading) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("shows path-free DVD engine and FFmpeg capability diagnostics", async () => {
     const info: ApplicationInfo = {
       version: "dev",

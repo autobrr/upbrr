@@ -2647,6 +2647,7 @@ func (m *Module) Current(ctx context.Context, ownerID string, workflowID api.Wor
 	} else if !errors.Is(operationErr, ErrWorkflowNotFound) {
 		return CommandResult{}, fmt.Errorf("release workflow current operation query: %w", operationErr)
 	}
+	removeOrphanedMediaPreparationActions(&state)
 	result := CommandResult{Workflow: state.Workflow}
 	result.InputReview = inputReviewContext(&state)
 	if operationErr == nil {
@@ -7003,6 +7004,37 @@ func (m *Module) refreshPersistedMediaStatus(
 	return m.publishMediaReplacement(ownerID, state, nextRevision, now, refreshed, resource)
 }
 
+func isMediaPreparationAction(media *api.MediaArtifactSet, action api.RequiredAction) bool {
+	return media != nil && action.ID != "" &&
+		(action.Kind == api.RequiredActionReviewComparisons ||
+			action.Kind == api.RequiredActionProvideTrackerInput && action.TrackerID == "") &&
+		slices.ContainsFunc(media.RequiredActions, func(mediaAction api.RequiredAction) bool {
+			return mediaAction.ID == action.ID
+		})
+}
+
+// removeOrphanedMediaPreparationActions retires input requests from withdrawn
+// media snapshots while keeping unrelated input and reconciliation actions.
+func removeOrphanedMediaPreparationActions(state *State) {
+	workflow := &state.Workflow
+	if workflow.Media != nil || len(workflow.RequiredActions) == 0 {
+		return
+	}
+	priorCount := len(workflow.RequiredActions)
+	workflow.RequiredActions = slices.DeleteFunc(workflow.RequiredActions, func(action api.RequiredAction) bool {
+		for _, media := range state.Media {
+			if isMediaPreparationAction(&media, action) {
+				return true
+			}
+		}
+		return false
+	})
+	if len(workflow.RequiredActions) < priorCount && workflow.Status == api.WorkflowStatusBlocked &&
+		!hasPendingRequiredAction(workflow.RequiredActions) && len(workflow.Failures) == 0 {
+		workflow.Status = api.WorkflowStatusActive
+	}
+}
+
 // refreshMutatedMediaStatus recomputes media readiness after a mutation while
 // retaining image-host failures and pending reconciliation actions. Before
 // required hosting runs and during explicit skip, selected local assets determine
@@ -7084,10 +7116,20 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 		screenshotsReady = screenshotsReady && selectedScreenshots >= requiredScreenshots
 	}
 	if !screenshotsReady || selectedMenus < requiredMenus {
+		prompt := "Prepare the required image hosts before upload. Published links must cover the required screenshots and comparisons for the eligible trackers."
+		switch {
+		case selectedScreenshots < requiredScreenshots:
+			prompt = fmt.Sprintf("Capture or select more release screenshots before upload (%d of %d required).", selectedScreenshots, requiredScreenshots)
+			if len(comparisonScreenshots) > 0 {
+				prompt += fmt.Sprintf(" This includes %d from the main comparison column.", len(comparisonScreenshots))
+			}
+		case selectedMenus < requiredMenus:
+			prompt = fmt.Sprintf("Capture or select more DVD menu images before upload (%d of %d required).", selectedMenus, requiredMenus)
+		}
 		snapshot.Status = api.StageStatusBlocked
 		snapshot.RequiredActions = append(snapshot.RequiredActions, api.RequiredAction{
 			Kind:   api.RequiredActionProvideTrackerInput,
-			Prompt: "Capture, select, or host the required release images before continuing.",
+			Prompt: prompt,
 		})
 		return
 	}

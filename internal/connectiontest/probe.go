@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -142,6 +143,8 @@ func testTorrentClient(ctx context.Context, cfg config.Config, target api.Connec
 	endpoint.RawPath = ""
 	referer := *endpoint
 	referer.User = nil
+	versionURL := *endpoint
+	versionURL.Path = basePath + "/api/v2/app/version"
 	if !clientCfg.UsesQuiProxy() {
 		username, password := strings.TrimSpace(clientCfg.QbitUsername()), strings.TrimSpace(clientCfg.QbitPassword())
 		if (username != "" && !CredentialPresent(username)) || (password != "" && !CredentialPresent(password)) {
@@ -150,29 +153,32 @@ func testTorrentClient(ctx context.Context, cfg config.Config, target api.Connec
 		// Empty credentials preserve qBittorrent's configured authentication bypass.
 		if username != "" || password != "" {
 			endpoint.Path = basePath + "/api/v2/auth/login"
-			body, failure := Request(ctx, client, http.MethodPost, endpoint.String(), strings.NewReader(url.Values{
+			status, body, failure := request(ctx, client, http.MethodPost, endpoint.String(), strings.NewReader(url.Values{
 				"username": {username},
 				"password": {password},
-			}.Encode()), http.Header{"Content-Type": {"application/x-www-form-urlencoded"}, "Referer": {referer.String()}})
+			}.Encode()), http.Header{"Content-Type": {"application/x-www-form-urlencoded"}, "Referer": {referer.String()}}, http.StatusNoContent)
 			if failure.Code != "" {
 				return failure
 			}
-			if string(body) == "Fails." {
+			switch {
+			case status == http.StatusNoContent:
+				if len(client.Jar.Cookies(&versionURL)) == 0 {
+					return result("unexpected_response", "qBittorrent returned HTTP 204 without a session cookie for the version request.")
+				}
+			case string(body) == "Fails.":
 				return result("credentials_rejected", "qBittorrent rejected the username or password.")
-			}
-			if string(body) != "Ok." {
+			case string(body) != "Ok.":
 				return UnexpectedResponse()
 			}
 		}
 	}
-	endpoint.Path = basePath + "/api/v2/app/version"
 	headers := make(http.Header)
 	if !clientCfg.UsesQuiProxy() {
 		headers.Set("Referer", referer.String())
 	}
 	// qui may forward Referer to qBittorrent, where the proxy origin fails CSRF
 	// validation. Match production proxy reads, which do not send this header.
-	body, failure := Request(ctx, client, http.MethodGet, endpoint.String(), nil, headers)
+	body, failure := Request(ctx, client, http.MethodGet, versionURL.String(), nil, headers)
 	if failure.Code != "" {
 		if clientCfg.UsesQuiProxy() && failure.Code == "authentication_required" {
 			return result(
@@ -236,15 +242,16 @@ func CredentialPresent(value string) bool {
 // Request sends one provider request with bounded response reading and safe errors.
 // It accepts only HTTP 200; providers must still validate their response contract.
 func Request(ctx context.Context, client *http.Client, method, endpoint string, body io.Reader, headers http.Header) ([]byte, api.ConnectionTestResult) {
-	return request(ctx, client, method, endpoint, body, headers, false)
+	_, data, failure := request(ctx, client, method, endpoint, body, headers)
+	return data, failure
 }
 
 // SubmitLogin submits a provider's established login form using a caller-owned
 // ephemeral cookie jar. Login redirects are accepted but never followed; callers
 // must verify a separate protected page before reporting success.
 func SubmitLogin(ctx context.Context, client *http.Client, endpoint string, values url.Values) api.ConnectionTestResult {
-	_, failure := request(ctx, client, http.MethodPost, endpoint, strings.NewReader(values.Encode()),
-		http.Header{"Content-Type": {"application/x-www-form-urlencoded"}, "User-Agent": {"upbrr"}}, true)
+	_, _, failure := request(ctx, client, http.MethodPost, endpoint, strings.NewReader(values.Encode()),
+		http.Header{"Content-Type": {"application/x-www-form-urlencoded"}, "User-Agent": {"upbrr"}}, http.StatusFound, http.StatusSeeOther)
 	return failure
 }
 
@@ -254,11 +261,11 @@ func request(
 	method, endpoint string,
 	body io.Reader,
 	headers http.Header,
-	login bool,
-) ([]byte, api.ConnectionTestResult) {
+	additionalStatuses ...int,
+) (int, []byte, api.ConnectionTestResult) {
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, body)
 	if err != nil {
-		return nil, result("invalid_configuration", "The connection URL or credentials are invalid. Review the entered settings.")
+		return 0, nil, result("invalid_configuration", "The connection URL or credentials are invalid. Review the entered settings.")
 	}
 	maps.Copy(req.Header, headers)
 	if req.Header.Get("Accept") == "" {
@@ -269,41 +276,39 @@ func request(
 	}
 	response, err := client.Do(req)
 	if err != nil {
-		return nil, RequestFailure(ctx, err)
+		return 0, nil, RequestFailure(ctx, err)
 	}
 	defer response.Body.Close()
 	switch response.StatusCode {
 	case http.StatusUnauthorized:
-		return nil, result(
+		return 0, nil, result(
 			"authentication_required",
 			"The service returned HTTP 401 (Unauthorized). Check authentication and reverse-proxy access; this response alone does not identify which credential or layer rejected the request.",
 		)
 	case http.StatusForbidden:
-		return nil, result(
+		return 0, nil, result(
 			"access_denied",
 			"The service returned HTTP 403 (Forbidden). Check account permissions, IP restrictions, authentication and proxy access.",
 		)
 	case http.StatusTooManyRequests:
-		return nil, result("rate_limited", "The service returned HTTP 429 (Too Many Requests). Wait before testing again.")
-	case http.StatusFound, http.StatusSeeOther:
-		if !login {
-			return nil, httpFailure(response.StatusCode)
-		}
+		return 0, nil, result("rate_limited", "The service returned HTTP 429 (Too Many Requests). Wait before testing again.")
 	case http.StatusOK:
 	default:
-		return nil, httpFailure(response.StatusCode)
+		if !slices.Contains(additionalStatuses, response.StatusCode) {
+			return 0, nil, httpFailure(response.StatusCode)
+		}
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, responseLimit+1))
 	if err != nil {
-		return nil, RequestFailure(ctx, err)
+		return 0, nil, RequestFailure(ctx, err)
 	}
 	if len(data) > responseLimit {
-		return nil, result("unexpected_response", "The service response exceeded the connection test limit.")
+		return 0, nil, result("unexpected_response", "The service response exceeded the connection test limit.")
 	}
 	if failure := responseFailure(ctx, data); failure.Code != "" {
-		return nil, failure
+		return 0, nil, failure
 	}
-	return data, api.ConnectionTestResult{}
+	return response.StatusCode, data, api.ConnectionTestResult{}
 }
 
 func httpFailure(status int) api.ConnectionTestResult {

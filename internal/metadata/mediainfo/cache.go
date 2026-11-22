@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/autobrr/upbrr/internal/filelock"
 	"github.com/autobrr/upbrr/internal/pathing/layout"
 )
 
@@ -89,6 +90,24 @@ func commitReports(ctx context.Context, dir string, identity reportIdentity, tex
 		}
 		if err := writeMediaInfoText(filepath.Join(dir, output.name), output.data); err != nil {
 			return fmt.Errorf("mediainfo: publish %s: %w", output.name, err)
+		}
+	}
+	return nil
+}
+
+// WithdrawPrimaryReports removes only the managed root pair after a DVD collection no longer has a primary title.
+func WithdrawPrimaryReports(ctx context.Context, dir string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("mediainfo: withdrawing primary reports canceled: %w", err)
+	}
+	lock, err := filelock.Acquire(filepath.Join(dir, ".mediainfo.lock"))
+	if err != nil {
+		return fmt.Errorf("mediainfo: primary reports already in use: %w", err)
+	}
+	defer lock.Close()
+	for _, name := range []string{"mediainfo.identity.json", "mediainfo.txt", "MediaInfo.json"} {
+		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("mediainfo: withdraw %s: %w", name, err)
 		}
 	}
 	return nil

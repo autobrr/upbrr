@@ -23,6 +23,7 @@ import type {
   HDRAnalysisInstructions,
   DupeDecision,
   MediaCaptureInstructions,
+  OpenActiveInputRequest,
   Operation as WorkflowOperationStatus,
   ReleaseWorkflowCurrent,
   TrackerProjectionInstructions,
@@ -40,6 +41,7 @@ import BlurayCandidatesPage from "../pages/bluray_candidates";
 import type { ReleaseSessionPorts } from "./ports";
 import { setAppRequestHandlerForTests } from "../api/client";
 import { productionReleaseSessionPorts } from "./production";
+import { workflowDescriptionScreenshotLimit } from "./projections";
 
 afterEach(() => window.sessionStorage.removeItem("upbrr.cancellingReleaseOperation"));
 
@@ -5342,7 +5344,7 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
-  it("reopens and re-verifies the same source for explicit refresh and reset", async () => {
+  it("requests verification reuse only for active metadata corrections", async () => {
     const sourcePath = "C:\\media\\Refresh.Release.2026.mkv";
     let slotRevision = 1;
     let workflowRevision = 2;
@@ -5355,7 +5357,7 @@ describe("useReleaseSession", () => {
       current: async () => serverCurrent,
       continue: continueWorkflow,
     });
-    const open = vi.fn(async (_request) => {
+    const open = vi.fn(async (_request: OpenActiveInputRequest) => {
       slotRevision += 1;
       workflowRevision += 1;
       serverCurrent = workflowCurrentFromPreview(
@@ -5424,6 +5426,24 @@ describe("useReleaseSession", () => {
         }),
       }),
     );
+    expect(open.mock.calls.map(([request]) => request.reuseVerifiedSource)).toEqual([
+      undefined,
+      undefined,
+    ]);
+
+    act(() => result.current.input.changeMetadata({ OriginalLanguage: "fr" }));
+    await act(() => result.current.input.prepare());
+    expect(open.mock.calls[2]?.[0]).toMatchObject({
+      reuseVerifiedSource: true,
+      request: { intent: { correctionPatch: expect.anything() } },
+    });
+
+    act(() => result.current.input.changeMetadata({ OriginalLanguage: "ja" }));
+    await act(() => result.current.input.openSource(sourcePath));
+    expect(open.mock.calls[3]?.[0]).toMatchObject({
+      request: { intent: { correctionPatch: expect.anything() } },
+    });
+    expect(open.mock.calls[3]?.[0].reuseVerifiedSource).toBeUndefined();
     unmount();
   });
 
@@ -5957,6 +5977,54 @@ describe("useReleaseSession", () => {
       expect(await result.current.uploadedImages.upload()).toBe(true);
     });
     expect(uploadImages).toHaveBeenCalledOnce();
+    const hosted = result.current.workflow.view.current!;
+    expect(
+      workflowDescriptionScreenshotLimit({
+        ...hosted,
+        media: {
+          ...hosted.media!,
+          artifacts: [
+            ...hosted.media!.artifacts,
+            {
+              id: "main-image",
+              kind: "comparison",
+              purpose: "comparison",
+              selected: true,
+              order: 4,
+            },
+            {
+              id: "other-image",
+              kind: "comparison",
+              purpose: "comparison",
+              selected: true,
+              order: 5,
+            },
+          ],
+          comparisons: {
+            imported: true,
+            fingerprint: "7".repeat(64),
+            approvedFingerprint: "7".repeat(64),
+            mainSourceId: "main",
+            reuseMainScreenshots: true,
+            preferences: { count: 1, motionPercent: 0, darkPercent: 0 },
+            sources: [
+              { id: "main", label: "Main", imported: true, overlay: false },
+              { id: "other", label: "Other", imported: true, overlay: false },
+            ],
+            rows: [
+              {
+                id: "row",
+                excluded: false,
+                cells: [
+                  { sourceId: "main", artifactId: "main-image" },
+                  { sourceId: "other", artifactId: "other-image" },
+                ],
+              },
+            ],
+          },
+        },
+      }),
+    ).toBe(0);
     await act(() => result.current.descriptions.load());
     await act(() => result.current.upload.start());
 

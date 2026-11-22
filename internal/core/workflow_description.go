@@ -19,8 +19,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// workflowDescriptionRendererVersion invalidates generated output when composition changes.
-const workflowDescriptionRendererVersion = "description-renderer-v8-bhd-primary-bdinfo"
+// workflowDescriptionRendererVersion invalidates generated output when composition or preview rendering changes.
+const workflowDescriptionRendererVersion = "description-renderer-v12-comparison-previews"
 
 type workflowDescriptionSubjectResolver interface {
 	ResolveUploadSubject(context.Context, api.UploadSubjectInput) (api.UploadSubject, error)
@@ -56,10 +56,25 @@ func (b workflowDescriptionBuilder) Fingerprints(
 	if err != nil {
 		return "", "", err
 	}
-	return workflowDescriptionFingerprints(release, projections, media, instructions, subject, exactMedia)
+	return b.workflowDescriptionFingerprints(release, projections, media, instructions, subject, exactMedia)
 }
 
-func workflowDescriptionFingerprints(
+// rendererVersion separates generated output from retained input and manual edits.
+func (b workflowDescriptionBuilder) rendererVersion(projections api.TrackerReleaseProjectionSet) string {
+	ptp, _ := config.TrackerConfigByName(b.config.Trackers.Trackers, "PTP")
+	if ptp.ScreenshotBlankLineEnabled() {
+		return workflowDescriptionRendererVersion
+	}
+	targets := workflowDescriptionTargets(projections.Projections)
+	if slices.ContainsFunc(targets, func(target api.TrackerReleaseProjection) bool {
+		return strings.EqualFold(string(target.TrackerID), "PTP")
+	}) {
+		return workflowDescriptionRendererVersion + "-compact-ptp-screenshots"
+	}
+	return workflowDescriptionRendererVersion
+}
+
+func (b workflowDescriptionBuilder) workflowDescriptionFingerprints(
 	release api.ReleaseRef,
 	projections api.TrackerReleaseProjectionSet,
 	media api.MediaArtifactSet,
@@ -71,7 +86,7 @@ func workflowDescriptionFingerprints(
 		Template        string
 		Version         string
 		RendererVersion string
-	}{subject.DescriptionTemplate, strings.TrimSpace(instructions.TemplateVersion), workflowDescriptionRendererVersion})
+	}{subject.DescriptionTemplate, strings.TrimSpace(instructions.TemplateVersion), b.rendererVersion(projections)})
 	if err != nil {
 		return "", "", fmt.Errorf("workflow description template fingerprint: %w", err)
 	}
@@ -141,7 +156,7 @@ func (b workflowDescriptionBuilder) Build(
 	if err != nil {
 		return api.DescriptionSet{}, err
 	}
-	inputFingerprint, templateFingerprint, err := workflowDescriptionFingerprints(
+	inputFingerprint, templateFingerprint, err := b.workflowDescriptionFingerprints(
 		release,
 		projections,
 		media,

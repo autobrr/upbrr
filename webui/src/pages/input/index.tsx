@@ -3,7 +3,7 @@
 
 import { FieldHelp } from "../../components/ui/field-help";
 import { pageStyle } from "../../components/ui/pageStyle";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { Button } from "../../components/ui/button";
 import {
@@ -1373,7 +1373,29 @@ export default function InputPage(props: Props) {
               key={`${diagnostic.Code}-${diagnostic.Message}`}
               className="whitespace-pre-line break-words text-muted-foreground"
             >
-              {diagnostic.Message}
+              {diagnostic.Code === "imdb_edition_mismatch"
+                ? diagnostic.Message.split("\n").map((line, index) => {
+                    const link =
+                      /^https:\/\/www\.imdb\.com\/title\/tt[0-9]+\/(technical|alternateversions)\/$/.exec(
+                        line,
+                      );
+                    return link ? (
+                      <a
+                        key={line}
+                        className="block underline"
+                        href={line}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {link[1] === "technical"
+                          ? "IMDb technical specifications"
+                          : "IMDb alternate versions"}
+                      </a>
+                    ) : (
+                      <Fragment key={index}>{line}</Fragment>
+                    );
+                  })
+                : diagnostic.Message}
             </p>
           ))}
       </section>

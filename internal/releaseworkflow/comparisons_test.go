@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -358,6 +359,101 @@ func TestComparisonsBeforeDuplicateChecksRetainRowsWithoutHostingAuthority(t *te
 	current = executeCommand(t, module, RestoreComparisonsCommand{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision})
 	if current.Media == nil || current.Media.Comparisons.Rows[0].Cells[0].ArtifactID != "source-image" || !ComparisonMediaReviewSatisfied(*current.Media) {
 		t.Fatal("fresh duplicate checks discarded captured rows or their approval")
+	}
+}
+
+func TestContinueDuplicateCheckWithHostedComparisonsBelowScreenshotMinimum(t *testing.T) {
+	t.Parallel()
+
+	mediaBuilder := &comparisonMediaFake{host: "synthetic"}
+	projector := trackerProjectionBuilderFunc(func(_ context.Context, _ api.ReleaseSnapshot, _ api.UploadSubject,
+		ids []api.TrackerID, _ map[api.TrackerID]api.TrackerProjectionInstructions, _ map[api.TrackerID]api.WorkflowFingerprint,
+		_ api.WorkflowExecutionMode,
+	) (api.TrackerCatalogSnapshot, api.TrackerRuntimeSnapshot, api.TrackerSelection, api.TrackerReleaseProjectionSet, error) {
+		set := testProjectionSet(t)
+		set.Projections = set.Projections[:1]
+		set.Projections[0].Artifacts.ScreenshotCount = 2
+		return testCatalog(t), testRuntime(t), api.TrackerSelection{TrackerIDs: ids}, set, nil
+	})
+	module, _ := newTestModule(t, testPreparer(),
+		WithTrackerProjectionBuilder(projector),
+		WithTrackerPreflightBuilder(readyPreflightBuilder(t)),
+		WithDupeAssessmentBuilder(readyDupeBuilder(t)),
+		WithMediaArtifactBuilder(mediaBuilder),
+	)
+	current := executeCommand(t, module, CreateWorkflowCommand{TrackerDecisionMode: TrackerDecisionModeWebUIControls})
+	id := current.Workflow.ID
+	current = executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       id,
+		ExpectedRevision: current.Workflow.Revision,
+		Input:            api.PrepareInput{SourcePath: filepath.Join(t.TempDir(), "Example.Release.mkv")},
+	})
+	current = executeCommand(t, module, ProjectTrackersCommand{
+		WorkflowID:       id,
+		ExpectedRevision: current.Workflow.Revision,
+		TrackerIDs:       []api.TrackerID{"ALPHA"},
+	})
+	current = executeCommand(t, module, EvaluateInputReadinessCommand{
+		WorkflowID:       id,
+		ExpectedRevision: current.Workflow.Revision,
+		TrackerIDs:       []api.TrackerID{"ALPHA"},
+	})
+	current = executeCommand(t, module, PreflightTrackersCommand{WorkflowID: id, ExpectedRevision: current.Workflow.Revision})
+	current = executeCommand(t, module, CheckDuplicatesCommand{WorkflowID: id, ExpectedRevision: current.Workflow.Revision})
+	initialDupes := current.Dupes.ID
+	current = executeCommand(t, module, EditComparisonsCommand{
+		WorkflowID:       id,
+		ExpectedRevision: current.Workflow.Revision,
+		Instructions:     api.ComparisonInstructions{Action: "configure", Plan: reviewedComparisonFixture(t)},
+	})
+	current = executeCommand(t, module, EditComparisonsCommand{
+		WorkflowID:       id,
+		ExpectedRevision: current.Workflow.Revision,
+		Media:            current.Workflow.Media,
+		Instructions:     api.ComparisonInstructions{Action: "approve", ExpectedFingerprint: current.Media.Comparisons.Fingerprint},
+	})
+	hosted := executeCommand(t, module, UploadMediaImagesCommand{
+		WorkflowID:       id,
+		ExpectedRevision: current.Workflow.Revision,
+		Media:            *current.Workflow.Media,
+	})
+	if hosted.Media.Status != api.StageStatusBlocked || len(hosted.Media.RequiredActions) != 1 ||
+		len(hosted.Media.HostAttempts) != 1 || len(hosted.Media.HostAttempts[0].Results) != 2 {
+		t.Fatalf("expected hosted comparisons below the screenshot minimum: %#v", hosted.Media)
+	}
+	if prompt := hosted.Media.RequiredActions[0].Prompt; !strings.Contains(prompt, "1 of 2 required") ||
+		!strings.Contains(prompt, "includes 1 from the main comparison column") {
+		t.Fatalf("media action did not explain the screenshot shortfall: %q", prompt)
+	}
+
+	request := api.ContinueReleaseWorkflowRequest{
+		Authority:      &api.WorkflowAuthority{WorkflowID: id, ExpectedRevision: hosted.Workflow.Revision},
+		IdempotencyKey: "recheck-after-comparison-hosting",
+		Goal:           api.WorkflowGoalDuplicatesDecided,
+		Intent:         api.WorkflowIntent{DuplicateCheckCount: 2},
+	}
+	accepted, err := module.Continue(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accepted.Operation == nil || accepted.Operation.Command != (CheckDuplicatesCommand{}).commandName() {
+		t.Fatalf("pending media stopped duplicate check: operation=%+v actions=%+v", accepted.Operation, accepted.Workflow.RequiredActions)
+	}
+	waitForWorkflowOperation(t, module, id, accepted.Operation.ID, func(status api.WorkflowOperationStatus) bool {
+		return isTerminalProgressStatus(status.Status)
+	})
+	checked, err := module.Current(t.Context(), testOwnerID, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checked.Dupes == nil || checked.Dupes.ID == initialDupes || checked.Dupes.CheckOrdinal != 2 {
+		t.Fatalf("fresh duplicate evidence was not published: operation=%+v actions=%+v", checked.Operation, checked.Workflow.RequiredActions)
+	}
+	restored := executeCommand(t, module, RestoreComparisonsCommand{WorkflowID: id, ExpectedRevision: checked.Workflow.Revision})
+	if restored.Media.Status != api.StageStatusBlocked || !ComparisonMediaReviewSatisfied(*restored.Media) ||
+		!slices.Equal(restored.Media.Artifacts, hosted.Media.Artifacts) ||
+		mediaBuilder.uploads != 1 {
+		t.Fatalf("checking duplicates changed the screenshot requirement or lost comparison work: %#v", restored.Media)
 	}
 }
 

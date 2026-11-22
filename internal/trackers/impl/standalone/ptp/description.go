@@ -57,13 +57,13 @@ func buildDescription(meta api.UploadSubject, trackerConfig config.TrackerConfig
 	if audioAnalysis != "" {
 		sections = append(sections, convertDescription(audioAnalysis))
 	}
-	if shots := buildScreenshotSection(meta, assets.Screenshots); shots != "" {
+	if shots := buildScreenshotSection(meta, assets.Screenshots, trackerConfig.ScreenshotBlankLineEnabled()); shots != "" {
 		sections = append(sections, shots)
 	}
 	return strings.TrimSpace(strings.Join(sections, "\n\n"))
 }
 
-func buildScreenshotSection(meta api.UploadSubject, screenshots []api.ScreenshotImage) string {
+func buildScreenshotSection(meta api.UploadSubject, screenshots []api.ScreenshotImage, blankLine bool) string {
 	if len(screenshots) == 0 {
 		return ""
 	}
@@ -89,7 +89,11 @@ func buildScreenshotSection(meta api.UploadSubject, screenshots []api.Screenshot
 	if len(allowed) < minimum {
 		return ""
 	}
-	return strings.Join(allowed, "\n\n")
+	separator := "\n"
+	if blankLine {
+		separator += "\n"
+	}
+	return strings.Join(allowed, separator)
 }
 
 func isPTPImageHost(host string) bool {

@@ -59,6 +59,7 @@ type MediaReuseRepository interface {
 	CommitReusableMedia(context.Context, PreparedMediaBinding, MediaCompatibilityKey, []ReusableMediaAsset, ReusableMediaCommit) error
 	HasReusableMediaCommit(context.Context, ReusableMediaCommit) (bool, error)
 	LoadReusableMediaAssets(context.Context, MediaCompatibilityKey) ([]ReusableMediaAsset, error)
+	LoadReusableMediaAssetsForBinding(context.Context, PreparedMediaBinding) ([]ReusableMediaAsset, error)
 	DeleteReusableMediaAssets(context.Context, PreparedMediaBinding, []string) error
 }
 

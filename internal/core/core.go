@@ -421,13 +421,22 @@ func newCoreWithHooks(
 	if err != nil {
 		return nil, fmt.Errorf("core: release workflow repository: %w", err)
 	}
+	logoLanguages, _ := config.ParseLogoLanguages(cfg.Description.LogoLanguage)
+	prepareDefaults := func(input api.PrepareInput) api.PrepareInput {
+		input = applyMetadataDefaults(input, cfg.Metadata)
+		input.LogoLanguagePreference = strings.Join(logoLanguages, ",")
+		return input
+	}
 	workflowPreparer := releaseworkflow.ReleasePreparerFunc{
 		ResolveInputFunc: func(ctx context.Context, input api.PrepareInput, update api.ReleaseCorrectionUpdate) (api.ResolvedPreparationInput, error) {
-			return preparedFacts.ResolveInput(ctx, applyMetadataDefaults(input, cfg.Metadata), update)
+			return preparedFacts.ResolveInput(ctx, prepareDefaults(input), update)
 		},
-		PrepareResolvedFunc: preparedFacts.PrepareResolved,
+		PrepareResolvedFunc: func(ctx context.Context, resolved api.ResolvedPreparationInput) (api.PrepareResult, error) {
+			resolved.Input = prepareDefaults(resolved.Input)
+			return preparedFacts.PrepareResolved(ctx, resolved)
+		},
 		PrepareFunc: func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
-			return preparedFacts.Prepare(ctx, applyMetadataDefaults(input, cfg.Metadata))
+			return preparedFacts.Prepare(ctx, prepareDefaults(input))
 		},
 		DisplayFunc: func(ctx context.Context, ref api.ReleaseRef) (api.PreparedReleaseDisplay, error) {
 			display, displayErr := preparedFacts.ResolveDisplay(ctx, ref)

@@ -350,8 +350,14 @@ func extractHTMLEntities(value string) (string, []codeBlockPlaceholder) {
 		placeholderPrefix += "_"
 	}
 	entities := make([]codeBlockPlaceholder, 0)
+	tokens := make(map[string]string)
 	normalized := htmlEntityPattern.ReplaceAllStringFunc(value, func(match string) string {
+		// Repeated entities must compare as equal in labels before restoration.
+		if token, ok := tokens[match]; ok {
+			return token
+		}
 		token := placeholderPrefix + strconv.Itoa(len(entities)) + "_END"
+		tokens[match] = token
 		entities = append(entities, codeBlockPlaceholder{token: token, value: match})
 		return token
 	})
@@ -428,19 +434,14 @@ func normalizeImageWidth(value string, widthArg string) string {
 }
 
 func compileSpoiler(node *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
+	if rendered := compileCollapsedComparison(node); rendered != nil {
+		return rendered, false
+	}
 	out := bbcode.NewHTMLTag("")
 	out.Name = "details"
 	summary := bbcode.NewHTMLTag("")
 	summary.Name = "summary"
-	opening := node.GetOpeningTag()
-	label := opening.Value
-	// Unquoted spoiler titles may contain spaces; the lexer treats later words as arguments.
-	if _, value, ok := strings.Cut(opening.Raw, "="); ok {
-		value = strings.TrimSpace(value)
-		if !strings.HasPrefix(value, "\"") && !strings.HasPrefix(value, "'") {
-			label = strings.TrimSpace(strings.TrimSuffix(value, "]"))
-		}
-	}
+	label := descriptionTagLabel(node.GetOpeningTag())
 	if label == "" {
 		label = "Spoiler"
 	}
@@ -467,6 +468,9 @@ func compileListItem(_ *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
 }
 
 func compileAlign(node *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
+	if rendered := compileCenteredComparison(node); rendered != nil {
+		return rendered, false
+	}
 	out := bbcode.NewHTMLTag("")
 	out.Name = "div"
 	align := resolveAlignment(node)
@@ -515,134 +519,4 @@ func compileQuote(node *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
 		out.AppendChild(node.Compiler.CompileTree(child))
 	}
 	return out, false
-}
-
-var comparisonURLPattern = regexp.MustCompile(`(?i)https?://[^\s\]]+\.(?:png|jpe?g|gif|webp)`)
-
-func compileComparison(node *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
-	out := bbcode.NewHTMLTag("")
-	out.Name = "div"
-	out.Attrs["class"] = "comparison"
-
-	sources := parseComparisonSources(node.GetOpeningTag().Value)
-	images := parseComparisonImages(bbcode.CompileText(node))
-
-	text := bbcode.NewHTMLTag("")
-	text.Name = "div"
-	text.Attrs["class"] = "comparison__text"
-	if len(sources) == 0 {
-		text.AppendChild(bbcode.NewHTMLTag("Comparison:"))
-	} else {
-		for idx, source := range sources {
-			text.AppendChild(bbcode.NewHTMLTag(source))
-			if idx < len(sources)-1 {
-				text.AppendChild(bbcode.NewHTMLTag(" "))
-				divider := bbcode.NewHTMLTag("")
-				divider.Name = "span"
-				divider.Attrs["class"] = "comparison__divider"
-				divider.AppendChild(bbcode.NewHTMLTag("vs"))
-				text.AppendChild(divider)
-				text.AppendChild(bbcode.NewHTMLTag(" "))
-			} else {
-				text.AppendChild(bbcode.NewHTMLTag(":"))
-			}
-		}
-	}
-	out.AppendChild(text)
-
-	details := bbcode.NewHTMLTag("")
-	details.Name = "details"
-	details.Attrs["class"] = "comparison__details"
-
-	summary := bbcode.NewHTMLTag("")
-	summary.Name = "summary"
-	summary.Attrs["class"] = "comparison__button"
-	summary.AppendChild(bbcode.NewHTMLTag("Show"))
-	details.AppendChild(summary)
-
-	screenshots := bbcode.NewHTMLTag("")
-	screenshots.Name = "ul"
-	screenshots.Attrs["class"] = "comparison__screenshots"
-
-	columns := len(sources)
-	if columns == 0 {
-		columns = 1
-	}
-	for start := 0; start < len(images); start += columns {
-		end := min(start+columns, len(images))
-		rowItem := bbcode.NewHTMLTag("")
-		rowItem.Name = "li"
-
-		row := bbcode.NewHTMLTag("")
-		row.Name = "ul"
-		row.Attrs["class"] = "comparison__row"
-
-		for i := start; i < end; i++ {
-			colIndex := i - start
-			container := bbcode.NewHTMLTag("")
-			container.Name = "li"
-			container.Attrs["class"] = "comparison__image-container"
-
-			figure := bbcode.NewHTMLTag("")
-			figure.Name = "figure"
-			figure.Attrs["class"] = "comparison__figure"
-
-			if start == 0 && colIndex < len(sources) {
-				caption := bbcode.NewHTMLTag("")
-				caption.Name = "figcaption"
-				caption.Attrs["class"] = "comparison__figcaption"
-				caption.AppendChild(bbcode.NewHTMLTag(sources[colIndex]))
-				figure.AppendChild(caption)
-			}
-
-			img := bbcode.NewHTMLTag("")
-			img.Name = "img"
-			img.Attrs["class"] = "comparison__image"
-			img.Attrs["src"] = images[i]
-			figure.AppendChild(img)
-
-			container.AppendChild(figure)
-			row.AppendChild(container)
-		}
-
-		rowItem.AppendChild(row)
-		screenshots.AppendChild(rowItem)
-	}
-
-	details.AppendChild(screenshots)
-	out.AppendChild(details)
-	return out, false
-}
-
-func parseComparisonSources(value string) []string {
-	cleaned := strings.TrimSpace(value)
-	if cleaned == "" {
-		return nil
-	}
-	parts := strings.Split(cleaned, ",")
-	sources := make([]string, 0, len(parts))
-	for _, part := range parts {
-		source := strings.TrimSpace(part)
-		if source == "" {
-			continue
-		}
-		sources = append(sources, source)
-	}
-	return sources
-}
-
-func parseComparisonImages(value string) []string {
-	matches := comparisonURLPattern.FindAllString(value, -1)
-	if len(matches) == 0 {
-		return nil
-	}
-	images := make([]string, 0, len(matches))
-	for _, match := range matches {
-		trimmed := strings.TrimSpace(match)
-		if trimmed == "" {
-			continue
-		}
-		images = append(images, trimmed)
-	}
-	return images
 }

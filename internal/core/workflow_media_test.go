@@ -190,6 +190,15 @@ func (r *reusableWorkflowMediaRepository) LoadReusableMediaAssets(
 	return append([]api.ReusableMediaAsset(nil), r.assets...), nil
 }
 
+func (r *reusableWorkflowMediaRepository) LoadReusableMediaAssetsForBinding(
+	_ context.Context,
+	binding api.PreparedMediaBinding,
+) ([]api.ReusableMediaAsset, error) {
+	return slices.DeleteFunc(slices.Clone(r.assets), func(asset api.ReusableMediaAsset) bool {
+		return !asset.Binding.Equal(binding)
+	}), nil
+}
+
 func (*reusableWorkflowMediaRepository) DeleteReusableMediaAssets(context.Context, api.PreparedMediaBinding, []string) error {
 	return nil
 }
@@ -333,8 +342,11 @@ func TestWorkflowMediaRestoreCompatibleRebuildsCurrentArtifacts(t *testing.T) {
 			registry:   mediaImageHostRegistry(t),
 		},
 	}
-	snapshot, retainedResource, err := builder.RestoreCompatible(t.Context(), api.ReleaseRef{SourcePath: currentBinding.SourcePath, Generation: 7},
-		api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{TrackerID: "ONE", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1}}}}, nil, nil, time.Now())
+	release := api.ReleaseRef{SourcePath: currentBinding.SourcePath, Generation: 7}
+	projections := api.TrackerReleaseProjectionSet{
+		Projections: []api.TrackerReleaseProjection{{TrackerID: "ONE", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1}}},
+	}
+	snapshot, retainedResource, err := builder.RestoreCompatible(t.Context(), release, projections, nil, nil, time.Now())
 	if err != nil {
 		t.Fatalf("restore compatible media: %v", err)
 	}
@@ -354,6 +366,41 @@ func TestWorkflowMediaRestoreCompatibleRebuildsCurrentArtifacts(t *testing.T) {
 	}
 	if len(repository.saved) != 1 || repository.saved[0].Binding.PreparedGeneration != currentBinding.PreparedGeneration {
 		t.Fatalf("recorded restored association = %#v", repository.saved)
+	}
+	captured := repository.assets[0]
+	captured.Binding = currentBinding
+	repository.assets = append(repository.assets, captured)
+	// Same-workflow restoration must not add an unretained image from its binding.
+	outsideSelection, _, err := builder.restoreCachedMedia(t.Context(), release, projections, map[string]retainedOrdinaryImage{
+		filepath.Join(baseDir, "different-frame.png"): {},
+	})
+	if err != nil || len(outsideSelection.Artifacts) != 0 {
+		t.Fatalf("scoped restore included unrelated cached media: %#v, %v", outsideSelection.Artifacts, err)
+	}
+	// The preceding workflow's selection wins over the cached defaults.
+	original := captured.Image.Path
+	sourceImage := captured.Image
+	sourceImage.Host = "ptpimg"
+	sourceImage.RawURL = "https://images.invalid/original.png"
+	scoped, scopedPrivate, err := builder.restoreCachedMedia(t.Context(), release, projections, map[string]retainedOrdinaryImage{
+		original: {
+			artifact: api.MediaArtifact{
+				ID:     "original-screenshot",
+				Kind:   api.MediaArtifactScreenshot,
+				Source: "tracker",
+				Host:   sourceImage.Host,
+				Order:  2,
+			},
+			image: sourceImage,
+		},
+	})
+	if err != nil || len(scoped.Artifacts) != 1 || scoped.Artifacts[0].Selected || scoped.Artifacts[0].Order != 2 {
+		t.Fatalf("scoped restore lost the workflow's selection: %#v, %v", scoped.Artifacts, err)
+	}
+	scopedImage := scopedPrivate.ArtifactImages["original-screenshot"]
+	if scoped.Artifacts[0].ID != "original-screenshot" || scoped.Artifacts[0].Source != "tracker" ||
+		scoped.Artifacts[0].Host != sourceImage.Host || scopedImage.Path != original || scopedImage.RawURL != sourceImage.RawURL {
+		t.Fatalf("scoped restore changed the original artifact, file, or import source: %#v", scoped.Artifacts[0])
 	}
 	retained, ok := retainedResource.(workflowMediaPrivateArtifacts)
 	if !ok || retained.screenshotSubject.MediaBinding.PreparedGeneration != currentBinding.PreparedGeneration {

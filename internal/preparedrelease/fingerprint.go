@@ -314,12 +314,14 @@ func preparationCompatibility(input api.PrepareInput, sourceFingerprint string, 
 		Search               api.ClientSearchPolicy
 		MetadataRequirements api.MetadataRequirementSet
 		// Refresh old requested-hash metadata for source validation and wrapper lookup.
-		InfoHashPolicyVersion int `json:",omitempty"`
+		InfoHashPolicyVersion  int    `json:",omitempty"`
+		LogoLanguagePreference string `json:",omitempty"`
 	}{
-		Policy:                input.Policy,
-		Search:                input.Search,
-		MetadataRequirements:  input.MetadataRequirements,
-		InfoHashPolicyVersion: infoHashPolicyVersion,
+		Policy:                 input.Policy,
+		Search:                 input.Search,
+		MetadataRequirements:   input.MetadataRequirements,
+		InfoHashPolicyVersion:  infoHashPolicyVersion,
+		LogoLanguagePreference: input.LogoLanguagePreference,
 	})
 	if err != nil {
 		return api.PreparationCompatibility{}, fmt.Errorf("prepared release: fingerprint policy: %w", err)
@@ -330,6 +332,18 @@ func preparationCompatibility(input api.PrepareInput, sourceFingerprint string, 
 		PolicyFingerprint:          policy,
 		ContractVersion:            ContractVersion,
 	}, nil
+}
+
+// preparationCompatibilityForSource retires DVD generations whose root reports
+// could have been written by a different disc than the canonical title.
+func preparationCompatibilityForSource(
+	input api.PrepareInput, sourceFingerprint string, revision uint64, discType string,
+) (api.PreparationCompatibility, error) {
+	compatibility, err := preparationCompatibility(input, sourceFingerprint, revision)
+	if err == nil && discType == "DVD" {
+		compatibility.PolicyFingerprint, err = fingerprintJSON([]string{"dvd-primary-report-v1", compatibility.PolicyFingerprint})
+	}
+	return compatibility, err
 }
 
 func fingerprintJSON(value any) (string, error) {

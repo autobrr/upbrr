@@ -3496,6 +3496,16 @@
           "Similarity": {
             "type": "number"
           },
+          "TentativeConfidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "Title": {
             "type": "string"
           },
@@ -4827,6 +4837,12 @@
               "$ref": "#/components/schemas/IMDBEditionDetail"
             }
           },
+          "EditionRuntimes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IMDBEditionDetail"
+            }
+          },
           "Editions": {
             "type": "array",
             "items": {
@@ -5872,6 +5888,15 @@
               "$ref": "#/components/schemas/EditionDisplayPart"
             }
           },
+          "EditionFrameRate": {
+            "type": "number"
+          },
+          "EditionOriginalFrameRate": {
+            "type": "number"
+          },
+          "EditionRuntimeSeconds": {
+            "type": "number"
+          },
           "EditionSet": {
             "type": "string"
           },
@@ -6861,6 +6886,9 @@
           },
           "request": {
             "$ref": "#/components/schemas/ContinueReleaseWorkflowRequest"
+          },
+          "reuseVerifiedSource": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -11632,7 +11660,13 @@
           "Logo": {
             "type": "string"
           },
+          "LogoLanguagePreference": {
+            "type": "string"
+          },
           "LogoLookupAttempted": {
+            "type": "boolean"
+          },
+          "LogoLookupPending": {
             "type": "boolean"
           },
           "MALID": {

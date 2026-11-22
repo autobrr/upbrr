@@ -49,12 +49,24 @@ describe("ImageLightbox", () => {
     );
     fireEvent.error(screen.getByRole("img"));
     expect(screen.getByRole("status")).toHaveTextContent("Image could not be loaded.");
+    expect(screen.queryByRole("link", { name: "Open original link" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Close image preview" }));
     expect(onClose).toHaveBeenCalledOnce();
     rerender(<ImageLightbox image="" alt="" onClose={onClose} />);
     rerender(<ImageLightbox image="/poster.png" alt="Poster" onClose={onClose} />);
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(screen.getByRole("img")).toHaveAttribute("src", "/poster.png");
+  });
+
+  it("offers the original extensionless HTTP link only if the image fails", () => {
+    const image = "https://images.example.invalid/by-id?id=42";
+    render(<ImageLightbox image={image} alt="Comparison" onClose={vi.fn()} />);
+    expect(screen.queryByRole("link", { name: "Open original link" })).not.toBeInTheDocument();
+    fireEvent.error(screen.getByRole("img"));
+    const link = screen.getByRole("link", { name: "Open original link" });
+    expect(link).toHaveAttribute("href", image);
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noreferrer");
   });
 
   it("closes on browser history navigation and removes its listener when closed", () => {

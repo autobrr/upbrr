@@ -884,6 +884,7 @@ export type ExternalIdentityCandidate = Readonly<{
   RuntimeKind: string;
   RuntimeMinutes: number;
   Similarity: number;
+  TentativeConfidence?: number | null;
   Title: string;
   Year: number;
 }>;
@@ -1247,6 +1248,7 @@ export type IMDBMetadata = Readonly<{
   Creators: readonly IMDBPerson[];
   Directors: readonly IMDBPerson[];
   EditionDetails: Readonly<Record<string, IMDBEditionDetail>>;
+  EditionRuntimes?: readonly IMDBEditionDetail[];
   Editions: readonly string[];
   EndYear: number;
   Episodes: readonly IMDBEpisode[];
@@ -1526,6 +1528,9 @@ export type MediaFacts = Readonly<{
   DistributorProvenance: FactProvenance;
   Edition: string;
   EditionDisplay: readonly EditionDisplayPart[];
+  EditionFrameRate?: number;
+  EditionOriginalFrameRate?: number;
+  EditionRuntimeSeconds?: number;
   EditionSet: string;
   HDR: string;
   HDRFacts: HDRFacts;
@@ -1743,6 +1748,7 @@ export type NamingStatus = string;
 export type OpenActiveInputRequest = Readonly<{
   expectedRevision: number;
   request: ContinueReleaseWorkflowRequest;
+  reuseVerifiedSource?: boolean;
 }>;
 
 export type Operation = Readonly<{
@@ -2800,7 +2806,9 @@ export type TMDBMetadata = Readonly<{
   Localized: Readonly<Record<string, TMDBLocalizedData>>;
   LocalizedTitles: Readonly<Record<string, string>>;
   Logo: string;
+  LogoLanguagePreference?: string;
   LogoLookupAttempted: boolean;
+  LogoLookupPending?: boolean;
   MALID: number;
   MismatchedIMDbID: number;
   Networks: readonly TMDBNetwork[];

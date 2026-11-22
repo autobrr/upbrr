@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -76,7 +77,7 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 		return info, nil
 	}
 
-	const query = `query GetTitleInfo($id: ID!) { title(id: $id) { id titleText { text isOriginalTitle country { text } } originalTitleText { text } releaseYear { year endYear } titleType { id } plot { plotText { plainText } } ratingsSummary { aggregateRating voteCount } primaryImage { url } runtime { displayableProperty { value { plainText } } seconds } titleGenres { genres { genre { text } } } principalCredits { category { text id } credits { name { id nameText { text } } } } episodes { episodes(first: 500) { edges { node { id series { displayableEpisodeNumber { displayableSeason { season } episodeNumber { text } } } titleText { text } releaseYear { year } releaseDate { year month day } } } pageInfo { hasNextPage hasPreviousPage } total } } runtimes(first: 10) { edges { node { id seconds displayableProperty { value { plainText } } attributes { text } } } } technicalSpecifications { soundMixes { items { text attributes { text } } } } akas(first: 100) { edges { node { text country { text } language { text } attributes { text } } } } countriesOfOrigin { countries { text } } spokenLanguages { spokenLanguages { text } } } }`
+	const query = `query GetTitleInfo($id: ID!) { title(id: $id) { id titleText { text isOriginalTitle country { text } } originalTitleText { text } releaseYear { year endYear } titleType { id } plot { plotText { plainText } } ratingsSummary { aggregateRating voteCount } primaryImage { url } runtime { displayableProperty { value { plainText } } seconds } titleGenres { genres { genre { text } } } principalCredits { category { text id } credits { name { id nameText { text } } } } episodes { episodes(first: 500) { edges { node { id series { displayableEpisodeNumber { displayableSeason { season } episodeNumber { text } } } titleText { text } releaseYear { year } releaseDate { year month day } } } pageInfo { hasNextPage hasPreviousPage } total } } runtimes(first: 10) { edges { node { id seconds displayableProperty { value { plainText } } attributes { text } } } pageInfo { hasNextPage } } technicalSpecifications { soundMixes { items { text attributes { text } } } } akas(first: 100) { edges { node { text country { text } language { text } attributes { text } } } } countriesOfOrigin { countries { text } } spokenLanguages { spokenLanguages { text } } } }`
 
 	var response map[string]any
 	if err := c.postGraphQL(ctx, "GetTitleInfo", query, map[string]any{"id": id}, &response); err != nil {
@@ -88,6 +89,9 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 		return info, nil
 	}
 
+	if actual := getString(titleData, "id"); actual != "" && metautil.NormalizeIMDbID(actual) != id {
+		return info, errors.New("imdb: title resource does not match requested ID")
+	}
 	info.IMDbID = id
 	info.IMDbURL = "https://www.imdb.com/title/" + id
 	info.Title = getString(titleData, "titleText", "text")
@@ -160,6 +164,7 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 	info.Stars = collectCredits(titleData, "Star")
 
 	edges := getList(titleData, "runtimes", "edges")
+	hasNextPage, pageKnown := getMap(titleData, "runtimes", "pageInfo")["hasNextPage"].(bool)
 	if len(edges) > 0 {
 		info.EditionDetails = make(map[string]EditionDetail)
 		for _, edge := range edges {
@@ -182,12 +187,16 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 				}
 				info.Editions = append(info.Editions, editionDisplay)
 				runtimeKey := strconv.Itoa(minutes)
-				info.EditionDetails[runtimeKey] = EditionDetail{
+				detail := EditionDetail{
 					DisplayName: display,
 					Seconds:     seconds,
 					Minutes:     minutes,
 					Attributes:  attrTexts,
 				}
+				info.EditionDetails[runtimeKey] = detail
+			}
+			if pageKnown && !hasNextPage && seconds > 0 {
+				info.EditionRuntimes = append(info.EditionRuntimes, EditionDetail{Seconds: seconds, Attributes: attrTexts})
 			}
 		}
 	}
@@ -302,9 +311,8 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 
 // Search tries increasingly broad title variants in order, pausing one second
 // between remote attempts. Individual request failures are treated as no results.
-// A single result or a sufficiently separated similarity winner is selected;
-// Unattended selects the top ambiguous candidate, while interactive mode returns
-// candidates with a zero IMDbID. Quickie validates only the first result.
+// A sufficiently confident result is selected. Weak matches, including a lone
+// weak result, remain tentative candidates. Quickie validates only the first result.
 func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, error) {
 	logger := logging.FromContext(ctx, c.logger)
 
@@ -393,27 +401,22 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 		return SearchResult{}, nil
 	}
 
-	if len(results) == 1 {
-		imdbID = metautil.ParseIMDbNumeric(getStringFromMap(results[0], "node", "title", "id"))
-		if imdbID != 0 {
-			logger.Infof("imdb: search auto-selected single result id=%d", imdbID)
-			return SearchResult{IMDbID: imdbID, AutoSelected: true}, nil
-		}
-	}
-
-	if len(results) > 1 {
+	if len(results) > 0 {
 		candidates := rankCandidates(results, filename, searchYear)
 		if len(candidates) == 0 {
 			return SearchResult{}, nil
 		}
 		best := candidates[0]
-		if best.confidenceScore >= 0.85 {
+		if best.IMDbID != 0 && best.Confidence >= 0.85 {
 			second := 0.0
 			for _, candidate := range candidates[1:] {
-				second = max(second, candidate.confidenceScore)
+				second = max(second, candidate.Confidence)
 			}
-			if best.confidenceScore-second >= 0.10 {
+			if best.Confidence-second >= 0.10 {
 				logger.Infof("imdb: search auto-selected id=%d similarity=%.2f", best.IMDbID, best.Similarity)
+				if len(results) == 1 {
+					return SearchResult{IMDbID: best.IMDbID, AutoSelected: true}, nil
+				}
 				return SearchResult{
 					IMDbID:       best.IMDbID,
 					Candidates:   candidates,
@@ -421,15 +424,7 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 				}, nil
 			}
 		}
-		if input.Unattended {
-			logger.Infof("imdb: search unattended auto-selected id=%d similarity=%.2f", best.IMDbID, best.Similarity)
-			return SearchResult{
-				IMDbID:       best.IMDbID,
-				Candidates:   candidates,
-				AutoSelected: true,
-			}, nil
-		}
-		return SearchResult{IMDbID: 0, Candidates: candidates}, nil
+		return SearchResult{Candidates: candidates, Tentative: true}, nil
 	}
 
 	return SearchResult{}, nil
@@ -835,14 +830,14 @@ func rankCandidates(results []map[string]any, filename string, searchYear int) [
 			similarity += 0.2
 		}
 		candidates = append(candidates, Candidate{
-			IMDbID:          imdbID,
-			Title:           text,
-			Year:            year,
-			Type:            getStringFromMap(title, "titleType", "text"),
-			Plot:            plot,
-			PosterURL:       posterURL,
-			Similarity:      similarity,
-			confidenceScore: confidenceScore,
+			IMDbID:     imdbID,
+			Title:      text,
+			Year:       year,
+			Type:       getStringFromMap(title, "titleType", "text"),
+			Plot:       plot,
+			PosterURL:  posterURL,
+			Similarity: similarity,
+			Confidence: confidenceScore,
 		})
 	}
 
@@ -851,11 +846,11 @@ func rankCandidates(results []map[string]any, filename string, searchYear int) [
 	})
 
 	if len(candidates) > 0 {
-		best := candidates[0].confidenceScore
+		best := candidates[0].Confidence
 		if best >= 0.90 {
 			filtered := make([]Candidate, 0, len(candidates))
 			for _, cand := range candidates {
-				if cand.confidenceScore >= 0.75 {
+				if cand.Confidence >= 0.75 {
 					filtered = append(filtered, cand)
 				}
 			}

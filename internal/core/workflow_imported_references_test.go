@@ -163,12 +163,12 @@ func TestWorkflowMediaReferenceOnlyProjectionPreservesExplicitCapture(t *testing
 
 func TestWorkflowDescriptionFingerprintBindsReferenceSelectionPolicy(t *testing.T) {
 	subject := api.UploadSubject{}
-	original, _, err := workflowDescriptionFingerprints(api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, api.MediaArtifactSet{}, api.DescriptionInstructions{}, subject, nil)
+	original, _, err := (workflowDescriptionBuilder{}).workflowDescriptionFingerprints(api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, api.MediaArtifactSet{}, api.DescriptionInstructions{}, subject, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	retainWorkflowScreenshotSelection(&subject, releaseworkflow.DescriptionResources{SuppressImportedScreenshotReferences: map[string]bool{"LST": true}})
-	changed, _, err := workflowDescriptionFingerprints(api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, api.MediaArtifactSet{}, api.DescriptionInstructions{}, subject, nil)
+	changed, _, err := (workflowDescriptionBuilder{}).workflowDescriptionFingerprints(api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, api.MediaArtifactSet{}, api.DescriptionInstructions{}, subject, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

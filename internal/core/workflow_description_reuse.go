@@ -42,7 +42,7 @@ func (b workflowDescriptionBuilder) PrepareReusableDescriptions(
 		return nil, nil
 	}
 	reusable := api.ReusableDescription{
-		RendererVersion:          workflowDescriptionRendererVersion,
+		RendererVersion:          b.rendererVersion(projections),
 		CompatibilityFingerprint: compatibilityFingerprint,
 		Descriptions:             cloneWorkflowRenderedDescriptions(snapshot.Descriptions),
 		TrackerResults:           slices.Clone(snapshot.TrackerResults),
@@ -95,8 +95,8 @@ func (b workflowDescriptionBuilder) RestoreCompatibleDescriptions(
 
 	restoredInstructions := instructions
 	restoredInstructions.Overrides = slices.Clone(reusable.Overrides)
-	if reusable.RendererVersion != workflowDescriptionRendererVersion {
-		// Keep compatible explicit edits while rebuilding output from an older renderer.
+	if reusable.RendererVersion != b.rendererVersion(projections) {
+		// Keep compatible explicit edits while rebuilding output for the active renderer.
 		snapshot, buildErr := b.Build(ctx, release, projections, media, privateMedia, restoredInstructions, time.Time{})
 		return snapshot, restoredInstructions, buildErr
 	}
@@ -231,6 +231,8 @@ func workflowReusableDescriptionFingerprint(
 	if err != nil || !available {
 		return "", "", available, err
 	}
+	// Spacing changes generated output, not whether saved edits still apply.
+	cfg.Trackers = cfg.Trackers.WithoutScreenshotSpacing()
 	payload := struct {
 		Version                              string
 		Config                               config.Config

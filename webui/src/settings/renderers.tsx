@@ -5,6 +5,7 @@ import { pageStyle } from "../components/ui/pageStyle";
 import { useEffect, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { Button } from "../components/ui/button";
+import { LogoLanguageSetting } from "./LogoLanguageSetting";
 import { PillCheckbox } from "../components/ui/checkbox";
 import { Select } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
@@ -282,6 +283,21 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
       </span>
     );
     const controlProps = { id: controlId, "aria-describedby": meta?.help ? helpId : undefined };
+
+    if (path[0] === "Description" && label === "LogoLanguage") {
+      return (
+        <div className={settingsStyle.field} key={path.join(".")}>
+          {heading}
+          <LogoLanguageSetting
+            id={controlId}
+            describedBy={controlProps["aria-describedby"]}
+            label={displayLabel}
+            value={String(value ?? "")}
+            onChange={(next) => updateConfigValue(path, next)}
+          />
+        </div>
+      );
+    }
 
     let connectionTest = null;
     if (path[0] === "MainSettings" && label === "TMDBAPI") {

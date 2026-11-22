@@ -63,6 +63,35 @@ func TestGetInfoSpokenLanguages(t *testing.T) {
 	}
 }
 
+func TestGetInfoEditionEvidenceKeepsSameMinuteRowsOnlyForCompleteResults(t *testing.T) {
+	for _, hasNextPage := range []bool{false, true} {
+		t.Run(strconv.FormatBool(hasNextPage), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{"data":{"title":{"titleText":{"text":"Example Movie"},"runtimes":{
+					"pageInfo":{"hasNextPage":%t},"edges":[
+						{"node":{"seconds":6001,"attributes":[{"text":"Director's Cut"}]}},
+						{"node":{"seconds":6006,"attributes":[{"text":"Theatrical Cut"}]}}]
+				}}}}`, hasNextPage)
+			}))
+			defer server.Close()
+			client := NewClient(server.Client(), nil)
+			client.baseURL = server.URL
+			info, err := client.GetInfo(t.Context(), "tt1234567", "", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if hasNextPage {
+				if len(info.EditionRuntimes) != 0 {
+					t.Fatalf("partial runtimes promoted to evidence: %+v", info.EditionRuntimes)
+				}
+			} else if rows := info.EditionRuntimes; len(rows) != 2 || rows[0].Seconds != 6001 || rows[1].Seconds != 6006 {
+				t.Fatalf("same-minute alternatives were lost: %+v", rows)
+			}
+		})
+	}
+}
+
 func TestPostGraphQLPostsUnseenHashThenGetsKnownHash(t *testing.T) {
 	const query = `query TestOperation($id: ID!) { title(id: $id) { id } }`
 
@@ -407,7 +436,6 @@ func TestSearchSelectsOnlyRequestedCategory(t *testing.T) {
 	for _, test := range []struct {
 		name, category, seriesType string
 		wantID                     int
-		unattended                 bool
 	}{
 		{
 			name:       "movie",
@@ -427,13 +455,6 @@ func TestSearchSelectsOnlyRequestedCategory(t *testing.T) {
 			seriesType: "TV Mini Series",
 			wantID:     555002,
 		},
-		{
-			name:       "unattended TV",
-			category:   "TV",
-			seriesType: "TV Mini-Series",
-			wantID:     555002,
-			unattended: true,
-		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -448,9 +469,8 @@ func TestSearchSelectsOnlyRequestedCategory(t *testing.T) {
 			client := NewClient(server.Client(), nil)
 			client.baseURL = server.URL
 			result, err := client.Search(t.Context(), SearchInput{
-				Filename:   "Example Title",
-				Category:   test.category,
-				Unattended: test.unattended,
+				Filename: "Example Title",
+				Category: test.category,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -538,6 +558,30 @@ func TestRankCandidates(t *testing.T) {
 	}
 }
 
+func TestSearchRetainsWeakSingleResult(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"data":{"advancedTitleSearch":{"edges":[{"node":{"title":{"id":"tt0555001","titleText":{"text":"Unrelated Film"},"releaseYear":{"year":2026},"titleType":{"text":"Movie"}}}}]}}}`)
+	}))
+	defer server.Close()
+	client := NewClient(server.Client(), nil)
+	client.baseURL = server.URL
+	input := SearchInput{
+		Filename:   "Example Movie",
+		Category:   "MOVIE",
+		SearchYear: 2026,
+	}
+	got, err := client.Search(t.Context(), input)
+	if err != nil || got.IMDbID != 0 || got.AutoSelected || !got.Tentative || len(got.Candidates) != 1 {
+		t.Fatalf("weak unattended single result became authoritative: %+v, %v", got, err)
+	}
+	candidate := got.Candidates[0]
+	if candidate.IMDbID != 555001 || candidate.Confidence >= 0.85 || math.Abs(candidate.Similarity-candidate.Confidence-0.2) > 1e-10 {
+		t.Fatalf("candidate lost separate confidence and ranking: %+v", candidate)
+	}
+}
+
 func TestSearchYearRankingPreservesIdentityConfidence(t *testing.T) {
 	for _, test := range []struct {
 		title    string
@@ -572,12 +616,12 @@ func TestSearchYearRankingPreservesIdentityConfidence(t *testing.T) {
 				t.Fatal(err)
 			}
 			if test.selected {
-				if result.IMDbID != 555001 || !result.AutoSelected {
+				if result.IMDbID != 555001 || !result.AutoSelected || result.Tentative {
 					t.Fatalf("confident result was not selected: %+v", result)
 				}
 				return
 			}
-			if result.IMDbID != 0 || result.AutoSelected || len(result.Candidates) != 2 {
+			if result.IMDbID != 0 || result.AutoSelected || !result.Tentative || len(result.Candidates) != 2 {
 				t.Fatalf("ranking must not grant identity confidence: %+v", result)
 			}
 			want := metautil.SimilarityRatio("example movie", "example story")

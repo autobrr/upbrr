@@ -321,6 +321,12 @@ type MediaFacts struct {
 	// use LanguageFacts, which preserves OriginalLanguage corrections and clears.
 	// These values never populate inspected soundtrack languages.
 	TitleLanguages []string `json:",omitempty"`
+	// EditionRuntimeSeconds is the measured runtime of one presentation, or zero if unavailable.
+	EditionRuntimeSeconds float64 `json:",omitempty"`
+	// EditionFrameRate is the measured fixed cadence for that presentation.
+	EditionFrameRate float64 `json:",omitempty"`
+	// EditionOriginalFrameRate is the original cadence when the source reports it.
+	EditionOriginalFrameRate float64 `json:",omitempty"`
 }
 
 // DiscFacts contains typed disc measurements that are safe to publish as
@@ -918,8 +924,11 @@ type ExternalIdentityCandidate struct {
 	Overview      string
 	PosterURL     string
 	Similarity    float64
-	Directors     []string
-	Cast          []string
+	// TentativeConfidence is the IMDb identity score of a weak suggestion.
+	// It excludes ranking-only bonuses; nil denotes an ordinary candidate.
+	TentativeConfidence *float64 `json:",omitempty"`
+	Directors           []string
+	Cast                []string
 	// CastSource identifies verified billing order or the provider's curated principal credits.
 	CastSource     string
 	RuntimeMinutes int

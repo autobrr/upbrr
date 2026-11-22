@@ -42,16 +42,25 @@ function actionScope(action: RequiredAction): string {
 export function WorkflowRequiredActions({
   continuation,
   onScreenshotsPage = false,
+  deferredMediaActions,
   onConfirm,
   onNavigate,
 }: Readonly<{
   continuation?: WorkflowContinuation | null;
   onScreenshotsPage?: boolean;
+  deferredMediaActions?: readonly RequiredAction[];
   onConfirm: (action: RequiredAction, confirmed?: boolean) => void;
   onNavigate: (route: ReleaseRoute) => void;
 }>) {
   const actions = (continuation?.requiredActions || []).filter(
-    (action) => action.status === "pending" && !actionOwnedByDupeCard(action),
+    (action) =>
+      action.status === "pending" &&
+      !actionOwnedByDupeCard(action) &&
+      !(
+        (action.kind === "review_comparisons" ||
+          (action.kind === "provide_tracker_input" && !action.trackerId)) &&
+        deferredMediaActions?.some((mediaAction) => mediaAction.id === action.id)
+      ),
   );
   if (!actions.length) return null;
   const onlyComparisonReview =

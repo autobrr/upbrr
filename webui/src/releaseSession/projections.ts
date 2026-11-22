@@ -142,9 +142,16 @@ export const workflowPrepareInput = (input: PrepareInput): WorkflowPrepareInput 
   RequirePrepared: false,
 });
 
-export const workflowDescriptionScreenshotCount = (current: ReleaseWorkflowCurrent) =>
-  current.media?.artifacts.filter((artifact) => artifact.selected && artifact.kind === "screenshot")
-    .length || 0;
+export const workflowDescriptionScreenshotLimit = (current: ReleaseWorkflowCurrent) => {
+  // Let the exact media set supplied by the server determine the gallery when
+  // the user also selected the main comparison column as release screenshots.
+  if (current.media?.comparisons?.reuseMainScreenshots) return 0;
+  return (
+    current.media?.artifacts.filter(
+      (artifact) => artifact.selected && artifact.kind === "screenshot",
+    ).length || 0
+  );
+};
 
 export const workflowDescriptionImageHostOverrides = (
   failedHosts: readonly string[],
