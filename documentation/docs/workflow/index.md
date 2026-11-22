@@ -49,7 +49,7 @@ upbrr prepares one release and creates one torrent rooted at the selected collec
 
 ## 2. Review canonical metadata
 
-Metadata preparation reports the active substep within its parent stage, including provider lookups, client discovery, media inspection, and Blu-ray.com catalogue discovery and release details. Counts describe processed work; an unknown total remains indeterminate. Elapsed updates indicate waiting without claiming more completed work. Reused evidence is identified as retained, and optional metadata failures remain visible as partial outcomes.
+Metadata preparation reports the active substep within its parent stage, including provider lookups, client discovery, media inspection, and Blu-ray.com catalogue discovery and release details. Counts describe processed work; an unknown total remains indeterminate. Elapsed updates indicate waiting without claiming more completed work. Reused evidence is identified as retained, and optional metadata failures remain visible as partial outcomes. Blu-ray report progress shows completed discs and the number of playlists selected on the active disc. Multiple selected playlists on a disc can share one scan, so the scanner percentage is for that disc rather than for individual playlists.
 
 The Web UI and TUI update their existing progress display in place. Plain CLI output keeps fast preparation with no unavailable metadata quiet and emits at most one intermediate metadata line every 30 seconds, deduplicating unchanged updates, plus a terminal outcome when intermediate output was needed. Partial metadata outcomes are also reported when preparation finishes. Redirected output follows the same bound and uses ordinary lines. Detailed per-request diagnostics remain at TRACE.
 

@@ -495,7 +495,12 @@ func (s *cliWorkflowSession) presentationProgressContext(ctx context.Context) co
 	ctx = api.WithPreparationProgressReporter(ctx, func(update api.PreparationProgressUpdate) {
 		progress := base
 		progress.Phase = update.Label
-		if update.TotalBytes > 0 {
+		if update.Phase == api.PreparationPhaseBDInfo && update.Substep != "" {
+			progress.Phase = update.Label + ": " + update.Detail()
+			progress.Lane = string(update.Phase)
+			progress.ItemOnly = true
+			progress.Completed, progress.Total = update.CompletedItems, update.TotalItems
+		} else if update.TotalBytes > 0 {
 			progress.Total = 100
 			progress.Completed = int(update.CompletedBytes * 100 / update.TotalBytes)
 		}

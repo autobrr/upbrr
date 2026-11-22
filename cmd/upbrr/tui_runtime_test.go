@@ -438,6 +438,15 @@ func TestOperationEpochRejectsOldProgressAndCopiesAuthority(t *testing.T) {
 	if b.progress == nil || b.progress.Completed != 2 {
 		t.Fatal("operation progress did not reach the bridge")
 	}
+	update := api.NewPreparationProgressUpdate(api.PreparationPhaseBDInfo, api.PreparationProgressRunning, "Reading streams.")
+	update.Substep = "Disc 2 of 3 (2 selected playlists)"
+	update.CompletedItems, update.TotalItems = 1, 3
+	api.EmitPreparationProgress(ctx, update)
+	last := b.telemetry[len(b.telemetry)-1]
+	if last.Lane != "bdinfo" || last.Completed != 1 || last.Total != 3 || !strings.Contains(last.Phase, update.Substep) ||
+		b.progress.Completed != 2 {
+		t.Fatalf("BDInfo detail changed or advanced aggregate progress: %#v", last)
+	}
 }
 
 func TestQueueSnapshotsRetainResultsAndExcludedTrackerRows(t *testing.T) {
