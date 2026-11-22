@@ -29,6 +29,7 @@ type Info struct {
 	Stars            []Person
 	Editions         []string
 	EditionDetails   map[string]EditionDetail
+	EditionRuntimes  []EditionDetail
 	Akas             []AKA
 	Episodes         []Episode
 	SeasonsSummary   []SeasonSummary

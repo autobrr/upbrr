@@ -63,6 +63,35 @@ func TestGetInfoSpokenLanguages(t *testing.T) {
 	}
 }
 
+func TestGetInfoEditionEvidenceKeepsSameMinuteRowsOnlyForCompleteResults(t *testing.T) {
+	for _, hasNextPage := range []bool{false, true} {
+		t.Run(strconv.FormatBool(hasNextPage), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{"data":{"title":{"titleText":{"text":"Example Movie"},"runtimes":{
+					"pageInfo":{"hasNextPage":%t},"edges":[
+						{"node":{"seconds":6001,"attributes":[{"text":"Director's Cut"}]}},
+						{"node":{"seconds":6006,"attributes":[{"text":"Theatrical Cut"}]}}]
+				}}}}`, hasNextPage)
+			}))
+			defer server.Close()
+			client := NewClient(server.Client(), nil)
+			client.baseURL = server.URL
+			info, err := client.GetInfo(t.Context(), "tt1234567", "", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if hasNextPage {
+				if len(info.EditionRuntimes) != 0 {
+					t.Fatalf("partial runtimes promoted to evidence: %+v", info.EditionRuntimes)
+				}
+			} else if rows := info.EditionRuntimes; len(rows) != 2 || rows[0].Seconds != 6001 || rows[1].Seconds != 6006 {
+				t.Fatalf("same-minute alternatives were lost: %+v", rows)
+			}
+		})
+	}
+}
+
 func TestPostGraphQLPostsUnseenHashThenGetsKnownHash(t *testing.T) {
 	const query = `query TestOperation($id: ID!) { title(id: $id) { id } }`
 
