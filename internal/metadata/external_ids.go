@@ -833,6 +833,12 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			imdbSeasonReplayID = ids.IMDBID
 			return true
 		}
+		// Reopening a movie can reuse its IMDb identity, but older title
+		// snapshots need the new runtime evidence before comparing editions.
+		if meta.ExternalFreshness == api.ExternalFreshnessLoad && ids.Category == api.CanonicalCategoryMovie &&
+			metadata.IMDB != nil && metadata.IMDB.EditionRuntimes == nil && imdbMetadataFetchedID != ids.IMDBID {
+			return true
+		}
 		return !usableIMDBMetadata(metadata.IMDB, ids.IMDBID) ||
 			requiresProviderMetadataRefresh(meta.MetadataRequirements, ids.Category, meta, ids, metadata, api.IdentityProviderIMDB)
 	}
