@@ -1783,7 +1783,16 @@ for (const checkFirst of [false, true]) {
 
       const choice = questions.getByRole("combobox", { name: "Intended ANT trump", exact: true });
       const reason = questions.getByRole("textbox", { name: "ANT trump reason", exact: true });
+      await expect(reason).toBeHidden();
+      if (!checkFirst) {
+        await choice.selectOption("no");
+        await applyTrackerAnswers(page);
+        await expect(choice).toHaveValue("no");
+        await expect(reason).toBeHidden();
+      }
       await choice.selectOption("yes");
+      await applyTrackerAnswers(page);
+      await expect(reason).toBeVisible();
       await reason.fill("verified improvement");
       const applied = await applyTrackerAnswers(page);
       const fields = applied.projections!.projections[0].questionnaire!;
