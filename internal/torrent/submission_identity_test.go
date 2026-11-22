@@ -124,11 +124,12 @@ func TestSubmissionContentIdentityMatchesAliasesWithoutAcceptingAmbiguousEvidenc
 	verified := verifySubmissionSource(t, source)
 	alias := filepath.Join(root, "Alias.mkv")
 	if err := os.Symlink(source, alias); err != nil {
-		if runtime.GOOS != "windows" {
-			t.Skipf("symlink creation is unavailable: %v", err)
+		if runtime.GOOS != "windows" || len(filepath.VolumeName(source)) != 2 || !filepath.IsAbs(source) {
+			t.Skipf("symlink creation is unavailable and no drive-absolute fallback applies: %v", err)
 		}
-		// The extended-length spelling resolves to the same local file on Windows.
-		alias = `\\?\` + source
+		// The drive-letter namespace does not accept UNC paths.
+		const extendedDrivePrefix = `\\?\`
+		alias = filepath.Join(extendedDrivePrefix, source)
 	}
 	file := SubmissionContentFile{
 		LocalPath:   alias,
