@@ -1748,6 +1748,7 @@ export type NamingStatus = string;
 export type OpenActiveInputRequest = Readonly<{
   expectedRevision: number;
   request: ContinueReleaseWorkflowRequest;
+  reuseVerifiedSource?: boolean;
 }>;
 
 export type Operation = Readonly<{

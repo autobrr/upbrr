@@ -138,17 +138,32 @@ func SubmissionContentIdentity(
 	if len(inventory.Files) == 0 {
 		return api.SubmissionContentIdentity{}, errors.New("torrent: submitted content inventory is empty")
 	}
+	pathKeys := make(map[string]pathutil.PathMatchKeys, len(verified.Files))
+	keysFor := func(path string) pathutil.PathMatchKeys {
+		if keys, ok := pathKeys[path]; ok {
+			return keys
+		}
+		keys := pathutil.ResolvePathMatchKeys(path)
+		pathKeys[path] = keys
+		return keys
+	}
+	samples := newSubmissionPathIndex(len(verified.Files))
+	for index, sample := range verified.Files {
+		samples.add(keysFor(sample.LocalPath), index+1)
+	}
+
+	submitted := newSubmissionPathIndex(len(inventory.Files))
 	files := make([]api.SubmissionContentFile, 0, len(inventory.Files))
 	for index, file := range inventory.Files {
 		if strings.TrimSpace(file.LocalPath) == "" || file.Size < 0 {
 			return api.SubmissionContentIdentity{}, fmt.Errorf("torrent: submitted content inventory file %d is invalid", index)
 		}
-		for previous := range inventory.Files[:index] {
-			if pathutil.SamePath(inventory.Files[previous].LocalPath, file.LocalPath) {
-				return api.SubmissionContentIdentity{}, fmt.Errorf("torrent: submitted content inventory aliases %q", file.LocalPath)
-			}
+		keys := keysFor(file.LocalPath)
+		if submitted.match(keys) != 0 {
+			return api.SubmissionContentIdentity{}, fmt.Errorf("torrent: submitted content inventory aliases %q", file.LocalPath)
 		}
-		matched, err := verifiedSourceFile(file, verified.Files)
+		submitted.add(keys, index+1)
+		matched, err := verifiedSourceFile(file, verified.Files, samples.match(keys))
 		if err != nil {
 			return api.SubmissionContentIdentity{}, err
 		}
@@ -199,20 +214,51 @@ func submissionContentInventoryFromDisk(
 	return SubmissionContentInventory{Scope: scope, Files: files}, nil
 }
 
-func verifiedSourceFile(file SubmissionContentFile, verified []api.VerifiedSourceFile) (api.VerifiedSourceFile, error) {
-	var matched api.VerifiedSourceFile
-	for _, candidate := range verified {
-		if !pathutil.SamePath(file.LocalPath, candidate.LocalPath) {
-			continue
-		}
-		if matched.LocalPath != "" {
-			return api.VerifiedSourceFile{}, fmt.Errorf("torrent: sampled source identity aliases %q", file.LocalPath)
-		}
-		matched = candidate
+// submissionPathIndex keeps the two SamePath comparisons independent. An
+// index is one-based, with zero for no match and -1 for ambiguous matches.
+type submissionPathIndex struct {
+	lexical  map[string]int
+	resolved map[string]int
+}
+
+func newSubmissionPathIndex(size int) submissionPathIndex {
+	return submissionPathIndex{lexical: make(map[string]int, size), resolved: make(map[string]int, size)}
+}
+
+func (i submissionPathIndex) add(keys pathutil.PathMatchKeys, index int) {
+	addSubmissionPath(i.lexical, keys.Lexical, index)
+	addSubmissionPath(i.resolved, keys.Resolved, index)
+}
+
+func addSubmissionPath(index map[string]int, key string, position int) {
+	if key == "" {
+		return
 	}
-	if matched.LocalPath == "" {
+	if index[key] != 0 {
+		position = -1
+	}
+	index[key] = position
+}
+
+func (i submissionPathIndex) match(keys pathutil.PathMatchKeys) int {
+	lexical, resolved := i.lexical[keys.Lexical], i.resolved[keys.Resolved]
+	if lexical != 0 && resolved != 0 && lexical != resolved {
+		return -1
+	}
+	if lexical != 0 {
+		return lexical
+	}
+	return resolved
+}
+
+func verifiedSourceFile(file SubmissionContentFile, verified []api.VerifiedSourceFile, position int) (api.VerifiedSourceFile, error) {
+	if position < 0 {
+		return api.VerifiedSourceFile{}, fmt.Errorf("torrent: sampled source identity aliases %q", file.LocalPath)
+	}
+	if position == 0 {
 		return api.VerifiedSourceFile{}, fmt.Errorf("torrent: submitted file %q is missing fresh sample evidence", file.LocalPath)
 	}
+	matched := verified[position-1]
 	if matched.Size != file.Size {
 		return api.VerifiedSourceFile{}, fmt.Errorf("torrent: submitted file %q differs from fresh sample evidence", file.LocalPath)
 	}
