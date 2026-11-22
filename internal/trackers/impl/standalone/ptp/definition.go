@@ -57,6 +57,9 @@ func (*Definition) WorkflowMediaRequirements() *trackers.WorkflowMediaRequiremen
 	}
 }
 
+// UsesOwnDiscDescriptionLayout keeps PTP's per-disc MediaInfo and gallery pairs.
+func (*Definition) UsesOwnDiscDescriptionLayout() bool { return true }
+
 func prepareDescription(ctx context.Context, req trackers.PreparationInput) (trackers.DescriptionResult, error) {
 	select {
 	case <-ctx.Done():

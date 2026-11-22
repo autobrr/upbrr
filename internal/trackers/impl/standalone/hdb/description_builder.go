@@ -100,7 +100,7 @@ func buildDiscSection(meta api.UploadSubject, dbPath string) (string, error) {
 		return "", nil
 	}
 
-	content, err := trackers.ReadBDInfo(dbPath, meta)
+	content, err := trackers.ReadBDInfoForDescription(dbPath, meta)
 	if err != nil {
 		return "", fmt.Errorf("description: HDB read BDInfo: %w", err)
 	}

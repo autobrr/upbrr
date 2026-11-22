@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/bbcode"
 	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
@@ -65,7 +66,9 @@ func buildDescription(meta api.UploadSubject, dbPath string, assets trackers.Des
 		parts = append(parts, "[color=red][size=4]Screenshots[/size][/color]\n"+screenshots)
 	}
 
-	return description.MapOutsideLiteralBlocks(strings.TrimSpace(strings.Join(parts, "\n\n")), centerTagReplacer.Replace)
+	return description.MapOutsideLiteralBlocks(strings.TrimSpace(strings.Join(parts, "\n\n")), func(fragment string) string {
+		return centerTagReplacer.Replace(bbcode.ConvertSpoilerToHide(bbcode.ConvertNamedSpoilerToNamedHide(fragment)))
+	})
 }
 
 func buildScreenshotSection(images []api.ScreenshotImage) string {

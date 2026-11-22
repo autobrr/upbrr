@@ -53,18 +53,18 @@ func testPTPDescriptionCaptureScope(t *testing.T, disc string, frameDiscs []stri
 	if len(frameDiscs) > 0 {
 		captureFiles = make([]string, len(frameDiscs))
 		wantCount = 7
-		trackerIDs = append(trackerIDs, "HHD")
+		trackerIDs = append(trackerIDs, "HHD", "HDB", "BJS")
 		for index, id := range []string{"first", "second", "third"} {
 			discs = append(discs, api.DiscEvidenceResource{ID: id, Type: "BDMV"})
 			facts.Items = append(facts.Items, api.DiscItemFacts{
-				ID: id,
-				Name: id,
+				ID:      id,
+				Name:    id,
 				Reports: []api.DiscReportFacts{{Summary: fmt.Sprintf("BDInfo report %d", index+1)}},
 			})
 		}
 		facts.Items[0].Reports = append(facts.Items[0].Reports, api.DiscReportFacts{
 			Playlist: api.PlaylistInfo{File: "00002.MPLS"},
-			Summary: "Another playlist on disc 1",
+			Summary:  "Another playlist on disc 1",
 		})
 	}
 	for index, file := range captureFiles {
@@ -105,12 +105,15 @@ func testPTPDescriptionCaptureScope(t *testing.T, disc string, frameDiscs []stri
 	if err != nil || len(preview.ContentFailures) != 0 || len(preview.Descriptions) != len(trackerIDs) {
 		t.Fatalf("pack preview = %+v, err = %v", preview, err)
 	}
-	var body, ordinary string
+	var body string
+	ordinary := make(map[string]string)
 	for _, desc := range preview.Descriptions {
 		if slices.Contains(desc.Trackers, "PTP") {
 			body = desc.RawDescription
 		} else {
-			ordinary = desc.RawDescription
+			for _, tracker := range desc.Trackers {
+				ordinary[tracker] = desc.RawDescription
+			}
 		}
 	}
 	if len(discs) > 1 {
@@ -126,12 +129,36 @@ func testPTPDescriptionCaptureScope(t *testing.T, disc string, frameDiscs []stri
 			}
 		}
 	}
+	if len(discs) > 1 {
+		for tracker, tags := range map[string][2]string{
+			"HHD": {"[spoiler=BDInfo - Disc %d][code]", "[/code][/spoiler]"},
+			"HDB": {"[hide=BDInfo - Disc %d][font=monospace]", "[/font][/hide]"},
+			"BJS": {"[hide=BDInfo - Disc %d][pre]", "[/pre][/hide]"},
+		} {
+			text := ordinary[tracker]
+			for _, discNumber := range []int{2, 3} {
+				report := fmt.Sprintf("BDInfo report %d", discNumber)
+				want := fmt.Sprintf(tags[0], discNumber) + report + tags[1]
+				if !strings.Contains(text, want) || strings.Count(text, report) != 1 {
+					t.Errorf("%s did not render disc %d once in its own markup: %s", tracker, discNumber, text)
+				}
+			}
+			if strings.Contains(text, "BDInfo - Disc 1") {
+				t.Errorf("%s rendered the first disc as an additional report: %s", tracker, text)
+			}
+		}
+	}
 	for index, image := range exact.ScreenshotUploads {
 		if got := strings.Contains(body, image.RawURL); got != (index < wantCount) {
 			t.Errorf("PTP description used the wrong screenshot set: frame %d present=%t; %s", index, got, body)
 		}
-		if len(discs) > 1 && strings.Contains(ordinary, image.RawURL) != (index < 3) {
-			t.Errorf("ordinary description used the wrong screenshot set: frame %d; %s", index, ordinary)
+		if hhd, ok := ordinary["HHD"]; ok && strings.Contains(hhd, image.RawURL) != (index < 3) {
+			t.Errorf("ordinary description used the wrong screenshot set: frame %d; %s", index, hhd)
+		}
+		for tracker, text := range ordinary {
+			if index >= 3 && strings.Contains(text, image.RawURL) {
+				t.Errorf("%s received an extra-disc screenshot: frame %d; %s", tracker, index, text)
+			}
 		}
 	}
 }
@@ -156,8 +183,8 @@ func TestPTPPackRequirementIsOwnedByPTPAndUsesOnlyEligibleFiles(t *testing.T) {
 		},
 		{name: "single video", files: []string{"Movie.mkv", "Movie.srt"}},
 		{
-			name: "multi-disc quota belongs to PTP only",
-			disc: "BDMV",
+			name:  "multi-disc quota belongs to PTP only",
+			disc:  "BDMV",
 			discs: []api.DiscEvidenceResource{{ID: "one"}, {ID: "two"}, {ID: "three"}},
 		},
 		{

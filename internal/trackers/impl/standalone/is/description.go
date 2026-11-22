@@ -24,7 +24,7 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 	if strings.TrimSpace(meta.EpisodeOverview) != "" {
 		parts = append(parts, "Title: "+strings.TrimSpace(meta.EpisodeTitle), "Overview: "+strings.TrimSpace(meta.EpisodeOverview))
 	}
-	if media := trackers.ReadBDinfoOrMediaInfo(req.Runtime.DBPath, meta); media != "" {
+	if media := trackers.ReadMediaInfoForDescription(req.Runtime.DBPath, meta); media != "" {
 		parts = append(parts, media)
 	}
 	if strings.TrimSpace(assets.Description) != "" {

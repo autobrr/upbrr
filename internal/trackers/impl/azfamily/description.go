@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	azTagStripPattern  = regexp.MustCompile(`(?is)\[/?(?:size|align|left|center|right|img|table|tr|td|spoiler|url)[^\]]*\]`)
+	azTagStripPattern  = regexp.MustCompile(`(?is)\[/?(?:size|align|left|center|right|img|table|tr|td|spoiler|code|url)[^\]]*\]`)
 	azNFOStripPattern  = regexp.MustCompile(`(?is)\[center\]\[spoiler=.*? NFO:\]\[code\].*?\[/code\]\[/spoiler\]\[/center\]`)
 	azLinkStripPattern = regexp.MustCompile(`https?://\S+|www\.\S+`)
 )

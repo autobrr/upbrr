@@ -52,6 +52,47 @@ func PreparedDescriptionAssets(prepared *DescriptionAssets) (DescriptionAssets, 
 	return assets, nil
 }
 
+// DiscDescriptionLayoutProvider identifies a tracker that renders its own
+// complete per-disc layout instead of the shared additional-disc sections.
+type DiscDescriptionLayoutProvider interface {
+	UsesOwnDiscDescriptionLayout() bool
+}
+
+func (s *Service) withAdditionalDiscReports(tracker string, meta api.UploadSubject, assets *DescriptionAssets) *DescriptionAssets {
+	if len(meta.Disc.Items) < 2 || !strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") || assets != nil && assets.Final {
+		return assets
+	}
+	mode, _ := s.registry.LookupUploadContentMode(tracker)
+	if !mode.UsesDescription() {
+		return assets
+	}
+	definition, _ := s.registry.Lookup(tracker)
+	if layout, ok := definition.(DiscDescriptionLayoutProvider); ok && layout.UsesOwnDiscDescriptionLayout() {
+		return assets
+	}
+
+	blocks := make([]string, 0, len(meta.Disc.Items)-1)
+	for i, disc := range meta.Disc.Items[1:] {
+		text := (api.DiscFacts{Items: []api.DiscItemFacts{disc}}).AggregateSummary()
+		if text != "" {
+			blocks = append(blocks, fmt.Sprintf("[spoiler=BDInfo - Disc %d][code]%s[/code][/spoiler]", i+2, strings.ReplaceAll(text, "[", "&#91;")))
+		}
+	}
+	if len(blocks) == 0 {
+		return assets
+	}
+	var out DescriptionAssets
+	if assets != nil {
+		out = *assets
+	}
+	// Keep trailing analysis sections at the end for tracker builders that move them.
+	if out.Description != "" {
+		blocks = append(blocks, out.Description)
+	}
+	out.Description = strings.Join(blocks, "\n\n")
+	return &out
+}
+
 var embeddedNFOBlockPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?is)\[(?:center|align=center)\]\s*\[spoiler=.*? nfo:\]\[code\].*?\[/code\]\[/spoiler\]\s*\[/(?:center|align)\]`),
 	regexp.MustCompile(`(?is)\[hide=(?:Scene|FraMeSToR) NFO:\]\[pre\].*?\[/pre\]\[/hide\]`),

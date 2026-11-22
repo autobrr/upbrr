@@ -45,7 +45,7 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 	}
 
 	// File information (BDInfo or MediaInfo)
-	if media := trackers.ReadBDinfoOrMediaInfo(req.Runtime.DBPath, meta); media != "" {
+	if media := trackers.ReadMediaInfoForDescription(req.Runtime.DBPath, meta); media != "" {
 		parts = append(parts, media)
 	}
 
