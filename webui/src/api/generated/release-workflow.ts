@@ -683,6 +683,11 @@ export type DiscReportFacts = Readonly<{
   Summary: string;
 }>;
 
+export type DiscScreenshotRequirement = Readonly<{
+  additionalCount: number;
+  discIds: readonly string[];
+}>;
+
 export type DiscoverReleaseWorkflowComparisonSourceRequest = Readonly<{
   expectedRevision: WorkflowRevision;
   idempotencyKey: string;
@@ -1248,6 +1253,7 @@ export type IMDBMetadata = Readonly<{
   Creators: readonly IMDBPerson[];
   Directors: readonly IMDBPerson[];
   EditionDetails: Readonly<Record<string, IMDBEditionDetail>>;
+  EditionRuntimes?: readonly IMDBEditionDetail[];
   Editions: readonly string[];
   EndYear: number;
   Episodes: readonly IMDBEpisode[];
@@ -1529,6 +1535,9 @@ export type MediaFacts = Readonly<{
   DistributorProvenance: FactProvenance;
   Edition: string;
   EditionDisplay: readonly EditionDisplayPart[];
+  EditionFrameRate?: number;
+  EditionOriginalFrameRate?: number;
+  EditionRuntimeSeconds?: number;
   EditionSet: string;
   HDR: string;
   HDRFacts: HDRFacts;
@@ -1746,6 +1755,7 @@ export type NamingStatus = string;
 export type OpenActiveInputRequest = Readonly<{
   expectedRevision: number;
   request: ContinueReleaseWorkflowRequest;
+  reuseVerifiedSource?: boolean;
 }>;
 
 export type Operation = Readonly<{
@@ -2999,6 +3009,7 @@ export type TrackerArtifactRequirements = Readonly<{
   allowedImageHosts?: readonly string[];
   bdInfo: boolean;
   description: boolean;
+  discScreenshots?: DiscScreenshotRequirement | null;
   dvdMenuCount: number;
   imageHosting: boolean;
   mediaInfo: boolean;

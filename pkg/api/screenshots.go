@@ -124,8 +124,11 @@ type ScreenshotSubject struct {
 	// KeepImages is the effective image-collection policy for this prepared generation.
 	KeepImages   bool
 	DefaultCount int
-	ManualFrames []int
-	Discs        []ScreenshotDiscSubject
+	// AdditionalDiscCount, when positive, uses DefaultCount for the first disc
+	// and plans this many automatic frames on each remaining disc.
+	AdditionalDiscCount int
+	ManualFrames        []int
+	Discs               []ScreenshotDiscSubject
 	// PackMembers is private exact-generation authority for per-file captures.
 	PackMembers []ScreenshotPackMember `json:"-"`
 	// PackMemberID scopes the renderer's cache to one server-selected video.

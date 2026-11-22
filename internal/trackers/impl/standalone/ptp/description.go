@@ -64,7 +64,10 @@ func buildDescription(meta api.UploadSubject, trackerConfig config.TrackerConfig
 	return strings.TrimSpace(strings.Join(sections, "\n\n"))
 }
 
-const packScreenshotsPerMember = 2
+const (
+	packScreenshotsPerMember     = 2
+	screenshotsPerAdditionalDisc = 2
+)
 
 func buildScreenshotSection(meta api.UploadSubject, screenshots []api.ScreenshotImage, blankLine bool) string {
 	if len(screenshots) == 0 {
@@ -73,6 +76,9 @@ func buildScreenshotSection(meta api.UploadSubject, screenshots []api.Screenshot
 	separator := "\n"
 	if blankLine {
 		separator += "\n"
+	}
+	if meta.ExactMedia != nil && len(meta.Discs) > 1 {
+		return strings.Join(ptpDiscScreenshotImages(meta.Discs, screenshots), separator)
 	}
 	if members := ptpExactPackMembers(meta); len(members) > 0 {
 		return strings.Join(ptpPackScreenshotImages(members, screenshots), separator)
@@ -88,6 +94,35 @@ func buildScreenshotSection(meta api.UploadSubject, screenshots []api.Screenshot
 		return ""
 	}
 	return strings.Join(allowed, separator)
+}
+
+// ptpDiscScreenshotImages preserves the first disc's requested frames, then
+// takes exactly two distinct hosted frames for each remaining prepared disc.
+func ptpDiscScreenshotImages(discs []api.DiscEvidenceResource, screenshots []api.ScreenshotImage) []string {
+	var images []string
+	seen := make(map[string]bool)
+	for index, disc := range discs {
+		count := 0
+		for _, image := range screenshots {
+			if image.DiscID != disc.ID {
+				continue
+			}
+			url := ptpScreenshotURL(image)
+			if url == "" || seen[url] {
+				continue
+			}
+			seen[url] = true
+			images = append(images, "[img]"+url+"[/img]")
+			count++
+			if index > 0 && count == screenshotsPerAdditionalDisc {
+				break
+			}
+		}
+		if count == 0 || index > 0 && count != screenshotsPerAdditionalDisc {
+			return nil
+		}
+	}
+	return images
 }
 
 func ptpExactPackMembers(meta api.UploadSubject) []api.ScreenshotPackMember {

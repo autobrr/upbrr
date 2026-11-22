@@ -7103,8 +7103,8 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 		})
 		return
 	}
-	packReady := LocalPackScreenshotRequirementsMet(snapshot.Artifacts, readinessProjections)
-	screenshotsReady := selectedScreenshots >= requiredScreenshots && packReady
+	sourceCoverageReady := LocalScreenshotSourceRequirementsMet(snapshot.Artifacts, readinessProjections)
+	screenshotsReady := selectedScreenshots >= requiredScreenshots && sourceCoverageReady
 	if snapshot.ImageRequirementsPrepared && !snapshot.ImageHostUploadSkipped {
 		screenshotsReady = !allTrackerHostsFailed && !unmatchedTrackerHostFailure &&
 			HostedScreenshotRequirementsMet(*snapshot, readinessProjections)
@@ -7117,8 +7117,8 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 			if len(comparisonScreenshots) > 0 {
 				prompt += fmt.Sprintf(" This includes %d from the main comparison column.", len(comparisonScreenshots))
 			}
-		case !packReady:
-			prompt = "Capture or select two screenshots for every eligible file in the PTP pack before upload."
+		case !sourceCoverageReady:
+			prompt = "Capture or select the required screenshots for each eligible source before upload."
 		case selectedMenus < requiredMenus:
 			prompt = fmt.Sprintf("Capture or select more DVD menu images before upload (%d of %d required).", selectedMenus, requiredMenus)
 		}
@@ -7140,10 +7140,23 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 	snapshot.Status = api.StageStatusCompleted
 }
 
-// LocalPackScreenshotRequirementsMet checks the current selected local sources,
+// LocalScreenshotSourceRequirementsMet checks the current selected local sources,
 // never an ordinary screenshot total or an unselected hosted variant.
-func LocalPackScreenshotRequirementsMet(artifacts []api.MediaArtifact, projections []api.TrackerReleaseProjection) bool {
+func LocalScreenshotSourceRequirementsMet(artifacts []api.MediaArtifact, projections []api.TrackerReleaseProjection) bool {
 	for _, projection := range projections {
+		if discs := projection.Artifacts.DiscScreenshots; discs != nil {
+			seen := make(map[api.PublicResourceID]bool)
+			counts := make(map[string]int)
+			for _, artifact := range artifacts {
+				if artifact.Selected && artifact.Kind == api.MediaArtifactScreenshot && artifact.Purpose == api.ScreenshotPurposeFinal && !seen[artifact.ID] {
+					seen[artifact.ID] = true
+					counts[artifact.DiscID]++
+				}
+			}
+			if !discScreenshotCountsCover(counts, discs, projection.Artifacts.ScreenshotCount) {
+				return false
+			}
+		}
 		pack := projection.Artifacts.PackScreenshots
 		if pack == nil {
 			continue
@@ -7168,6 +7181,13 @@ func LocalPackScreenshotRequirementsMet(artifacts []api.MediaArtifact, projectio
 		}
 	}
 	return true
+}
+
+func discScreenshotCountsCover(counts map[string]int, discs *api.DiscScreenshotRequirement, primaryCount int) bool {
+	if len(discs.DiscIDs) < 2 || counts[discs.DiscIDs[0]] < primaryCount {
+		return false
+	}
+	return !slices.ContainsFunc(discs.DiscIDs[1:], func(id string) bool { return counts[id] < discs.AdditionalCount })
 }
 
 func mediaHasUnscopedOrUnknownImageHostFailure(media api.MediaArtifactSet, projections []api.TrackerReleaseProjection) bool {
@@ -7204,7 +7224,7 @@ func HostedScreenshotRequirementsMet(snapshot api.MediaArtifactSet, projections 
 		artifacts[artifact.ID] = artifact
 	}
 	for _, projection := range projections {
-		pack := projection.Artifacts.PackScreenshots
+		pack, discs := projection.Artifacts.PackScreenshots, projection.Artifacts.DiscScreenshots
 		if projection.Artifacts.ScreenshotCount <= 0 && pack == nil && len(comparisonCells) == 0 {
 			continue
 		}
@@ -7212,6 +7232,7 @@ func HostedScreenshotRequirementsMet(snapshot api.MediaArtifactSet, projections 
 		sources := make(map[api.PublicResourceID]struct{}, projection.Artifacts.ScreenshotCount)
 		comparisonCoverage := make(map[string]map[api.PublicResourceID]struct{})
 		packSources := make(map[string]map[string]map[api.PublicResourceID]struct{})
+		discSources := make(map[string]map[api.PublicResourceID]string)
 		for _, attempt := range snapshot.HostAttempts {
 			if !hostedAttemptAppliesToTracker(attempt, trackerID) {
 				continue
@@ -7258,10 +7279,17 @@ func HostedScreenshotRequirementsMet(snapshot api.MediaArtifactSet, projections 
 					}
 				} else if final || source.Kind == api.MediaArtifactComparison && reusedComparison && !comparisonHostFailed {
 					sources[source.ID] = struct{}{}
+					if discs != nil && final && !comparisonHostFailed && host != "" {
+						if discSources[group] == nil {
+							discSources[group] = make(map[api.PublicResourceID]string)
+						}
+						discSources[group][source.ID] = source.DiscID
+					}
 				}
 			}
 		}
-		if pack != nil {
+		switch {
+		case pack != nil:
 			complete := false
 			for _, byMember := range packSources {
 				if !slices.ContainsFunc(pack.MemberIDs, func(member string) bool {
@@ -7274,7 +7302,22 @@ func HostedScreenshotRequirementsMet(snapshot api.MediaArtifactSet, projections 
 			if !complete {
 				return false
 			}
-		} else if len(sources) < projection.Artifacts.ScreenshotCount {
+		case discs != nil:
+			complete := false
+			for _, ids := range discSources {
+				counts := make(map[string]int, len(discs.DiscIDs))
+				for _, discID := range ids {
+					counts[discID]++
+				}
+				if discScreenshotCountsCover(counts, discs, projection.Artifacts.ScreenshotCount) {
+					complete = true
+					break
+				}
+			}
+			if !complete {
+				return false
+			}
+		case len(sources) < projection.Artifacts.ScreenshotCount:
 			return false
 		}
 		if len(comparisonCells) > 0 {

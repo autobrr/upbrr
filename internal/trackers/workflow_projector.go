@@ -397,6 +397,14 @@ func applyWorkflowProjectionRequirements(
 	}
 	if descriptor.WorkflowMedia != nil {
 		projection.Artifacts.DVDMenuCount = max(projection.Artifacts.DVDMenuCount, descriptor.WorkflowMedia.DVDMenuCount)
+		if count := descriptor.WorkflowMedia.AdditionalDiscScreenshots; count > 0 && len(subject.Discs) > 1 &&
+			projection.Artifacts.ScreenshotCount > 0 {
+			ids := make([]string, len(subject.Discs))
+			for index, disc := range subject.Discs {
+				ids[index] = disc.ID
+			}
+			projection.Artifacts.DiscScreenshots = &api.DiscScreenshotRequirement{DiscIDs: ids, AdditionalCount: count}
+		}
 		if count := descriptor.WorkflowMedia.PackScreenshotsPerMember; count > 0 && strings.TrimSpace(subject.DiscType) == "" {
 			members := mediafacts.PackScreenshotMembers(subject.FileList)
 			if len(members) > 1 {

@@ -27,12 +27,15 @@ func TestPTPDescriptionPreviewKeepsPackAndDiscCaptureScopesSeparate(t *testing.T
 			label = "multi-stream disc"
 		}
 		t.Run(label, func(t *testing.T) {
-			testPTPDescriptionCaptureScope(t, disc)
+			testPTPDescriptionCaptureScope(t, disc, nil)
 		})
 	}
+	t.Run("three discs", func(t *testing.T) {
+		testPTPDescriptionCaptureScope(t, "BDMV", []string{"first", "first", "first", "second", "second", "third", "third", "third"})
+	})
 }
 
-func testPTPDescriptionCaptureScope(t *testing.T, disc string) {
+func testPTPDescriptionCaptureScope(t *testing.T, disc string, frameDiscs []string) {
 	t.Helper()
 	root := t.TempDir()
 	files := []string{filepath.Join(root, "Movie.cd1.mkv"), filepath.Join(root, "Movie.cd2.mkv")}
@@ -44,10 +47,19 @@ func testPTPDescriptionCaptureScope(t *testing.T, disc string) {
 		captureFiles = make([]string, 3)
 		wantCount = 3
 	}
+	var discs []api.DiscEvidenceResource
+	if len(frameDiscs) > 0 {
+		discs = []api.DiscEvidenceResource{{ID: "first"}, {ID: "second"}, {ID: "third"}}
+		captureFiles = make([]string, len(frameDiscs))
+		wantCount = 7
+	}
 	for index, file := range captureFiles {
 		imagePath := filepath.Join(root, fmt.Sprintf("frame-%d.png", index))
 		url := fmt.Sprintf("https://i.ibb.co/synthetic/frame-%d.png", index)
 		image := api.ScreenshotImage{Path: imagePath, Purpose: api.ScreenshotPurposeFinal}
+		if index < len(frameDiscs) {
+			image.DiscID = frameDiscs[index]
+		}
 		if file != "" {
 			image.PackMemberID = mediafacts.TrackResourceID(file)
 		}
@@ -64,6 +76,7 @@ func testPTPDescriptionCaptureScope(t *testing.T, disc string) {
 	meta := api.UploadSubject{
 		SourcePath:         root,
 		DiscType:           disc,
+		Discs:              discs,
 		FileList:           files,
 		Trackers:           []string{"PTP"},
 		ExactMedia:         exact,
@@ -95,6 +108,7 @@ func TestPTPPackRequirementIsOwnedByPTPAndUsesOnlyEligibleFiles(t *testing.T) {
 		name, disc string
 		files      []string
 		members    []string
+		discs      []api.DiscEvidenceResource
 	}{
 		{
 			name:    "mixed targets",
@@ -102,6 +116,11 @@ func TestPTPPackRequirementIsOwnedByPTPAndUsesOnlyEligibleFiles(t *testing.T) {
 			members: []string{mediafacts.TrackResourceID("Movie.Sampler.cd1.mkv"), mediafacts.TrackResourceID("Movie.!sample.cd2.MP4")},
 		},
 		{name: "single video", files: []string{"Movie.mkv", "Movie.srt"}},
+		{
+			name: "multi-disc quota belongs to PTP only",
+			disc: "BDMV",
+			discs: []api.DiscEvidenceResource{{ID: "one"}, {ID: "two"}, {ID: "three"}},
+		},
 		{
 			name:  "disc stays on normal capture",
 			disc:  "DVD",
@@ -112,6 +131,7 @@ func TestPTPPackRequirementIsOwnedByPTPAndUsesOnlyEligibleFiles(t *testing.T) {
 			_, _, _, result, err := projector.Build(t.Context(), api.ReleaseSnapshot{}, api.UploadSubject{
 				ReleaseName: "Example.Movie.2026.1080p-GRP",
 				DiscType:    tc.disc,
+				Discs:       tc.discs,
 				FileList:    tc.files,
 			}, []api.TrackerID{"PTP", "AITHER"}, nil, nil, api.WorkflowExecutionModeNormal)
 			if err != nil || len(result.Projections) != 2 {
@@ -124,6 +144,14 @@ func TestPTPPackRequirementIsOwnedByPTPAndUsesOnlyEligibleFiles(t *testing.T) {
 				}
 				if p.Artifacts.ScreenshotCount != normalCount {
 					t.Errorf("normal screenshot count changed for %s: %d", p.TrackerID, p.Artifacts.ScreenshotCount)
+				}
+				discs := p.Artifacts.DiscScreenshots
+				if p.TrackerID == "PTP" && len(tc.discs) > 1 {
+					if discs == nil || discs.AdditionalCount != 2 || !slices.Equal(discs.DiscIDs, []string{"one", "two", "three"}) {
+						t.Errorf("PTP multi-disc quota = %+v", discs)
+					}
+				} else if discs != nil {
+					t.Errorf("unexpected multi-disc quota for %s: %+v", p.TrackerID, discs)
 				}
 				pack := p.Artifacts.PackScreenshots
 				if p.TrackerID != "PTP" || len(tc.members) == 0 {

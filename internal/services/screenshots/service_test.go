@@ -707,6 +707,46 @@ func TestPlanAllocatesScreenshotsAcrossEveryDisc(t *testing.T) {
 	}
 }
 
+func TestPlanKeepsConfiguredCountOnFirstDiscAndTwoOnExtras(t *testing.T) {
+	t.Parallel()
+
+	subject, _, _ := multiDiscScreenshotSubject(t)
+	third := subject.Discs[1]
+	third.ID = "disc-c"
+	subject.Discs = append(subject.Discs, third)
+	subject.AdditionalDiscCount = 2
+	service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), nil)
+	for _, tc := range []struct {
+		name string
+		manual []int
+	}{
+		{name: "automatic"},
+		{name: "first disc manual", manual: []int{240, 480, 720, 960}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			subject.ManualFrames = tc.manual
+			plan, err := service.Plan(t.Context(), subject, 4)
+			if err != nil {
+				t.Fatal(err)
+			}
+			counts := make([]int, 0, len(plan.Discs))
+			for _, disc := range plan.Discs {
+				counts = append(counts, len(disc.SuggestedSelections))
+				if disc.DiscID != "disc-a" {
+					for _, frame := range disc.SuggestedSelections {
+						if frame.Source == "manual" {
+							t.Fatalf("first disc manual frames leaked to %s", disc.DiscID)
+						}
+					}
+				}
+			}
+			if !slices.Equal(counts, []int{4, 2, 2}) {
+				t.Fatalf("planned frame counts = %v", counts)
+			}
+		})
+	}
+}
+
 func TestPlanAndCapturePreserveGoodDiscWhenAnotherDiscSetupFails(t *testing.T) {
 	subject, _, _ := multiDiscScreenshotSubject(t)
 	subject.Discs[0].Type = "DVD"

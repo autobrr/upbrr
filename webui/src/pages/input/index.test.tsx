@@ -1028,6 +1028,33 @@ describe("InputPage", () => {
     expect(screen.queryByText(/Multiple seasons detected/)).not.toBeInTheDocument();
   });
 
+  it("links the IMDb edition warning only for the current preview", () => {
+    const facet = readyInputFacet(1);
+    const title = "https://www.imdb.com/title/tt1234567";
+    facet.view.preview!.Diagnostics = [
+      {
+        Code: "imdb_edition_mismatch",
+        Severity: "warning",
+        Message: `Selected edition Extended differs from IMDb's Director's Cut.\n${title}/technical/\n${title}/alternateversions/`,
+        Candidates: [],
+      },
+    ];
+    const { rerender } = render(<InputPage facet={facet} {...inputPageProps()} />);
+    expect(screen.getByText(/Selected edition Extended differs/)).toBeVisible();
+    expect(screen.getByRole("link", { name: "IMDb technical specifications" })).toHaveAttribute(
+      "href",
+      `${title}/technical/`,
+    );
+    expect(screen.getByRole("link", { name: "IMDb alternate versions" })).toHaveAttribute(
+      "href",
+      `${title}/alternateversions/`,
+    );
+    rerender(<InputPage facet={readyInputFacet(2)} {...inputPageProps()} />);
+    expect(
+      screen.queryByRole("link", { name: "IMDb technical specifications" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows source MediaInfo and clears it with the next preview", () => {
     const base = readyInputFacet(1);
     const preview = base.view.preview!;

@@ -51,7 +51,10 @@ func (d *Definition) InputReadiness(meta api.UploadSubject) []api.InputReadiness
 
 // WorkflowMediaRequirements is PTP's automatic two-per-file pack policy.
 func (*Definition) WorkflowMediaRequirements() *trackers.WorkflowMediaRequirements {
-	return &trackers.WorkflowMediaRequirements{PackScreenshotsPerMember: packScreenshotsPerMember}
+	return &trackers.WorkflowMediaRequirements{
+		PackScreenshotsPerMember:  packScreenshotsPerMember,
+		AdditionalDiscScreenshots: screenshotsPerAdditionalDisc,
+	}
 }
 
 func prepareDescription(ctx context.Context, req trackers.PreparationInput) (trackers.DescriptionResult, error) {
@@ -80,6 +83,11 @@ func prepareDescription(ctx context.Context, req trackers.PreparationInput) (tra
 
 	description := strings.TrimSpace(assets.Description)
 	if !assets.Final {
+		if req.Meta.ExactMedia != nil && len(req.Meta.Discs) > 1 && len(ptpDiscScreenshotImages(req.Meta.Discs, assets.Screenshots)) == 0 {
+			return trackers.DescriptionResult{}, errors.New(
+				"PTP multi-disc upload needs hosted screenshots from the first disc and two from every additional disc",
+			)
+		}
 		if members := ptpExactPackMembers(req.Meta); len(members) > 0 && len(ptpPackScreenshotImages(members, assets.Screenshots)) == 0 {
 			return trackers.DescriptionResult{}, errors.New("PTP pack needs two hosted screenshots from each eligible video")
 		}

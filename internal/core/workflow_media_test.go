@@ -2468,6 +2468,75 @@ func TestWorkflowMediaBuilderKeepsAutomaticSuggestionsForOmittedDiscs(t *testing
 	}
 }
 
+func TestWorkflowMediaPlansAndCapturesConfiguredPrimaryAndFixedExtras(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	ids := []string{"first", "second", "third"}
+	subject := api.ScreenshotSubject{SourcePath: root}
+	for _, id := range ids {
+		subject.Discs = append(subject.Discs, api.ScreenshotDiscSubject{ID: id})
+	}
+	screenshots := &workflowScreenshotFake{
+		root: root,
+		planFor: func(subject api.ScreenshotSubject, count int) api.ScreenshotPlan {
+			if subject.AdditionalDiscCount != 2 || count != 3 {
+				t.Fatalf("request changed configured primary or fixed extras: %d+%d", count, subject.AdditionalDiscCount)
+			}
+			var plan api.ScreenshotPlan
+			for index, id := range ids {
+				target := count
+				if index > 0 {
+					target = subject.AdditionalDiscCount
+				}
+				disc := api.ScreenshotDiscPlan{DiscID: id}
+				for frame := range target {
+					disc.SuggestedSelections = append(disc.SuggestedSelections, api.ScreenshotSelection{
+						DiscID: id,
+						Index: frame,
+					})
+				}
+				plan.SuggestedSelections = append(plan.SuggestedSelections, disc.SuggestedSelections...)
+				plan.Discs = append(plan.Discs, disc)
+			}
+			return plan
+		},
+	}
+	builder := workflowMediaBuilder{resolver: workflowMediaResolverFake{screenshotSubject: &subject}, screenshots: screenshots}
+	projections := api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+		TrackerID: "PTP",
+		Artifacts: api.TrackerArtifactRequirements{
+			ScreenshotCount: 3,
+			DiscScreenshots: &api.DiscScreenshotRequirement{DiscIDs: ids, AdditionalCount: 2},
+		},
+	}}}
+	release := api.ReleaseRef{SourcePath: root, Generation: 1}
+	plan, err := builder.Plan(t.Context(), release, projections, time.Now())
+	if err != nil || len(plan.SuggestedSelections) != 7 {
+		t.Fatalf("media plan: %+v, %v", plan, err)
+	}
+	// The web client supplies the total selected frame count; do not interpret
+	// that total as a new primary-disc count. An extra manual frame on another
+	// disc also must not be captured.
+	selected := slices.Clone(plan.SuggestedSelections)
+	selected = append(selected, api.ScreenshotSelection{DiscID: "third", Index: 7})
+	instructions := api.MediaCaptureInstructions{
+		Purpose: api.ScreenshotPurposeFinal,
+		ScreenshotCount: len(selected),
+		Selections: selected,
+	}
+	media, _, err := builder.Build(t.Context(), release, projections, instructions, time.Now())
+	if err != nil || media.Status != api.StageStatusCompleted || len(media.Artifacts) != 7 || len(screenshots.selections) != 7 {
+		t.Fatalf("captured selections: %+v; media: %+v; error: %v", screenshots.selections, media, err)
+	}
+	counts := make(map[string]int)
+	for _, artifact := range media.Artifacts {
+		counts[artifact.DiscID]++
+	}
+	if counts["first"] != 3 || counts["second"] != 2 || counts["third"] != 2 {
+		t.Fatalf("actual capture counts = %+v", counts)
+	}
+}
+
 func TestMergeManualSelectionsPreservesUnreplacedExistingScreenshots(t *testing.T) {
 	t.Parallel()
 
@@ -2504,7 +2573,7 @@ func TestMergeManualSelectionsPreservesUnreplacedExistingScreenshots(t *testing.
 		},
 	}
 
-	selections, existing, err := mergeManualSelectionsWithDiscPlan(manual, plan)
+	selections, existing, err := mergeManualSelectionsWithDiscPlan(manual, plan, 0)
 	if err != nil {
 		t.Fatalf("merge selections: %v", err)
 	}

@@ -2758,6 +2758,24 @@
           "Summary"
         ]
       },
+      "DiscScreenshotRequirement": {
+        "type": "object",
+        "properties": {
+          "additionalCount": {
+            "type": "integer"
+          },
+          "discIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "additionalCount",
+          "discIds"
+        ]
+      },
       "DiscoverReleaseWorkflowComparisonSourceRequest": {
         "type": "object",
         "properties": {
@@ -4837,6 +4855,12 @@
               "$ref": "#/components/schemas/IMDBEditionDetail"
             }
           },
+          "EditionRuntimes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IMDBEditionDetail"
+            }
+          },
           "Editions": {
             "type": "array",
             "items": {
@@ -5888,6 +5912,15 @@
               "$ref": "#/components/schemas/EditionDisplayPart"
             }
           },
+          "EditionFrameRate": {
+            "type": "number"
+          },
+          "EditionOriginalFrameRate": {
+            "type": "number"
+          },
+          "EditionRuntimeSeconds": {
+            "type": "number"
+          },
           "EditionSet": {
             "type": "string"
           },
@@ -6877,6 +6910,9 @@
           },
           "request": {
             "$ref": "#/components/schemas/ContinueReleaseWorkflowRequest"
+          },
+          "reuseVerifiedSource": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -12421,6 +12457,16 @@
           },
           "description": {
             "type": "boolean"
+          },
+          "discScreenshots": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DiscScreenshotRequirement"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "dvdMenuCount": {
             "type": "integer"

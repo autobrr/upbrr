@@ -45,6 +45,33 @@ func TestPackScreenshotSectionUsesTwoDistinctFramesPerVideoAndPreservesSpacing(t
 	}
 }
 
+func TestDiscScreenshotSectionCapsExtrasWithoutDroppingFirstDiscFrames(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{
+		Discs: []api.DiscEvidenceResource{{ID: "first"}, {ID: "second"}, {ID: "third"}},
+		ExactMedia: &api.ExactMediaAssets{},
+	}
+	screenshots := make([]api.ScreenshotImage, 0, 4*len(meta.Discs))
+	for _, disc := range meta.Discs {
+		for _, frame := range []string{"a", "b", "c", "d"} {
+			screenshots = append(screenshots, api.ScreenshotImage{
+				DiscID: disc.ID,
+				Host: "pixhost",
+				RawURL: "https://img.pixhost.to/" + disc.ID + "-" + frame + ".png",
+			})
+		}
+	}
+	section := buildScreenshotSection(meta, screenshots, false)
+	if strings.Count(section, "[img]") != 8 || !strings.Contains(section, "first-d.png") ||
+		strings.Contains(section, "second-c.png") || strings.Contains(section, "third-c.png") {
+		t.Fatalf("wrong per-disc screenshots: %q", section)
+	}
+	if got := buildScreenshotSection(meta, screenshots[:9], false); got != "" {
+		t.Fatalf("other discs supplied missing third-disc frames: %q", got)
+	}
+}
+
 func TestPrepareDescriptionScreenshotSpacing(t *testing.T) {
 	t.Parallel()
 	const notes = "First line\nSecond line\n\n[comparison=Source, Encode]\r\n[center][img]https://img.onlyimage.org/compare.png[/img][/center]\r\n[/comparison]\n\nAfter"

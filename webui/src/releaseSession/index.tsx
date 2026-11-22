@@ -1307,7 +1307,11 @@ export function ReleaseSessionProvider({
       trackerInputAnswers: state.trackerInputAnswers,
       selectedTrackers: state.selectedTrackers,
     },
-    attempt?: Readonly<{ correlationID: string; controller: AbortController }>,
+    attempt?: Readonly<{
+      correlationID: string;
+      controller: AbortController;
+      reuseVerifiedSource?: boolean;
+    }>,
   ): Promise<ReleaseWorkflowCurrent | null> => {
     if (activeAuthority.current.state === "recovering" && !hasOpaqueRecoveringInput()) return null;
     if (controllers.current.workflow) return null;
@@ -1339,6 +1343,7 @@ export function ReleaseSessionProvider({
       const snapshot = await activePorts.activeInput.open(
         {
           expectedRevision,
+          ...(correctionPatch && attempt?.reuseVerifiedSource ? { reuseVerifiedSource: true } : {}),
           request: {
             goal: "input_ready",
             intent,
@@ -2130,7 +2135,11 @@ export function ReleaseSessionProvider({
           controller.signal,
         );
       } else {
-        current = await startBackendWorkflow(input, update, { correlationID, controller });
+        current = await startBackendWorkflow(input, update, {
+          correlationID,
+          controller,
+          reuseVerifiedSource: !controls.acceptPendingInput,
+        });
       }
       if (!current) {
         throw (

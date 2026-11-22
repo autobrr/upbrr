@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -535,7 +536,7 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 					return !ok
 				})
 			}
-			links, err := m.uploadImagesToTarget(ctx, meta, target, targetImages, retainedLinks, blockedRetainedLinks, fallback)
+			links, err := m.uploadImagesToTarget(ctx, meta, target, targetImages, retainedLinks, blockedRetainedLinks, strconv.Itoa(index+1), fallback)
 			results <- completedAttempt{
 				index: index,
 				links: links,
@@ -729,6 +730,7 @@ func (m *mediaModule) uploadImagesToTarget(
 	images []api.ScreenshotImage,
 	retainedLinks []api.UploadedImageLink,
 	blockedRetainedLinks []api.UploadedImageLink,
+	attemptID string,
 	fallback bool,
 ) ([]api.UploadedImageLink, error) {
 	view := *m
@@ -738,7 +740,7 @@ func (m *mediaModule) uploadImagesToTarget(
 	target.Host = strings.ToLower(strings.TrimSpace(target.Host))
 	target.UsageScope = normalizeImageUploadUsageScope(target.UsageScope)
 	progressTarget := api.ImageUploadProgressTarget{
-		AttemptID:  target.Host + "|" + target.UsageScope,
+		AttemptID:  attemptID,
 		Host:       target.Host,
 		UsageScope: target.UsageScope,
 		Trackers:   slices.Clone(target.Trackers),
@@ -838,7 +840,17 @@ func (m *mediaModule) uploadImagesToTarget(
 		}
 	}
 	packCovered := uploadedImageLinksCoverTarget(results, target, packImages)
-	if err != nil && packCovered && !strictAnalysisBatch && m.partialHostUploadIsUsable(ctx, target, len(images), len(results), err) {
+	discCovered := true
+	if len(meta.Discs) > 1 && m.registry != nil && slices.ContainsFunc(target.Trackers, func(tracker string) bool {
+		descriptor, ok := m.registry.LookupDescriptor(tracker)
+		return ok && descriptor.WorkflowMedia != nil && descriptor.WorkflowMedia.AdditionalDiscScreenshots > 0
+	}) {
+		discImages := slices.DeleteFunc(slices.Clone(images), func(image api.ScreenshotImage) bool {
+			return image.DiscID == "" || image.Purpose != api.ScreenshotPurposeFinal
+		})
+		discCovered = uploadedImageLinksCoverTarget(results, target, discImages)
+	}
+	if err != nil && packCovered && discCovered && !strictAnalysisBatch && m.partialHostUploadIsUsable(ctx, target, len(images), len(results), err) {
 		emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), err)
 		return results, nil
 	}
@@ -846,6 +858,8 @@ func (m *mediaModule) uploadImagesToTarget(
 		switch {
 		case !packCovered:
 			err = errors.New("per-file screenshot uploads are incomplete")
+		case !discCovered:
+			err = errors.New("per-disc screenshot uploads are incomplete")
 		case strictAnalysisBatch && !uploadedImageLinksCoverTarget(results, target, images):
 			err = errors.New("analysis image upload is incomplete")
 		}

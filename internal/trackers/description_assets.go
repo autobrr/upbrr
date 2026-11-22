@@ -458,13 +458,14 @@ func exactDescriptionMedia(
 		}
 		menuImages = append(menuImages, image)
 	}
-	if slices.ContainsFunc(meta.ExactMedia.Screenshots, func(image api.ScreenshotImage) bool { return image.PackMemberID != "" }) {
-		membersByPath := make(map[string]string, len(meta.ExactMedia.Screenshots))
-		for _, image := range meta.ExactMedia.Screenshots {
-			membersByPath[strings.TrimSpace(image.Path)] = image.PackMemberID
-		}
-		for i := range screenshots {
-			screenshots[i].PackMemberID = membersByPath[strings.TrimSpace(screenshots[i].Path)]
+	byPath := make(map[string]api.ScreenshotImage, len(meta.ExactMedia.Screenshots))
+	for _, image := range meta.ExactMedia.Screenshots {
+		byPath[strings.TrimSpace(image.Path)] = image
+	}
+	for i := range screenshots {
+		if source, found := byPath[strings.TrimSpace(screenshots[i].Path)]; found {
+			screenshots[i].DiscID, screenshots[i].DiscName = source.DiscID, source.DiscName
+			screenshots[i].PackMemberID = source.PackMemberID
 		}
 	}
 	return menuImages, screenshots

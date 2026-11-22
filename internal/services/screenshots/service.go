@@ -161,7 +161,15 @@ func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count in
 		if index < remainder {
 			discCount++
 		}
-		discPlan, err := s.planDisc(ctx, screenshotSubjectForDisc(meta, disc), discCount)
+		discSubject := screenshotSubjectForDisc(meta, disc)
+		if meta.AdditionalDiscCount > 0 {
+			discCount = count
+			if index > 0 {
+				discCount = meta.AdditionalDiscCount
+				discSubject.ManualFrames = nil
+			}
+		}
+		discPlan, err := s.planDisc(ctx, discSubject, discCount)
 		if err != nil {
 			if len(discs) == 1 {
 				return api.ScreenshotPlan{}, err

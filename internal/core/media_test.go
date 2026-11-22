@@ -854,7 +854,7 @@ func TestAudioAnalysisIncompleteHostBatchReportsFailedProgress(t *testing.T) {
 		Host:       "pixhost",
 		UsageScope: "global",
 		Trackers:   []string{"ONE"},
-	}, images, nil, nil, false)
+	}, images, nil, nil, "test-attempt", false)
 	if err == nil || !strings.Contains(err.Error(), "analysis image upload is incomplete") || len(links) != 1 {
 		t.Fatalf("incomplete audio upload: links=%#v err=%v", links, err)
 	}
@@ -913,6 +913,7 @@ func TestPackScreenshotIncompleteUploadFallsBackDespiteOrdinaryMinimum(t *testin
 		t.Fatal(err)
 	}
 	images := []api.ScreenshotImage{
+		{Path: "ordinary.png", Purpose: api.ScreenshotPurposeFinal},
 		{
 Path: "a1.png",
  Purpose: api.ScreenshotPurposeFinal,
@@ -948,16 +949,38 @@ published: 3,
 			logger:   &recordingMediaLogger{},
 			registry: registry,
 		}
-		subject := api.UploadSubject{Trackers: []string{"PACK"}, FileList: []string{"Movie.cd1.mkv", "Movie.cd2.mkv"}}
-		result, err := module.uploadImagesToTargetsWithFallback(t.Context(), subject, "", nil,
-			[]trackers.ImageUploadTarget{{
-Host: "pixhost",
- UsageScope: "global",
- Trackers: []string{"PACK"},
-}}, images, nil, nil)
-		if err != nil || len(result.Attempts) != 2 || result.Attempts[0].Failure == nil || result.Attempts[1].Failure != nil ||
-			result.Attempts[1].Host != "imgbb" || len(result.Attempts[1].Links) != len(images) || len(result.Failures) != 0 {
-			t.Fatalf("incomplete pack bypassed fallback (silent=%t): result=%+v, error=%v", silent, result, err)
+		var progressMu sync.Mutex
+		var completed []api.ImageUploadProgressUpdate
+		ctx := api.WithImageUploadProgressReporter(t.Context(), func(update api.ImageUploadProgressUpdate) {
+			if update.Host == "imgbb" && update.Status == api.ImageUploadProgressCompleted {
+				progressMu.Lock()
+				completed = append(completed, update)
+				progressMu.Unlock()
+			}
+		})
+		subject := api.UploadSubject{Trackers: []string{"PACK", "ONE"}, FileList: []string{"Movie.cd1.mkv", "Movie.cd2.mkv"}}
+		result, err := module.uploadImagesToTargetsWithFallback(ctx, subject, "", nil,
+			[]trackers.ImageUploadTarget{
+				{
+					Host: "pixhost",
+					UsageScope: "global",
+					Trackers: []string{"PACK"},
+				},
+				{
+					Host: "imgbb",
+					UsageScope: "global",
+					Trackers: []string{"ONE"},
+				},
+			}, images, nil, nil)
+		if err != nil || len(result.Attempts) != 3 || result.Attempts[0].Failure == nil || result.Attempts[1].Failure != nil ||
+			result.Attempts[2].Failure != nil || result.Attempts[2].Host != "imgbb" ||
+			len(result.Attempts[1].Links) != 1 || result.Attempts[1].Links[0].ImagePath != "ordinary.png" ||
+			len(result.Attempts[2].Links) != len(images)-1 || len(result.Failures) != 0 {
+			t.Fatalf("fallback lost a pack or ordinary upload (silent=%t): result=%+v, error=%v", silent, result, err)
+		}
+		if len(completed) != 2 || completed[0].AttemptID == "" || completed[1].AttemptID == "" ||
+			completed[0].AttemptID == completed[1].AttemptID || completed[0].Fallback == completed[1].Fallback {
+			t.Fatalf("same-host fallback progress was not independent: %+v", completed)
 		}
 	}
 }

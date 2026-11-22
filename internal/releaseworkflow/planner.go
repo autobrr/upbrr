@@ -1241,17 +1241,39 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 		return stageSucceeded(current.Media.Status) && err == nil && current.Media.CaptureFingerprint == expected
 	}
 	if (desired.Purpose == "" || desired.Purpose == api.ScreenshotPurposeFinal) && desired.Selections != nil {
-		if !LocalPackScreenshotRequirementsMet(current.Media.Artifacts, continuationMediaProjections(current)) {
+		if !LocalScreenshotSourceRequirementsMet(current.Media.Artifacts, continuationMediaProjections(current)) {
 			return false
 		}
-		retained := make(map[int]struct{}, len(current.Media.Artifacts))
+		type discFrame struct {
+			disc  string
+			index int
+		}
+		retained := make(map[discFrame]struct{}, len(current.Media.Artifacts))
 		for _, artifact := range current.Media.Artifacts {
 			if artifact.Kind == api.MediaArtifactScreenshot && artifact.PackMemberID == "" && artifact.Source != "tracker" {
-				retained[artifact.Index] = struct{}{}
+				retained[discFrame{artifact.DiscID, artifact.Index}] = struct{}{}
+				retained[discFrame{index: artifact.Index}] = struct{}{}
 			}
 		}
+		var discs *api.DiscScreenshotRequirement
+		for _, projection := range continuationMediaProjections(current) {
+			if projection.Artifacts.DiscScreenshots != nil {
+				discs = projection.Artifacts.DiscScreenshots
+				break
+			}
+		}
+		perDisc := make(map[string]int)
+		seen := make(map[discFrame]bool)
 		for _, selection := range desired.Selections {
-			if _, ok := retained[selection.Index]; !ok {
+			key := discFrame{selection.DiscID, selection.Index}
+			if discs != nil && len(discs.DiscIDs) > 1 && slices.Contains(discs.DiscIDs[1:], selection.DiscID) {
+				if seen[key] || perDisc[key.disc] >= discs.AdditionalCount {
+					continue
+				}
+				seen[key] = true
+				perDisc[key.disc]++
+			}
+			if _, ok := retained[key]; !ok {
 				return false
 			}
 		}
@@ -1289,7 +1311,7 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 		}
 		return automaticMenus > 0 && stageSucceeded(current.Media.Status)
 	case "", api.ScreenshotPurposeFinal:
-		if !LocalPackScreenshotRequirementsMet(current.Media.Artifacts, continuationMediaProjections(current)) {
+		if !LocalScreenshotSourceRequirementsMet(current.Media.Artifacts, continuationMediaProjections(current)) {
 			return false
 		}
 		required := desired.ScreenshotCount

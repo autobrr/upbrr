@@ -235,6 +235,8 @@ type TrackerDuplicateTarget struct {
 type TrackerArtifactRequirements struct {
 	// ScreenshotCount is the minimum number of selected normal screenshots.
 	ScreenshotCount int `json:"screenshotCount"`
+	// DiscScreenshots adds fixed quotas for the remaining discs after the primary.
+	DiscScreenshots *DiscScreenshotRequirement `json:"discScreenshots,omitempty"`
 	// PackScreenshots requires distinct captures for each prepared media member.
 	PackScreenshots *PackScreenshotRequirement `json:"packScreenshots,omitempty"`
 	// DVDMenuCount is a tracker-declared minimum, not an automatic-capture cap.
@@ -254,6 +256,12 @@ type TrackerArtifactRequirements struct {
 type PackScreenshotRequirement struct {
 	MemberIDs      []string `json:"memberIds"`
 	CountPerMember int      `json:"countPerMember"`
+}
+
+// DiscScreenshotRequirement pins the prepared disc order and the count for each disc after the first.
+type DiscScreenshotRequirement struct {
+	DiscIDs         []string `json:"discIds"`
+	AdditionalCount int      `json:"additionalCount"`
 }
 
 // TrackerQuestionnaireRequirement describes one non-secret tracker input requirement.
