@@ -546,6 +546,20 @@ func TestAdditionalDiscReportsPreserveSavedBlocksWithoutDuplicatingThem(t *testi
 			t.Fatalf("saved block changed or duplicated: %q", got.Description)
 		}
 	}
+	third := meta.Disc.Items[1]
+	third.ID = "third"
+	meta.Disc.Items = append(meta.Disc.Items, third)
+	for _, saved := range []string{fresh.Description, "Notes<br>BDINFO TWO<br>Video: &amp;#91;Example]"} {
+		assets := &DescriptionAssets{Description: saved, Override: true}
+		got := service.withAdditionalDiscReports("AITHER", meta, assets)
+		if strings.Count(got.Description, "BDINFO TWO") != 2 ||
+			strings.Count(got.Description, "[spoiler=BDInfo - Disc 3]") != 1 || !strings.HasSuffix(got.Description, saved) {
+			t.Fatalf("a single saved report must not also suppress the identical missing report: %q", got.Description)
+		}
+		if again := service.withAdditionalDiscReports("AITHER", meta, got); again.Description != got.Description {
+			t.Fatalf("regenerating the repaired description changed it: %q", again.Description)
+		}
+	}
 	final := &DescriptionAssets{Description: "Final notes", Final: true}
 	if got := service.withAdditionalDiscReports("AITHER", meta, final); got.Description != final.Description {
 		t.Fatalf("reviewed output changed: %q", got.Description)

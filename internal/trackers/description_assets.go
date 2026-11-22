@@ -77,11 +77,13 @@ func (s *Service) withAdditionalDiscReports(tracker string, meta api.UploadSubje
 	var savedText string
 	if assets != nil && assets.Description != "" {
 		existing = make(map[string]bool)
-		savedText = normalizeDiscReportText(assets.Description)
+		// Named reports own their disc and must not also count as unnamed matches.
+		savedText = normalizeDiscReportText(additionalDiscReportPattern.ReplaceAllString(assets.Description, "\x00"))
 		for _, block := range additionalDiscReportPattern.FindAllStringSubmatch(assets.Description, -1) {
 			existing[block[1]] = true
 		}
 	}
+	usedMatches := make(map[string]int)
 	blocks := make([]string, 0, len(meta.Disc.Items)-1)
 	for i, disc := range meta.Disc.Items[1:] {
 		number := strconv.Itoa(i + 2)
@@ -89,9 +91,14 @@ func (s *Service) withAdditionalDiscReports(tracker string, meta api.UploadSubje
 			continue
 		}
 		text := (api.DiscFacts{Items: []api.DiscItemFacts{disc}}).AggregateSummary()
-		if text != "" && !strings.Contains(savedText, normalizeDiscReportText(text)) {
-			blocks = append(blocks, fmt.Sprintf("[spoiler=BDInfo - Disc %s][code]%s[/code][/spoiler]", number, strings.ReplaceAll(text, "[", "&#91;")))
+		if text == "" {
+			continue
 		}
+		if key := normalizeDiscReportText(text); key != "" && usedMatches[key] < strings.Count(savedText, key) {
+			usedMatches[key]++
+			continue
+		}
+		blocks = append(blocks, fmt.Sprintf("[spoiler=BDInfo - Disc %s][code]%s[/code][/spoiler]", number, strings.ReplaceAll(text, "[", "&#91;")))
 	}
 	if len(blocks) == 0 {
 		return assets
