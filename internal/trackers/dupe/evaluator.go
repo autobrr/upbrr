@@ -387,6 +387,10 @@ func dupeReasonMessage(reason string, relation api.DupeRelation) string {
 		return "Proposed season pack may supersede the existing episode slot."
 	case "pack_audio_languages_unverified":
 		return "Audio-language matching is unverified. You may acknowledge this warning and continue the upload; this does not establish matching content or trump eligibility."
+	case "target_source_contradictory":
+		return "Proposed release source evidence is contradictory."
+	case "candidate_source_contradictory":
+		return "Candidate source evidence is contradictory."
 	case "target_hdr_contradictory":
 		return "Proposed HDR metadata contradicts fallback naming evidence."
 	case "hdr_evidence_missing", "target_hdr_missing", "candidate_hdr_missing":

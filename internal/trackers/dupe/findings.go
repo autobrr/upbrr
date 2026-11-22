@@ -45,6 +45,7 @@ type RuleFinding struct {
 	Manual           bool
 	OverridesGeneral bool
 	comparisons      []factComparison
+	evidenceReason   string
 }
 
 type factComparison struct {
@@ -504,6 +505,7 @@ func evaluateTrackerRule(
 		finding.Relation = api.DupeRelationManualReview
 	}
 	disproved := false
+	var contradictionReason string
 	for _, condition := range rule.Conditions {
 		targetFact, candidateFact := comparisonFactsForDimension(
 			target,
@@ -531,6 +533,15 @@ func evaluateTrackerRule(
 		}
 		if targetFact.Status == FactContradictory || candidateFact.Status == FactContradictory {
 			finding.Contradictions = append(finding.Contradictions, string(condition.Dimension))
+			if contradictionReason == "" {
+				contradictionReason = string(condition.Dimension) + "_contradictory"
+				switch {
+				case targetFact.Status != FactContradictory:
+					contradictionReason = "candidate_" + contradictionReason
+				case candidateFact.Status != FactContradictory:
+					contradictionReason = "target_" + contradictionReason
+				}
+			}
 			continue
 		}
 		if condition.MissingNotApplicable && (targetFact.Status == FactMissing || candidateFact.Status == FactMissing) {
@@ -567,7 +578,10 @@ func evaluateTrackerRule(
 		finding.Status = RuleFindingDisproved
 	case len(finding.Missing) > 0 || len(finding.Contradictions) > 0:
 		finding.Status = RuleFindingIndeterminate
-		finding.ReasonCode = missingReasonCode(finding.Missing, finding.Contradictions)
+		finding.evidenceReason = contradictionReason
+		if finding.evidenceReason == "" {
+			finding.evidenceReason = missingReasonCode(finding.Missing, nil)
+		}
 		if finding.OverridesGeneral {
 			finding.Priority = max(finding.Priority, findingPriorityTrackerMissing)
 		} else {
@@ -907,6 +921,9 @@ func resolveCandidateFindings(candidate TrackerCandidate, facts normalizedFacts,
 		}
 	}
 	result := candidateResult(candidate, facts, findings, topRelation, findingReason(top))
+	if top.evidenceReason != "" {
+		result.Reasons[0].Message = dupeReasonMessage(top.evidenceReason, topRelation)
+	}
 	if top.Status == RuleFindingIndeterminate && len(top.Missing) > 0 {
 		result.Reasons[0].Message += " Unavailable or incomplete comparison evidence: " +
 			strings.ReplaceAll(strings.Join(top.Missing, ", "), "_", " ") + "."
