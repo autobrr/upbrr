@@ -14,7 +14,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-const imdbRuntimeMatchSeconds = 2
+const imdbRuntimeMatchSeconds = 30
 
 type imdbRuntimeCandidate struct {
 	label   string
@@ -120,7 +120,7 @@ func imdbEditionDiagnostics(release api.PreparedRelease) []api.PreparationDiagno
 		reason += fmt.Sprintf(" At the measured runtime, IMDb is also close to %s (%s).", rawNearest.label, imdbRuntimeText(float64(rawNearest.seconds)))
 	}
 	if len(nearCuts) == 0 {
-		reason = "No listed IMDb runtime is within 2 seconds."
+		reason = fmt.Sprintf("No listed IMDb runtime is within %d seconds.", imdbRuntimeMatchSeconds)
 		var shorter, longer imdbRuntimeCandidate
 		for _, candidate := range candidates {
 			if float64(candidate.seconds) < comparison && shorter.seconds == 0 {
