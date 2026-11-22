@@ -13,7 +13,10 @@ Scoped rules for the shared duplicate-search coordinator and evaluator. Root, `i
   - different normalized media type or class. Full disc, remux, encode, WEB, and broadcast are distinct. Remux versus non-remux is bidirectional. DVD and BDMV must not block each other when both types are authoritative;
   - different evidenced HDR slot, edition/cut, region, or 2D/3D presentation.
 - A distinct candidate resolves to `coexists`: it must not block, count as actionable, or appear in the user-facing potential-duplicate list. Sanitized diagnostic/fingerprint evidence may retain the `coexists` evaluation.
-- Missing or partial facts never prove equality or coexistence except for configured group restrictions: when the structured group is absent, one unambiguous normalized release-name suffix may prove different-group ownership. Structured/title conflicts and every other partial fact remain conservative. Use `insufficient_evidence`; contradictory facts require `manual_review`. Unresolved overlapping candidates fall back to actionable `same_slot`.
+- Missing or partial facts never prove equality or coexistence, with two narrow exceptions:
+  - Under configured group restrictions, one unambiguous normalized release-name suffix may establish different-group ownership when the structured group is absent.
+  - For general 2160p HDR coexistence only, an explicit, noncontradictory candidate title token may establish candidate resolution. It does not complete the candidate's HDR evidence.
+- All other partial facts remain conservative. Use `insufficient_evidence`; contradictory facts require `manual_review`. Unresolved overlapping candidates fall back to actionable `same_slot`.
 - After authoritative same-work and same-season binding, the default policy prefers a season pack over individual episodes. An existing pack blocks a proposed episode; individual episodes are irrelevant to a proposed pack. A tracker-selected `PackContainmentRequiresReview` policy instead requires explicit review of non-disc pack/episode comparisons when matching technical/language content is unverified. Its acknowledgement permits ordinary upload approval without establishing a match or trump qualification; independent exact/in-client blocks and established coexistence remain authoritative.
 
 ## Evidence

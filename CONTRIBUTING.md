@@ -84,7 +84,7 @@ Go ownership/policy checks and golangci-lint run on separate runners.
 - **Coding:** Keep changes narrow and match the surrounding style. For Go, follow [the backend guidance](internal/AGENTS.md) and run the applicable checks. For frontend work, see the [Web UI development guide](./webui/README.md) and [`webui/AGENTS.md`](./webui/AGENTS.md), and let the Lefthook Prettier + ESLint hooks do the work.
 - **Commit messages:** We enforce [Conventional Commits](https://www.conventionalcommits.org/) via a repo-local validator. See [Commit message format](#commit-message-format) below.
   - No need to force-push or rebase — we squash on merge.
-- **Pull requests:** Submit a PR using the [pull request template](.github/pull_request_template.md). Mark it _Draft_ if still in progress. Reference related issues. Update public documentation for user-visible changes.
+- **Pull requests:** Use the [pull request template](.github/pull_request_template.md) unless a maintainer explicitly specifies another format. Mark it _Draft_ if still in progress. Reference related issues. Update public documentation for user-visible changes.
 - **Code review:** Be open to feedback during review.
 
 ### Pull request Docker images
