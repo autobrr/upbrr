@@ -348,6 +348,62 @@ func TestUploadImagesFallbackStartsBeforeUnrelatedPrimaryCompletes(t *testing.T)
 	}
 }
 
+func TestUploadFallbackContinuesPastAnAlreadyFailedSharedLane(t *testing.T) {
+	t.Parallel()
+	registry := mediaImageHostRegistry(t)
+	if err := registry.RegisterDescriptor(trackers.Descriptor{
+		Name:              "ALSO",
+		Definition:        mediaImageHostDefinition("ALSO"),
+		Family:            trackers.FamilyStandalone,
+		BaseURL:           "https://also.example.invalid",
+		UploadContentMode: trackers.UploadContentModeScreenshots,
+		ImageHost:         &trackers.ImageHostPolicy{AllowedHosts: []string{"pixhost", "imgbb", "sharex"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	release := make(chan struct{})
+	close(release)
+	service := &barrierImageHostingService{
+		entered: make(chan imageHostCall, 3),
+		behaviors: map[string]imageHostBehavior{
+			"pixhost": {release: release, err: errors.New("first host failed")},
+			"imgbb":   {release: release, err: errors.New("second host failed")},
+			"sharex":  {release: release},
+		},
+	}
+	module := &mediaModule{
+		cfg: config.Config{ImageHosting: config.ImageHostingConfig{
+Host1: "pixhost",
+ Host2: "imgbb",
+ Host3: "sharex",
+}},
+		images: service,
+		logger: api.NopLogger{},
+		registry: registry,
+	}
+	result, err := module.uploadImagesToTargetsWithFallback(t.Context(), api.UploadSubject{}, "", nil,
+		[]trackers.ImageUploadTarget{
+			{
+Host: "pixhost",
+ UsageScope: "global",
+ Trackers: []string{"ONE"},
+},
+			{
+Host: "imgbb",
+ UsageScope: "global",
+ Trackers: []string{"ALSO"},
+},
+		}, []api.ScreenshotImage{{Path: "screen.png", Purpose: api.ScreenshotPurposeFinal}}, nil, nil)
+	if err != nil || len(result.Failures) != 0 || len(result.Attempts) != 3 {
+		t.Fatalf("fallback did not reach the working third host: %+v, err = %v", result, err)
+	}
+	fallback := result.Attempts[2]
+	if fallback.Host != "sharex" || !fallback.Fallback || fallback.Failure != nil || len(fallback.Links) != 1 ||
+		!slices.Contains(fallback.Trackers, "ONE") || !slices.Contains(fallback.Trackers, "ALSO") {
+		t.Fatalf("third host did not cover both trackers: %+v", fallback)
+	}
+}
+
 func TestUploadImagesUnresolvedOutcomeStopsFallbackAndPartialAcceptance(t *testing.T) {
 	t.Parallel()
 

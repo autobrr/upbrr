@@ -621,15 +621,33 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 		for _, tracker := range blockedTrackers {
 			trackerExcluded := maps.Clone(failedHosts)
 			maps.Copy(trackerExcluded, failedByTracker[tracker])
-			fallbackTargets, err := m.resolveFallbackImageUploadTargets(host, []string{tracker}, sortedMapKeys(trackerExcluded), meta)
-			if err != nil {
-				schedulerErr = err
-				break
-			}
-			for _, fallbackTarget := range fallbackTargets {
-				if launch(fallbackTarget, true) {
-					startedTargets = append(startedTargets, fallbackTarget)
+			for {
+				fallbackTargets, err := m.resolveFallbackImageUploadTargets(host, []string{tracker}, sortedMapKeys(trackerExcluded), meta)
+				if err != nil {
+					schedulerErr = err
+					break
 				}
+				replan := false
+				for _, fallbackTarget := range fallbackTargets {
+					prior := attemptByTarget[targetKey(fallbackTarget)]
+					if prior != nil && prior.done && prior.err != nil {
+						// Another tracker has already tried this exact host lane.
+						if _, excluded := trackerExcluded[fallbackTarget.Host]; !excluded {
+							trackerExcluded[fallbackTarget.Host] = struct{}{}
+							replan = true
+						}
+						continue
+					}
+					if launch(fallbackTarget, true) {
+						startedTargets = append(startedTargets, fallbackTarget)
+					}
+				}
+				if !replan {
+					break
+				}
+			}
+			if schedulerErr != nil {
+				break
 			}
 		}
 		if len(startedTargets) > 0 {

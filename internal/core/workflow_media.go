@@ -2608,8 +2608,13 @@ func (b workflowMediaBuilder) UploadImages(
 	sourceByPath := make(map[string]api.PublicResourceID, len(artifactIDs))
 	sourcePaths := make(map[api.PublicResourceID]string, len(artifactIDs))
 	sourcePurposeByPath := make(map[string]api.ScreenshotPurpose, len(artifactIDs))
+	partialDiscSelection := false
 	for _, artifact := range snapshot.Artifacts {
 		if _, requested := selected[artifact.ID]; !requested {
+			if artifact.Selected && artifact.Kind == api.MediaArtifactScreenshot &&
+				artifact.Purpose == api.ScreenshotPurposeFinal && artifact.DiscID != "" {
+				partialDiscSelection = true
+			}
 			continue
 		}
 		if artifact.Kind != api.MediaArtifactScreenshot && artifact.Kind != api.MediaArtifactDVDMenu && artifact.Kind != api.MediaArtifactComparison {
@@ -2718,7 +2723,11 @@ func (b workflowMediaBuilder) UploadImages(
 		}, api.ErrReleaseWorkflowEffectAlreadySucceeded)
 	}
 	uploader := *b.media
-	uploader.uploadProjections = projections.Projections
+	// A subset upload contributes to the gallery; readiness checks full quotas
+	// across prior and newly published attempts after the upload.
+	if !partialDiscSelection {
+		uploader.uploadProjections = projections.Projections
+	}
 	result, err := uploader.uploadImagesToTargetsWithFallback(
 		ctx,
 		subject,
