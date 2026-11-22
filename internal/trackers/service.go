@@ -437,6 +437,11 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 			contentFailures = append(contentFailures, *failed.Failure)
 			continue
 		}
+		// Only an exact per-file pack preview uses the prepared file inventory.
+		// Ordinary previews keep their capture count independent of stream files.
+		if trackerMeta.ExactMedia == nil || !RequiresPackScreenshots(s.registry, tracker, trackerMeta) {
+			trackerMeta.FileList = nil
+		}
 		plan, failure := definition.Prepare(ctx, s.preparationInput(ctx, PreparationIntentDescriptionPreview, tracker, trackerMeta, trackerCfg, &assets))
 		if failure != nil {
 			logger.Errorf("trackers: preparation failed for %s: %v", tracker, failure)

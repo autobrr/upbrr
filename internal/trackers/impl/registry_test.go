@@ -20,11 +20,31 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestPTPPackDescriptionPreviewUsesEachPreparedFile(t *testing.T) {
+func TestPTPDescriptionPreviewKeepsPackAndDiscCaptureScopesSeparate(t *testing.T) {
+	for _, disc := range []string{"", "BDMV"} {
+		label := "non-disc pack"
+		if disc != "" {
+			label = "multi-stream disc"
+		}
+		t.Run(label, func(t *testing.T) {
+			testPTPDescriptionCaptureScope(t, disc)
+		})
+	}
+}
+
+func testPTPDescriptionCaptureScope(t *testing.T, disc string) {
+	t.Helper()
 	root := t.TempDir()
 	files := []string{filepath.Join(root, "Movie.cd1.mkv"), filepath.Join(root, "Movie.cd2.mkv")}
 	exact := &api.ExactMediaAssets{}
-	for index, file := range []string{files[0], files[0], files[1], files[1], ""} {
+	captureFiles := []string{files[0], files[0], files[1], files[1], ""}
+	wantCount := 4
+	if disc != "" {
+		files = []string{"00001.m2ts", "00002.m2ts", "00003.m2ts", "00004.m2ts"}
+		captureFiles = make([]string, 3)
+		wantCount = 3
+	}
+	for index, file := range captureFiles {
 		imagePath := filepath.Join(root, fmt.Sprintf("frame-%d.png", index))
 		url := fmt.Sprintf("https://i.ibb.co/synthetic/frame-%d.png", index)
 		image := api.ScreenshotImage{Path: imagePath, Purpose: api.ScreenshotPurposeFinal}
@@ -33,21 +53,22 @@ func TestPTPPackDescriptionPreviewUsesEachPreparedFile(t *testing.T) {
 		}
 		exact.Screenshots = append(exact.Screenshots, image)
 		exact.ScreenshotUploads = append(exact.ScreenshotUploads, api.UploadedImageLink{
-			ImagePath: imagePath,
- Host: "imgbb",
- UsageScope: "global",
- RawURL: url,
- ImgURL: url,
- WebURL: url,
+			ImagePath:  imagePath,
+			Host:       "imgbb",
+			UsageScope: "global",
+			RawURL:     url,
+			ImgURL:     url,
+			WebURL:     url,
 		})
 	}
 	meta := api.UploadSubject{
-SourcePath: root,
- FileList: files,
- Trackers: []string{"PTP"},
- ExactMedia: exact,
+		SourcePath:         root,
+		DiscType:           disc,
+		FileList:           files,
+		Trackers:           []string{"PTP"},
+		ExactMedia:         exact,
 		ImageHostOverrides: api.ImageHostOverrides{SkipUpload: new(true)},
-}
+	}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "upbrr.db")},
 		ImageHosting: config.ImageHostingConfig{Host1: "imgbb"}}
 	service := trackers.NewServiceWithRegistry(cfg, api.NopLogger{}, descriptionPreviewPersistence{}, MustNewRegistry())
@@ -57,8 +78,8 @@ SourcePath: root,
 	}
 	body := preview.Descriptions[0].RawDescription
 	for index, image := range exact.ScreenshotUploads {
-		if got := strings.Contains(body, image.RawURL); got != (index < 4) {
-			t.Errorf("PTP description used wrong screenshot set: frame %d present=%t; %s", index, got, body)
+		if got := strings.Contains(body, image.RawURL); got != (index < wantCount) {
+			t.Errorf("PTP description used the wrong screenshot set: frame %d present=%t; %s", index, got, body)
 		}
 	}
 }
