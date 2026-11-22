@@ -339,17 +339,7 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	// clears win over derived evidence and the final name cannot diverge from
 	// the facts every downstream projection consumes.
 	applyReleaseNameValueOverrides(&meta)
-	// Multi-playlist features and DVD VOB runtimes do not identify one cut.
-	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
-	case "":
-		if len(meta.FileList) <= 1 {
-			meta.EditionRuntimeSeconds = mediaDurationSeconds(miDoc)
-		}
-	case "BDMV":
-		if len(meta.Discs) <= 1 && len(meta.SelectedBDMVPlaylists) == 1 {
-			meta.EditionRuntimeSeconds = meta.SelectedBDMVPlaylists[0].Duration
-		}
-	}
+	meta.EditionRuntimeSeconds = editionRuntimeSeconds(meta, miDoc)
 	if meta.TVPack {
 		seasonKnown := meta.SeasonInt > 0 || meta.HasExplicitSeasonZero()
 		meta.EpisodeCoverage = seasonep.Coverage(meta.SeasonInt, seasonKnown, meta.SourcePath, meta.PackageInventory.Files, meta.PackageInventory.Status)
@@ -2258,6 +2248,23 @@ func resolveIMDbEditionFromMediaDuration(meta preparationstate.State, doc mediaI
 		return releaseEditionParts{}
 	}
 	return matches[0].parts
+}
+
+// editionRuntimeSeconds measures one identifiable presentation; a container
+// with multiple video tracks, multi-playlist disc or DVD VOB cannot prove it.
+func editionRuntimeSeconds(meta preparationstate.State, doc mediaInfoDoc) float64 {
+	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
+	case "":
+		_, videos, _ := splitMediaInfoTracks(doc)
+		if len(meta.FileList) <= 1 && len(videos) == 1 {
+			return mediaDurationSeconds(doc)
+		}
+	case "BDMV":
+		if len(meta.Discs) <= 1 && len(meta.SelectedBDMVPlaylists) == 1 {
+			return meta.SelectedBDMVPlaylists[0].Duration
+		}
+	}
+	return 0
 }
 
 func mediaDurationSeconds(doc mediaInfoDoc) float64 {

@@ -22,18 +22,21 @@ func TestIMDbEditionWarningUsesCurrentSelectionAndCertainRuntimeEvidence(t *test
 		{"equivalent punctuation", "DIRECTOR’S-CUT", nil, 0, false},
 		{"selection cleared", "", nil, 0, false},
 		{"effective title changed", "Extended", nil, 1234568, false},
+		{"supported Uncut selection", "Uncut", []api.IMDBEditionDetail{{Seconds: 6500, Attributes: []string{"Uncut"}}}, 0, true},
+		{"supported Unrated selection", "Unrated", []api.IMDBEditionDetail{{Seconds: 6500, Attributes: []string{"Unrated"}}}, 0, true},
+		{"conflicting labels in a row", "Extended", []api.IMDBEditionDetail{{Seconds: 6000, Attributes: []string{"Director's Cut", "Theatrical"}}}, 0, false},
 		{"unknown qualifier is not another cut", "IMAX", nil, 0, false},
 		{"another cut in same minute", "Extended", []api.IMDBEditionDetail{{Seconds: 6006, Attributes: []string{"Theatrical"}}}, 0, false},
 		{"unlabeled near match is ambiguous", "Extended", []api.IMDBEditionDetail{{Seconds: 6000}}, 0, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			release := api.PreparedRelease{
-				Identity: api.ExternalIdentity{Category: "MOVIE", IMDBID: 1234567},
+				Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie, IMDBID: 1234567},
 				Media:    api.MediaFacts{EditionRuntimeSeconds: 6000.5},
 				ProviderMetadata: api.SourceScopedMetadata{IMDB: &api.IMDBMetadata{
 					IMDBID: 1234567,
 					EditionRuntimes: append([]api.IMDBEditionDetail{
-						{Seconds: 6000, Attributes: []string{"Director's Cut"}},
+						{Seconds: 6000, Attributes: []string{"Director's Cut", "4K Restoration", "IMAX"}},
 						{Seconds: 6350, Attributes: []string{"extended version"}},
 					}, tc.rows...),
 				}},
@@ -61,7 +64,7 @@ func TestIMDbEditionWarningUsesCurrentSelectionAndCertainRuntimeEvidence(t *test
 			if len(warnings) != 1 || warnings[0].Code != "imdb_edition_mismatch" || warnings[0].Severity != api.DiagnosticSeverityWarning {
 				t.Fatalf("missing advisory: %+v", warnings)
 			}
-			for _, value := range []string{"Extended", "Director's Cut", "https://www.imdb.com/title/tt1234567/technical/", "https://www.imdb.com/title/tt1234567/alternateversions/"} {
+			for _, value := range []string{tc.selected, "Director's Cut", "https://www.imdb.com/title/tt1234567/technical/", "https://www.imdb.com/title/tt1234567/alternateversions/"} {
 				if !strings.Contains(warnings[0].Message, value) {
 					t.Fatalf("warning missing %q: %s", value, warnings[0].Message)
 				}

@@ -989,6 +989,23 @@ func TestEditionFromMetaExtractsRepackFromSourcePath(t *testing.T) {
 	}
 }
 
+func TestEditionRuntimeRequiresOneVideoPresentation(t *testing.T) {
+	for _, tc := range []struct {
+		name, extra string
+		want        float64
+	}{
+		{"one track", "", 6000},
+		{"multiple tracks", `,{"@type":"Video","Duration":"6150.000"}`, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"6000.000"},{"@type":"Video"}` + tc.extra + `]}}`)
+			if got := editionRuntimeSeconds(preparationstate.State{FileList: []string{"Example.mkv"}}, doc); got != tc.want {
+				t.Fatalf("runtime = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestMediaDurationSecondsParsesMediaInfoDurationFormats(t *testing.T) {
 	tests := []struct {
 		name string

@@ -19,7 +19,7 @@ func imdbEditionDiagnostics(release api.PreparedRelease, instructions api.Releas
 	overrides := instructions.ReleaseName
 	imdb := release.ProviderMetadata.IMDB
 	if overrides.Edition == nil || (overrides.NoEdition != nil && *overrides.NoEdition) ||
-		release.Identity.Category != "MOVIE" || imdb == nil || release.Identity.IMDBID <= 0 ||
+		release.Identity.Category != api.CanonicalCategoryMovie || imdb == nil || release.Identity.IMDBID <= 0 ||
 		imdb.IMDBID != release.Identity.IMDBID {
 		return nil
 	}
@@ -37,10 +37,7 @@ func imdbEditionDiagnostics(release api.PreparedRelease, instructions api.Releas
 		if row.Seconds <= 0 {
 			continue
 		}
-		cut := ""
-		if len(row.Attributes) == 1 {
-			cut = imdbEditorialCut(row.Attributes[0])
-		}
+		cut := imdbRuntimeCut(row.Attributes)
 		delta := math.Abs(duration - float64(row.Seconds))
 		if delta > 50 {
 			selectedListed = selectedListed || cut == selected
@@ -64,6 +61,26 @@ func imdbEditionDiagnostics(release api.PreparedRelease, instructions api.Releas
 	}}
 }
 
+// imdbRuntimeCut accepts one consistent cut. Recognized presentation and
+// mastering annotations do not identify a cut; unknown wording stays ambiguous.
+func imdbRuntimeCut(attributes []string) string {
+	var cut string
+	for _, label := range attributes {
+		if candidate := imdbEditorialCut(label); candidate != "" {
+			if cut != "" && cut != candidate {
+				return ""
+			}
+			cut = candidate
+			continue
+		}
+		separated := api.SeparateEditionOverride(label)
+		if *separated.Edition != "" || (separated.Presentation == nil && separated.ReleaseFeatures == nil) {
+			return ""
+		}
+	}
+	return cut
+}
+
 // imdbEditorialCut matches only complete editorial labels. Presentation,
 // restoration, region and other attributes may coexist with any cut.
 func imdbEditorialCut(label string) string {
@@ -82,6 +99,10 @@ func imdbEditorialCut(label string) string {
 		return "Director's Cut"
 	case "finalcut":
 		return "Final Cut"
+	case "uncut":
+		return "Uncut"
+	case "unrated":
+		return "Unrated"
 	default:
 		return ""
 	}
