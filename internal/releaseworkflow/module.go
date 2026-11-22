@@ -7121,6 +7121,12 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 	if !screenshotsReady || selectedMenus < requiredMenus {
 		prompt := "Prepare the required image hosts before upload. Published links must cover the required screenshots and comparisons for the eligible trackers."
 		switch {
+		case selectedFinalScreenshots < requiredLocalScreenshots:
+			prompt = fmt.Sprintf(
+				"Capture or select more local final screenshots before upload (%d of %d required).",
+				selectedFinalScreenshots,
+				requiredLocalScreenshots,
+			)
 		case selectedScreenshots < requiredScreenshots:
 			prompt = fmt.Sprintf("Capture or select more release screenshots before upload (%d of %d required).", selectedScreenshots, requiredScreenshots)
 			if len(comparisonScreenshots) > 0 {

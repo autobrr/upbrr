@@ -3139,6 +3139,30 @@ func TestReconcileRetriedImageHostFailuresClearsOnlySatisfiedTracker(t *testing.
 	}
 }
 
+func TestReconcileRetriedImageHostFailuresPreservesUnknownOutcomeForLocalOnlyTracker(t *testing.T) {
+	t.Parallel()
+
+	const trackerID api.TrackerID = "LOCAL"
+	unknown := hostedImageFailure(trackerID, "first-host", "Unresolved hosting outcome")
+	unknown.Failure.Code = api.OperationFailureUnknownOutcome
+	snapshot := api.MediaArtifactSet{Failures: []api.WorkflowFailure{unknown}}
+	projections := []api.TrackerReleaseProjection{{
+		TrackerID: trackerID,
+		Artifacts: api.TrackerArtifactRequirements{LocalScreenshotsOnly: true, ScreenshotCount: 2},
+	}}
+	attempts := []api.HostedImageAttempt{{
+		Host:       "other-host",
+		UsageScope: "tracker:LOCAL",
+		TrackerIDs: []api.TrackerID{trackerID},
+		Status:     api.StageStatusCompleted,
+	}}
+
+	reconcileRetriedImageHostFailures(&snapshot, projections, attempts, nil)
+	if !slices.Equal(snapshot.Failures, []api.WorkflowFailure{unknown}) {
+		t.Fatalf("retry in another host cleared the unresolved outcome: %#v", snapshot.Failures)
+	}
+}
+
 func TestWorkflowMediaBuilderExplicitDVDMenuCaptureUsesCap(t *testing.T) {
 	t.Parallel()
 

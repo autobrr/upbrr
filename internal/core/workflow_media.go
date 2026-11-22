@@ -3077,6 +3077,9 @@ func reconcileRetriedImageHostFailures(
 
 	satisfied := make(map[string]struct{}, len(projections))
 	for _, projection := range projections {
+		if projection.Artifacts.LocalScreenshotsOnly {
+			continue
+		}
 		tracker := strings.ToUpper(strings.TrimSpace(string(projection.TrackerID)))
 		if tracker == "" || !slices.ContainsFunc(attempts, func(attempt api.HostedImageAttempt) bool {
 			return attempt.Status == api.StageStatusCompleted && attemptApplies(attempt, tracker)

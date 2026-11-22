@@ -4545,6 +4545,11 @@ func TestRefreshMutatedMediaStatusAcceptsLocalScreenshotsForLocalOnlyTrackers(t 
 	if snapshot.Status != api.StageStatusBlocked {
 		t.Fatalf("one selected screenshot satisfied the local minimum of two: %#v", snapshot)
 	}
+	const localPrompt = "Capture or select more local final screenshots before upload (1 of 2 required)."
+	if len(snapshot.RequiredActions) != 1 || snapshot.RequiredActions[0].Kind != api.RequiredActionProvideTrackerInput ||
+		snapshot.RequiredActions[0].Prompt != localPrompt {
+		t.Fatalf("local screenshot requirement returned actions %#v, want %q", snapshot.RequiredActions, localPrompt)
+	}
 	snapshot.Artifacts[1].Selected = true
 	snapshot.Artifacts[1].Purpose = api.ScreenshotPurposePreview
 	for _, prepared := range []bool{false, true} {
