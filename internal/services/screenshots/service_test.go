@@ -1766,3 +1766,37 @@ R: 16,
 		}
 	}
 }
+
+func TestAdditionalDiscCaptureDoesNotFillOrdinaryScreenshotSlot(t *testing.T) {
+	release, _, _ := multiDiscScreenshotSubject(t)
+	root := t.TempDir()
+	if err := writeTestBundledFFmpeg(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	runner := &writingScreenshotRunner{payload: testPNGBytes(t, color.RGBA{
+R: 16,
+ G: 16,
+ B: 16,
+ A: 255,
+})}
+	service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), runner)
+	extra := release
+	extra.AdditionalDiscCount = 1
+	plan, err := service.Plan(t.Context(), extra, 1)
+	if err != nil || len(plan.Discs) != 2 || len(plan.Discs[1].SuggestedSelections) != 1 {
+		t.Fatalf("initial extra-disc plan = %+v, err = %v", plan, err)
+	}
+	capture, err := service.Capture(t.Context(), extra, plan.Discs[1].SuggestedSelections, api.ScreenshotPurposeFinal)
+	if err != nil || len(capture.Images) != 1 {
+		t.Fatalf("extra-disc capture = %+v, err = %v", capture, err)
+	}
+	reused, err := service.Plan(t.Context(), extra, 1)
+	if err != nil || len(reused.ExistingScreenshots) != 1 || reused.ExistingScreenshots[0].Path != capture.Images[0].Path {
+		t.Fatalf("extra-disc retry plan = %+v, err = %v", reused, err)
+	}
+	ordinary, err := service.Plan(t.Context(), release, 2)
+	if err != nil || len(ordinary.ExistingScreenshots) != 0 || len(ordinary.Discs[1].SuggestedSelections) != 1 {
+		t.Fatalf("ordinary plan used a PTP-only capture: %+v, err = %v", ordinary, err)
+	}
+}

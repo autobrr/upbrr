@@ -1644,11 +1644,19 @@ func (b workflowMediaBuilder) restoreCachedMedia(
 	for _, disc := range subject.Discs {
 		discNames[disc.ID] = disc.Name
 	}
+	limits := reusableScreenshotLaneLimits(projections.Projections)
+	counts := make(map[reusableScreenshotLane]int, len(limits))
 	for _, asset := range assets {
 		if err := ctx.Err(); err != nil {
 			return api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, fmt.Errorf("workflow media restore canceled: %w", err)
 		}
-		if !asset.Valid() || asset.CompatibilityKey != binding.CompatibilityKey {
+		if !asset.Valid() || asset.CompatibilityKey != binding.CompatibilityKey ||
+			(asset.Image.AdditionalDisc && asset.Image.DiscID == "") {
+			continue
+		}
+		lane := reusableScreenshotLaneFor(asset.Image)
+		scoped := lane != (reusableScreenshotLane{})
+		if scoped && (limits[lane] == 0 || asset.Selected && counts[lane] >= limits[lane]) {
 			continue
 		}
 		var prior retainedOrdinaryImage
@@ -1688,6 +1696,12 @@ func (b workflowMediaBuilder) restoreCachedMedia(
 				recordLegacyImageFormat(&retained, materialized.Path, image.Format)
 				image = materialized
 			}
+		}
+		if scoped && !localAvailable {
+			continue
+		}
+		if scoped && asset.Selected {
+			counts[lane]++
 		}
 		sourceID := restoredUnavailableSourceID(snapshot.CaptureFingerprint, asset)
 		if localAvailable {
@@ -1759,8 +1773,7 @@ func (b workflowMediaBuilder) restoreCachedMedia(
 	rebuildWorkflowMediaLocalSlices(&retained, snapshot)
 	requiredScreenshots, requiredMenus := projectedMediaRequirements(projections.Projections)
 	applyWorkflowMediaMinimums(&snapshot, requiredScreenshots, requiredMenus,
-		projectedAdditionalDiscCount(projections.Projections) == 0 ||
-			releaseworkflow.LocalScreenshotSourceRequirementsMet(snapshot.Artifacts, projections.Projections))
+		releaseworkflow.LocalScreenshotSourceRequirementsMet(snapshot.Artifacts, projections.Projections))
 	return snapshot, retained, nil
 }
 
@@ -1843,7 +1856,8 @@ func (b workflowMediaBuilder) restoredHostedImageAttemptsForSubject(
 	attempts := make([]api.HostedImageAttempt, 0, len(projections))
 	for _, projection := range projections {
 		pack := projection.Artifacts.PackScreenshots
-		if projection.Artifacts.ScreenshotCount <= 0 && projection.Artifacts.DVDMenuCount <= 0 && pack == nil && len(comparisonCells) == 0 {
+		if projection.Artifacts.ScreenshotCount <= 0 && projection.Artifacts.DVDMenuCount <= 0 && pack == nil &&
+			projection.Artifacts.DiscScreenshots == nil && len(comparisonCells) == 0 {
 			continue
 		}
 		tracker := strings.ToUpper(strings.TrimSpace(string(projection.TrackerID)))
@@ -2916,11 +2930,6 @@ func (b workflowMediaBuilder) persistReusableWorkflowMedia(
 		if artifact.Kind != api.MediaArtifactScreenshot && artifact.Kind != api.MediaArtifactDVDMenu {
 			continue
 		}
-		// Tracker-specific frames stay in the workflow and the renderer caches.
-		// The shared reusable-media index does not retain their tracker scope.
-		if artifact.PackMemberID != "" || artifact.AdditionalDisc {
-			continue
-		}
 		image, exists := retained.ArtifactImages[artifact.ID]
 		if !exists {
 			return errors.New("workflow reusable media artifact content is unavailable")
@@ -3012,8 +3021,12 @@ func workflowMediaReuseCaptureFingerprint(
 		FFmpegCompression int
 		TonemapAlgorithm  string
 		Desat             float64
+		PackMemberID      string `json:",omitempty"`
+		AdditionalDisc    bool   `json:",omitempty"`
 	}{
 		Version:           "media-capture-v2",
+		PackMemberID:      image.PackMemberID,
+		AdditionalDisc:    image.AdditionalDisc,
 		CompatibilityKey:  compatibilityKey,
 		Kind:              kind,
 		Purpose:           image.Purpose,

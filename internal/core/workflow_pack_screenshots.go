@@ -55,6 +55,41 @@ func scopedImageSourcesCoverRequirement(
 	return releaseworkflow.LocalScreenshotSourceRequirementsMet(sources, []api.TrackerReleaseProjection{{Artifacts: requirements}})
 }
 
+// A reusable screenshot is shared only when it has no tracker capture lane.
+type reusableScreenshotLane struct {
+	packMemberID string
+	extraDiscID  string
+}
+
+func reusableScreenshotLaneFor(image api.ScreenshotImage) reusableScreenshotLane {
+	lane := reusableScreenshotLane{packMemberID: image.PackMemberID}
+	if image.AdditionalDisc {
+		lane.extraDiscID = image.DiscID
+	}
+	return lane
+}
+
+// reusableScreenshotLaneLimits scopes restored frames to the currently selected
+// trackers and prevents older captures from exceeding their per-source quotas.
+func reusableScreenshotLaneLimits(projections []api.TrackerReleaseProjection) map[reusableScreenshotLane]int {
+	limits := make(map[reusableScreenshotLane]int)
+	for _, projection := range projections {
+		if pack := projection.Artifacts.PackScreenshots; pack != nil {
+			for _, id := range pack.MemberIDs {
+				lane := reusableScreenshotLane{packMemberID: id}
+				limits[lane] = max(limits[lane], pack.CountPerMember)
+			}
+		}
+		if discs := projection.Artifacts.DiscScreenshots; discs != nil && len(discs.DiscIDs) > 1 {
+			for _, id := range discs.DiscIDs[1:] {
+				lane := reusableScreenshotLane{extraDiscID: id}
+				limits[lane] = max(limits[lane], discs.AdditionalCount)
+			}
+		}
+	}
+	return limits
+}
+
 // captureWorkflowPackScreenshots uses only member paths in the exact prepared
 // subject, never user selections or the primary video's timing for another file.
 func (b workflowMediaBuilder) captureWorkflowPackScreenshots(

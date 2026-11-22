@@ -357,7 +357,7 @@ func (s *Service) planDisc(ctx context.Context, meta api.ScreenshotSubject, coun
 				}
 				pathValue := strings.TrimSpace(shot.ImagePath)
 				if pathValue == "" || !isAllowedImageExt(pathValue) || !isPathWithinDir(tmpDir, pathValue) ||
-					!screenshotPathMatchesPackScope(meta, pathValue, base) {
+					!screenshotPathMatchesScope(meta, pathValue, base) {
 					continue
 				}
 				if info, statErr := os.Stat(pathValue); statErr != nil || info.IsDir() {
@@ -429,12 +429,15 @@ func (s *Service) planDisc(ctx context.Context, meta api.ScreenshotSubject, coun
 	plan.ExistingScreenshots = filterScreenshotsMatchingSelections(listExistingScreens(tmpDir, base), baselineSelections, plan.FrameRate)
 	stampScreenshotImages(plan.ExistingScreenshots, meta.DiscID, meta.DiscName)
 	final := slices.DeleteFunc(s.loadFinalSelections(ctx, meta, tmpDir), func(image api.ScreenshotImage) bool {
-		return !screenshotPathMatchesPackScope(meta, image.Path, base)
+		return !screenshotPathMatchesScope(meta, image.Path, base)
 	})
 	plan.FinalSelections = filterScreenshotsMatchingSelections(final, baselineSelections, plan.FrameRate)
 
 	for _, images := range [][]api.ScreenshotImage{plan.ExistingScreenshots, plan.FinalSelections} {
 		restoreScreenshotTonemapping(images, storedScreenshots)
+		for index := range images {
+			images[index].AdditionalDisc = meta.AdditionalDisc
+		}
 	}
 
 	return plan, nil
@@ -712,6 +715,7 @@ func (s *Service) captureDisc(
 			}
 
 			img := api.ScreenshotImage{
+				AdditionalDisc:   meta.AdditionalDisc,
 				PackMemberID:     meta.PackMemberID,
 				DiscID:           meta.DiscID,
 				DiscName:         meta.DiscName,
@@ -1356,14 +1360,17 @@ func (s *Service) SaveFinalSelections(ctx context.Context, meta api.ScreenshotSu
 	return nil
 }
 
-// screenshotPathMatchesPackScope prevents a retained member capture from
-// satisfying a different member or an ordinary release-level screenshot slot.
-func screenshotPathMatchesPackScope(meta api.ScreenshotSubject, path, base string) bool {
+const extraDiscScreenshotSuffix = "-extra-disc-"
+
+// screenshotPathMatchesScope prevents tracker-only captures from satisfying
+// ordinary slots or captures for a different source.
+func screenshotPathMatchesScope(meta api.ScreenshotSubject, path, base string) bool {
 	name := strings.ToLower(filepath.Base(path))
-	if meta.PackMemberID != "" {
-		return strings.HasPrefix(name, strings.ToLower(base)+"-")
+	prefix := strings.ToLower(base)
+	if meta.PackMemberID != "" || meta.AdditionalDisc {
+		return strings.HasPrefix(name, prefix+"-")
 	}
-	return !strings.HasPrefix(name, strings.ToLower(base)+"-pack-member-")
+	return !strings.HasPrefix(name, prefix+"-pack-member-") && !strings.HasPrefix(name, prefix+extraDiscScreenshotSuffix)
 }
 
 func screenshotBaseName(meta api.ScreenshotSubject) string {
@@ -1377,7 +1384,15 @@ func screenshotBaseName(meta api.ScreenshotSubject) string {
 		return base
 	}
 	if discID := strings.TrimSpace(meta.DiscID); discID != "" {
-		return base + "-disc-" + sanitizeFilename(discID)
+		base += "-disc-" + sanitizeFilename(discID)
+		if meta.AdditionalDisc {
+			key := meta.MediaBinding.CompatibilityKey
+			suffix := "current"
+			if key.Valid() {
+				suffix = string(key[:24])
+			}
+			base += extraDiscScreenshotSuffix + suffix
+		}
 	}
 	return base
 }
@@ -1400,6 +1415,9 @@ func screenshotDiscs(meta api.ScreenshotSubject) []api.ScreenshotDiscSubject {
 }
 
 func screenshotSubjectForDisc(meta api.ScreenshotSubject, disc api.ScreenshotDiscSubject) api.ScreenshotSubject {
+	if len(meta.Discs) > 1 {
+		meta.AdditionalDisc = meta.AdditionalDiscCount > 0 && disc.ID != meta.Discs[0].ID
+	}
 	meta.BluRayISO = disc.BluRayISO
 	meta.BDInfoSummary = disc.BDInfoSummary
 	meta.DiscID = strings.TrimSpace(disc.ID)
@@ -1540,7 +1558,8 @@ func listExistingScreens(tmpDir, base string) []api.ScreenshotImage {
 			continue
 		}
 		if base != "" && (strings.HasPrefix(name, strings.ToLower(base)+"-dvd-menu-") ||
-			strings.HasPrefix(name, strings.ToLower(base)+"-pack-member-")) {
+			strings.HasPrefix(name, strings.ToLower(base)+"-pack-member-") ||
+			strings.HasPrefix(name, strings.ToLower(base)+extraDiscScreenshotSuffix)) {
 			continue
 		}
 		stat, err := os.Stat(match)

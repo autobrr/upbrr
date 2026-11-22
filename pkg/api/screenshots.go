@@ -127,8 +127,10 @@ type ScreenshotSubject struct {
 	// AdditionalDiscCount, when positive, uses DefaultCount for the first disc
 	// and plans this many automatic frames on each remaining disc.
 	AdditionalDiscCount int
-	ManualFrames        []int
-	Discs               []ScreenshotDiscSubject
+	// AdditionalDisc isolates a renderer sub-subject for a later disc from ordinary captures.
+	AdditionalDisc bool `json:"-"`
+	ManualFrames   []int
+	Discs          []ScreenshotDiscSubject
 	// PackMembers is private exact-generation authority for per-file captures.
 	PackMembers []ScreenshotPackMember `json:"-"`
 	// PackMemberID scopes the renderer's cache to one server-selected video.

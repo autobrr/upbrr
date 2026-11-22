@@ -67,6 +67,8 @@ Unselected or deleted screenshots are excluded from the links shown on **Upload 
 
 Review the final screenshot selection and order before continuing. Existing URLs are reused only when the destination tracker and chosen image host allow them; other images need rehosting. Existing comparison blocks remain part of the description. Structured comparison sets can optionally supply their main column as ordinary screenshots; other columns never count toward screenshot requirements. See [image-host requirements](./settings/image-hosting.md).
 
+When you reopen the same input, compatible tracker-specific screenshots and their saved upload links are reused only for destinations that require those images. Other trackers keep the ordinary screenshot set.
+
 ### Comparison sets
 
 Prepare the input and select trackers, then open **Screenshots → Comparisons** before running **Dupe Check**. Local comparison setup, matching, previews, capture and prepared-image import do not run duplicate checking or upload images. Ordinary screenshot planning, hosting and descriptions still require current tracker and duplicate checks. Use **Restore retained comparisons** to recover a saved setup before those checks. Choose videos or **Import existing comparisons**. Each column identifies one source; each row contains images of the same moment from every column. Comparison videos remain separate from the main release input.
