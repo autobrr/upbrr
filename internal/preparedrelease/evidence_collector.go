@@ -281,6 +281,7 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 			DateMatched:       meta.TMDBDateMatch,
 		},
 		Media: api.MediaFacts{
+			EditionRuntimeSeconds:                meta.EditionRuntimeSeconds,
 			MediaFileFacts:                       meta.MediaFileFacts.Clone(),
 			AudioAbsent:                          meta.AudioAbsent,
 			AudioLanguages:                       append([]string(nil), meta.AudioLanguages...),

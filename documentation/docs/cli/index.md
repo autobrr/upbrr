@@ -443,6 +443,8 @@ Selection applies only that provider's ID through normal metadata preparation, t
 
 Enter `back` to decline matches without changing your choices, or `cancel` to stop the item. No matches, unavailable providers and failed searches have separate messages. Matches retained from earlier resolution have their own heading and remain selectable when a fresh search finds nothing. Retry `search` with another title/year, check metadata settings, or enter an exact provider ID. Searching does not retry a retained preparation failure; the **History** recovery boundary above still applies.
 
+If the source runtime and IMDb's labeled cuts clearly disagree with your movie edition selection, the CLI shows a warning with links to the title's technical specifications and alternate versions. Your edition is kept; the warning adds no prompt. Missing or ambiguous runtime evidence does not produce a warning.
+
 A weak IMDb search match remains a suggestion, even when it is the only result. Verified independent links can confirm it or identify a different title; disagreeing links leave the IMDb ID unresolved.
 
 When the identity remains unresolved, candidates for providers you have not cleared require an explicit choice before continuation. Prepared generations retain this match evidence across reruns and restarts. Strict `--unattended` never searches interactively or prompts; supply an exact ID or use `--unattended_confirm` / `--uac` to permit selection. Valid automatic resolution continues unchanged. `--input-only` remains an inspection command without this interactive review.

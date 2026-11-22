@@ -2889,7 +2889,12 @@ func mapIMDBMetadata(info imdb.Info) *api.IMDBMetadata {
 	if imdbID == 0 {
 		return nil
 	}
+	runtimes := make([]api.IMDBEditionDetail, len(info.EditionRuntimes))
+	for i, row := range info.EditionRuntimes {
+		runtimes[i] = api.IMDBEditionDetail{Seconds: row.Seconds, Attributes: slices.Clone(row.Attributes)}
+	}
 	return &api.IMDBMetadata{
+		EditionRuntimes:  runtimes,
 		IMDBID:           imdbID,
 		IMDbIDText:       info.IMDbID,
 		IMDbURL:          info.IMDbURL,

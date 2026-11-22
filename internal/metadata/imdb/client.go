@@ -77,7 +77,7 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 		return info, nil
 	}
 
-	const query = `query GetTitleInfo($id: ID!) { title(id: $id) { id titleText { text isOriginalTitle country { text } } originalTitleText { text } releaseYear { year endYear } titleType { id } plot { plotText { plainText } } ratingsSummary { aggregateRating voteCount } primaryImage { url } runtime { displayableProperty { value { plainText } } seconds } titleGenres { genres { genre { text } } } principalCredits { category { text id } credits { name { id nameText { text } } } } episodes { episodes(first: 500) { edges { node { id series { displayableEpisodeNumber { displayableSeason { season } episodeNumber { text } } } titleText { text } releaseYear { year } releaseDate { year month day } } } pageInfo { hasNextPage hasPreviousPage } total } } runtimes(first: 10) { edges { node { id seconds displayableProperty { value { plainText } } attributes { text } } } } technicalSpecifications { soundMixes { items { text attributes { text } } } } akas(first: 100) { edges { node { text country { text } language { text } attributes { text } } } } countriesOfOrigin { countries { text } } spokenLanguages { spokenLanguages { text } } } }`
+	const query = `query GetTitleInfo($id: ID!) { title(id: $id) { id titleText { text isOriginalTitle country { text } } originalTitleText { text } releaseYear { year endYear } titleType { id } plot { plotText { plainText } } ratingsSummary { aggregateRating voteCount } primaryImage { url } runtime { displayableProperty { value { plainText } } seconds } titleGenres { genres { genre { text } } } principalCredits { category { text id } credits { name { id nameText { text } } } } episodes { episodes(first: 500) { edges { node { id series { displayableEpisodeNumber { displayableSeason { season } episodeNumber { text } } } titleText { text } releaseYear { year } releaseDate { year month day } } } pageInfo { hasNextPage hasPreviousPage } total } } runtimes(first: 10) { edges { node { id seconds displayableProperty { value { plainText } } attributes { text } } } pageInfo { hasNextPage } } technicalSpecifications { soundMixes { items { text attributes { text } } } } akas(first: 100) { edges { node { text country { text } language { text } attributes { text } } } } countriesOfOrigin { countries { text } } spokenLanguages { spokenLanguages { text } } } }`
 
 	var response map[string]any
 	if err := c.postGraphQL(ctx, "GetTitleInfo", query, map[string]any{"id": id}, &response); err != nil {
@@ -164,6 +164,7 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 	info.Stars = collectCredits(titleData, "Star")
 
 	edges := getList(titleData, "runtimes", "edges")
+	hasNextPage, pageKnown := getMap(titleData, "runtimes", "pageInfo")["hasNextPage"].(bool)
 	if len(edges) > 0 {
 		info.EditionDetails = make(map[string]EditionDetail)
 		for _, edge := range edges {
@@ -186,12 +187,16 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 				}
 				info.Editions = append(info.Editions, editionDisplay)
 				runtimeKey := strconv.Itoa(minutes)
-				info.EditionDetails[runtimeKey] = EditionDetail{
+				detail := EditionDetail{
 					DisplayName: display,
 					Seconds:     seconds,
 					Minutes:     minutes,
 					Attributes:  attrTexts,
 				}
+				info.EditionDetails[runtimeKey] = detail
+			}
+			if pageKnown && !hasNextPage && seconds > 0 {
+				info.EditionRuntimes = append(info.EditionRuntimes, EditionDetail{Seconds: seconds, Attributes: attrTexts})
 			}
 		}
 	}

@@ -1248,6 +1248,7 @@ export type IMDBMetadata = Readonly<{
   Creators: readonly IMDBPerson[];
   Directors: readonly IMDBPerson[];
   EditionDetails: Readonly<Record<string, IMDBEditionDetail>>;
+  EditionRuntimes?: readonly IMDBEditionDetail[];
   Editions: readonly string[];
   EndYear: number;
   Episodes: readonly IMDBEpisode[];
@@ -1527,6 +1528,7 @@ export type MediaFacts = Readonly<{
   DistributorProvenance: FactProvenance;
   Edition: string;
   EditionDisplay: readonly EditionDisplayPart[];
+  EditionRuntimeSeconds?: number;
   EditionSet: string;
   HDR: string;
   HDRFacts: HDRFacts;

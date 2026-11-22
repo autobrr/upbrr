@@ -4837,6 +4837,12 @@
               "$ref": "#/components/schemas/IMDBEditionDetail"
             }
           },
+          "EditionRuntimes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IMDBEditionDetail"
+            }
+          },
           "Editions": {
             "type": "array",
             "items": {
@@ -5881,6 +5887,9 @@
             "items": {
               "$ref": "#/components/schemas/EditionDisplayPart"
             }
+          },
+          "EditionRuntimeSeconds": {
+            "type": "number"
           },
           "EditionSet": {
             "type": "string"

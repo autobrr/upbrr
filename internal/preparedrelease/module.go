@@ -308,9 +308,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 		}
 		m.logPreparedFacts(ctx, current, cache, resolved.Corrections.Revision)
 		return cloneResult(api.PrepareResult{
-			Diagnostics: append(
-				externalidentity.CandidateDiagnostics(current.ProviderMetadata.IdentityCandidates),
-				sourceSeasonDiagnostics(owned)...),
+			Diagnostics:           append(preparedMetadataDiagnostics(current, input.Instructions), sourceSeasonDiagnostics(owned)...),
 			Release:               current,
 			EffectiveInstructions: input.Instructions,
 			Corrections:           resolved.Corrections,
@@ -497,6 +495,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 
 	diagnostics := append([]api.PreparationDiagnostic(nil), collected.Diagnostics...)
 	diagnostics = append(diagnostics, identityResult.Diagnostics...)
+	diagnostics = append(diagnostics, imdbEditionDiagnostics(release, input.Instructions)...)
 	owned := envelope{
 		completeFacts: true,
 		result: api.PrepareResult{
@@ -1066,11 +1065,15 @@ func resourcesFromManifest(manifest api.SourceManifest, input api.PrepareInput) 
 	}
 }
 
+func preparedMetadataDiagnostics(release api.PreparedRelease, instructions api.ReleaseFactInstructions) []api.PreparationDiagnostic {
+	return append(externalidentity.CandidateDiagnostics(release.ProviderMetadata.IdentityCandidates), imdbEditionDiagnostics(release, instructions)...)
+}
+
 func envelopeFromPersisted(release api.PreparedRelease, input api.PrepareInput) envelope {
 	return envelope{
 		result: api.PrepareResult{
 			Release:               release,
-			Diagnostics:           externalidentity.CandidateDiagnostics(release.ProviderMetadata.IdentityCandidates),
+			Diagnostics:           preparedMetadataDiagnostics(release, input.Instructions),
 			EffectiveInstructions: input.Instructions,
 		},
 		resources: resourcesFromManifest(release.Source, input),

@@ -352,4 +352,6 @@ When any item is uncertain, stop before upload and resolve it manually.
 
 Automatically detected Hybrid describes source composition and is kept separately from the title’s cut or edition. Recognized mastering, extras and packaging annotations from provider edition labels are also kept separately. Their existing displayed wording is retained without treating them as editorial edition IDs; filename-only feature annotations keep their existing naming behavior. Generic restoration or remastering does not imply a 4K source.
 
+If the runtime and IMDb's labeled cuts clearly disagree with your movie edition selection, **Input** shows a warning with links to the title's technical specifications and alternate versions. Your selection stays in place and you can continue without an extra prompt. Missing or ambiguous IMDb evidence does not produce a warning.
+
 Older prepared releases must be prepared again so cached mixed edition values cannot be reused. Explicit manual Edition entries and complete release-name overrides retain their existing behavior.

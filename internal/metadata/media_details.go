@@ -339,6 +339,17 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	// clears win over derived evidence and the final name cannot diverge from
 	// the facts every downstream projection consumes.
 	applyReleaseNameValueOverrides(&meta)
+	// Multi-playlist features and DVD VOB runtimes do not identify one cut.
+	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
+	case "":
+		if len(meta.FileList) <= 1 {
+			meta.EditionRuntimeSeconds = mediaDurationSeconds(miDoc)
+		}
+	case "BDMV":
+		if len(meta.Discs) <= 1 && len(meta.SelectedBDMVPlaylists) == 1 {
+			meta.EditionRuntimeSeconds = meta.SelectedBDMVPlaylists[0].Duration
+		}
+	}
 	if meta.TVPack {
 		seasonKnown := meta.SeasonInt > 0 || meta.HasExplicitSeasonZero()
 		meta.EpisodeCoverage = seasonep.Coverage(meta.SeasonInt, seasonKnown, meta.SourcePath, meta.PackageInventory.Files, meta.PackageInventory.Status)

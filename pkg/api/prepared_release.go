@@ -321,6 +321,8 @@ type MediaFacts struct {
 	// use LanguageFacts, which preserves OriginalLanguage corrections and clears.
 	// These values never populate inspected soundtrack languages.
 	TitleLanguages []string `json:",omitempty"`
+	// EditionRuntimeSeconds is the measured runtime of one presentation, or zero if unavailable.
+	EditionRuntimeSeconds float64 `json:",omitempty"`
 }
 
 // DiscFacts contains typed disc measurements that are safe to publish as

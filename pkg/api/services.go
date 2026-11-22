@@ -2605,6 +2605,8 @@ type IMDBMetadata struct {
 	OriginalLanguage string
 	// SpokenLanguages contains IMDb's title-level language names for provider display.
 	SpokenLanguages []string `json:",omitempty"`
+	// EditionRuntimes retains each row, including multiple editions in the same minute.
+	EditionRuntimes []IMDBEditionDetail `json:",omitempty"`
 }
 
 type IMDBPerson struct {
