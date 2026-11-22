@@ -667,10 +667,10 @@ func TestANTTrumpIntentInvalidatesDuplicateReuse(t *testing.T) {
 		if strings.HasPrefix(field.Key, "intended_trump_") {
 			choice = field.Key
 		} else if strings.HasPrefix(field.Key, "trump_reason_") {
-			reason = field.Key
+			t.Fatal("reason is visible before an explicit trump intention")
 		}
 	}
-	if choice == "" || reason == "" {
+	if choice == "" {
 		t.Fatalf("missing source-bound trump choice: %+v", first)
 	}
 	previous, err := reusableDupeProjectionFingerprint(first, true)
@@ -684,13 +684,28 @@ func TestANTTrumpIntentInvalidatesDuplicateReuse(t *testing.T) {
 		{choice, "yes", true},
 		{"tags", "drama,mystery", false},
 		{"requestid", "5", false},
-		{reason, "verified improvement", false},
+		{"", "verified improvement", false},
 		{choice, "no", true},
 	} {
-		input.Meta.TrackerQuestionnaireAnswers["ANT"][edit.key] = edit.value
+		key := edit.key
+		if key == "" {
+			key = reason
+			if key == "" {
+				t.Fatal("missing source-bound reason after an explicit Yes")
+			}
+		}
+		input.Meta.TrackerQuestionnaireAnswers["ANT"][key] = edit.value
 		projection, failure := registry.ProjectRelease(t.Context(), input, "", "", "")
 		if failure != nil {
 			t.Fatal(failure)
+		}
+		if key == choice && edit.value == "yes" {
+			for _, field := range projection.Questionnaire {
+				if strings.HasPrefix(field.Key, "trump_reason_") {
+					reason = field.Key
+					break
+				}
+			}
 		}
 		current, err := reusableDupeProjectionFingerprint(projection, true)
 		if err != nil {

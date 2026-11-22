@@ -25,10 +25,11 @@ import (
 func TestCLIANTTrumpReviewReachesDuplicateApproval(t *testing.T) {
 	for _, test := range []struct {
 		name, input, choice, reason string
+		changedEvidence bool
 	}{
-		{"intended trump", "y\nverified improvement\n", "yes", "verified improvement"},
-		{"optional reason", "y\n\n", "yes", ""},
-		{"ordinary upload", "n\n\n", "no", ""},
+		{"intended trump and changed evidence", "y\n", "yes", "verified improvement", true},
+		{"optional reason", "y\n", "yes", "", false},
+		{"ordinary upload", "n\n", "no", "", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			registry := impl.MustNewRegistry()
@@ -83,34 +84,65 @@ func TestCLIANTTrumpReviewReachesDuplicateApproval(t *testing.T) {
 				current:       project(),
 			}
 			fields := session.current.Dupes.Results[0].Questionnaire
-			if len(fields) != 2 {
-				t.Fatalf("missing trump questions: %+v", fields)
+			if len(fields) != 1 || fields[0].Label != "Intended ANT trump" {
+				t.Fatalf("only intent should be requested initially: %+v", fields)
 			}
 			action := api.RequiredAction{Kind: api.RequiredActionReviewDuplicates, TrackerID: "ANT"}
-			feedback, _, err := session.collectCompositeDuplicateFeedback(bufio.NewReader(strings.NewReader(test.input)), action, api.ReleaseWorkflowUploadFeedback{})
-			if err != nil || feedback.Response.Questionnaire == nil {
-				t.Fatalf("trump input was gated behind comparison review: %+v, %v", feedback, err)
+			collect := func(input string) map[string]*string {
+				t.Helper()
+				feedback, _, err := session.collectCompositeDuplicateFeedback(bufio.NewReader(strings.NewReader(input)), action, api.ReleaseWorkflowUploadFeedback{})
+				if err != nil || feedback.Response.Questionnaire == nil {
+					t.Fatalf("expected questionnaire feedback: %+v, %v", feedback, err)
+				}
+				answers := make(map[string]string)
+				for key, value := range feedback.Response.Questionnaire.Answers {
+					if value != nil {
+						answers[key] = *value
+					}
+				}
+				subject.TrackerQuestionnaireAnswers = map[string]map[string]string{"ANT": answers}
+				session.current = project()
+				return feedback.Response.Questionnaire.Answers
 			}
-			answers := map[string]string{}
-			for key, value := range feedback.Response.Questionnaire.Answers {
-				if value != nil {
-					answers[key] = *value
+			answers := collect(test.input)
+			requireAnswer := func(key, want string) {
+				t.Helper()
+				if value := answers[key]; value == nil || *value != want {
+					t.Fatalf("answer %q did not retain %q: %+v", key, want, answers)
 				}
 			}
-			if answers[fields[0].Key] != test.choice || answers[fields[1].Key] != test.reason {
-				t.Fatalf("trump intention was not retained: %+v", answers)
+			requireAnswer(fields[0].Key, test.choice)
+			reasonFields := session.current.Dupes.Results[0].Questionnaire
+			if test.choice == "yes" {
+				if len(reasonFields) != 1 || reasonFields[0].Label != "ANT trump reason" {
+					t.Fatalf("expected only the optional reason after yes: %+v", reasonFields)
+				}
+				answers = collect(test.reason + "\n")
+				requireAnswer(fields[0].Key, "yes")
+				requireAnswer(reasonFields[0].Key, test.reason)
+			} else if len(reasonFields) != 0 {
+				t.Fatalf("declined trump still prompts for reason: %+v", reasonFields)
 			}
-			subject.TrackerQuestionnaireAnswers = map[string]map[string]string{"ANT": answers}
-			session.current = project()
 			if session.current.Dupes.Results[0].RequiresStaffToken != (test.choice == "no") {
 				t.Fatal("reviewed trump intention did not reach the duplicate policy")
 			}
-			feedback, _, err = session.collectCompositeDuplicateFeedback(bufio.NewReader(strings.NewReader("y\n")), action, api.ReleaseWorkflowUploadFeedback{})
-			if err != nil || feedback.Response.DuplicateReview == nil || feedback.Response.DuplicateReview.Decision != api.DupeDecisionIgnored {
+			wantEvidenceCount := 1
+			if test.changedEvidence {
+				session.current.Dupes.Results[0].Matches[0].Name = "Updated.Example.Release"
+				wantEvidenceCount++
+			}
+			feedback, _, err := session.collectCompositeDuplicateFeedback(bufio.NewReader(strings.NewReader("y\n")), action, api.ReleaseWorkflowUploadFeedback{})
+			if err != nil || feedback.Response.DuplicateReview == nil || feedback.Response.DuplicateReview.Decision != api.DupeDecisionIgnored ||
+				feedback.Response.DuplicateReview.StaffTokenConfirmed != (test.choice == "no") {
 				t.Fatalf("trump questionnaire repeated instead of reaching duplicate approval: %+v, %v", feedback, err)
 			}
-			if strings.Contains(output.String(), "Review comparison evidence") || strings.Count(output.String(), "Intended ANT trump [y/n]") != 1 {
-				t.Fatalf("unexpected trump prompts: %s", output.String())
+			if text := output.String(); strings.Contains(text, "Review comparison evidence") ||
+				strings.Count(text, "Intended ANT trump [y/n]") != 1 ||
+				strings.Contains(text, "ANT trump reason:") != (test.choice == "yes") ||
+				strings.Count(text, "Duplicate candidates:") != wantEvidenceCount ||
+				strings.Contains(text, "Updated.Example.Release") != test.changedEvidence ||
+				strings.Contains(text, "staff-issued ANT token") != (test.choice == "no") {
+				t.Fatalf("unexpected review sequence: %s", text)
 			}
 		})
 	}

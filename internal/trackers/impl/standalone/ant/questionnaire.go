@@ -148,7 +148,7 @@ func trumpQuestionnaireFields(input trackers.PreparationInput) []api.TrackerQues
 	if intended {
 		value = "yes"
 	}
-	return []api.TrackerQuestionnaireField{
+	fields := []api.TrackerQuestionnaireField{
 		{
 			Key:     choice,
 			Label:   "Intended ANT trump",
@@ -157,17 +157,21 @@ func trumpQuestionnaireFields(input trackers.PreparationInput) []api.TrackerQues
 			Value:   value,
 			Help:    "Guru+ only: explicitly intend to replace an existing release. Duplicate review and upload confirmation are still required; ANT decides eligibility.",
 		},
-		{
+	}
+	if intended {
+		fields = append(fields, api.TrackerQuestionnaireField{
 			Key:   reason,
 			Label: "ANT trump reason",
 			Kind:  "text",
 			Value: explanation,
 			Help:  "Optional explanation sent only for an explicitly intended Guru+ trump.",
-		},
+		})
 	}
+	return fields
 }
 
-// duplicateTrumpQuestionnaireFields collects upload intent once, independently of comparison evidence.
+// duplicateTrumpQuestionnaireFields asks for intent first. Only an explicit
+// yes exposes the optional reason, where a saved empty answer means skip.
 func duplicateTrumpQuestionnaireFields(input trackers.PreparationInput) []api.TrackerQuestionnaireField {
 	fields := trumpQuestionnaireFields(input)
 	if len(fields) == 0 {
@@ -177,11 +181,15 @@ func duplicateTrumpQuestionnaireFields(input trackers.PreparationInput) []api.Tr
 	if input.Projection != nil {
 		answers = input.Projection.QuestionnaireAnswers
 	}
-	if answers[fields[0].Key] == "yes" || answers[fields[0].Key] == "no" {
+	switch answers[fields[0].Key] {
+	case "no":
 		return nil
+	case "yes":
+		fields = fields[1:]
+		if _, answered := answers[fields[0].Key]; answered {
+			return nil
+		}
 	}
-	for index := range fields {
-		fields[index].NeedsReview = true
-	}
+	fields[0].NeedsReview = true
 	return fields
 }

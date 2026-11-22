@@ -791,6 +791,13 @@ func (s *cliWorkflowSession) collectCompositeTrackerFeedback(
 	return feedback, false, nil
 }
 
+type cliDupeReviewContext struct {
+	workflow api.WorkflowID
+	evidence string
+}
+
+const cliUnchangedDupeEvidence = "Duplicate evidence is unchanged from the preceding review above."
+
 func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 	reader *bufio.Reader,
 	action api.RequiredAction,
@@ -812,8 +819,19 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 	if cliDupeRequiresRiskAcknowledgement(result) {
 		evidence.WriteString("Risk acknowledgement required: incomplete or manual evidence.\n")
 	}
-	if writer, ok := s.streams.out.(*cliPresentationWriter); ok {
-		writer.question.Evidence = safeTerminalText(evidence.String())
+	currentEvidence := cliDupeReviewContext{workflow: s.current.Workflow.ID, evidence: evidence.String()}
+	visibleEvidence := currentEvidence.evidence
+	followingEvidence := cliUnchangedDupeEvidence
+	writer, _ := s.streams.out.(*cliPresentationWriter)
+	if writer != nil && writer.terminal {
+		// The TUI replaces its evidence panel; keep it available for each question.
+		followingEvidence = visibleEvidence
+	} else if s.lastDupeReview == currentEvidence {
+		visibleEvidence = followingEvidence
+	}
+	s.lastDupeReview = currentEvidence
+	if writer != nil {
+		writer.question.Evidence = safeTerminalText(visibleEvidence)
 	}
 	if len(result.Questionnaire) > 0 && s.intent.interaction != api.InteractionModeUnattended {
 		review := slices.ContainsFunc(result.Questionnaire, func(field api.TrackerQuestionnaireRequirement) bool {
@@ -824,12 +842,13 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 			review, reviewErr = askCLIConfirmation(reader, s.streams.out, cliPrompt{
 				Kind:     cliPromptConfirm,
 				Question: "Review comparison evidence before deciding? [y/N]: ",
-				Evidence: evidence.String(),
+				Evidence: visibleEvidence,
 				Help:     "Yes opens the current comparison questions and refreshes the assessment from your answers. No keeps the existing answers and continues to duplicate review. Neither answer approves upload.",
 			})
 			if reviewErr != nil {
 				return feedback, false, reviewErr
 			}
+			visibleEvidence = followingEvidence
 		}
 		if review {
 			projections := cliTrackerQuestionnaireProjection(s.current, action.TrackerID)
@@ -844,7 +863,9 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 				}
 			}
 			instructions := cliProjectionInstructions(s.uploadRequest)
-			if _, collectErr := collectCLIWorkflowQuestionnaires(reader, s.streams.out, s.intent.interaction, projections, instructions); collectErr != nil {
+			if _, collectErr := collectCLIWorkflowQuestionnairesWithEvidence(
+				reader, s.streams.out, s.intent.interaction, projections, instructions, visibleEvidence, followingEvidence,
+			); collectErr != nil {
 				return feedback, false, collectErr
 			}
 			feedback.Response = api.ReleaseWorkflowUploadFeedbackResponse{
@@ -878,13 +899,14 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 	allow, err := askCLIConfirmation(reader, s.streams.out, cliPrompt{
 		Kind:     cliPromptConfirm,
 		Question: prompt,
-		Evidence: evidence.String(),
+		Evidence: visibleEvidence,
 		Help:     help,
 	})
 	if err != nil {
 		return feedback, false, err
 	}
 	fmt.Fprintln(s.streams.out)
+	s.lastDupeReview = cliDupeReviewContext{}
 	decision := api.DupeDecisionAccepted
 	if allow {
 		decision = api.DupeDecisionIgnored

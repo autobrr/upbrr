@@ -104,6 +104,7 @@ type cliWorkflowSession struct {
 	streams                  cliIO
 	inputBaseline            cliInputSlotBaseline
 	inputClaim               cliInputSlotClaim
+	lastDupeReview           cliDupeReviewContext
 }
 
 type cliInputSlotBaseline struct {
@@ -1341,6 +1342,22 @@ func collectCLIWorkflowQuestionnaires(
 	projections *api.TrackerReleaseProjectionSet,
 	instructions map[api.TrackerID]api.TrackerProjectionInstructions,
 ) (bool, error) {
+	evidence := ""
+	if writer, ok := output.(*cliPresentationWriter); ok {
+		evidence = writer.question.Evidence
+	}
+	return collectCLIWorkflowQuestionnairesWithEvidence(reader, output, interaction, projections, instructions, evidence, evidence)
+}
+
+func collectCLIWorkflowQuestionnairesWithEvidence(
+	reader *bufio.Reader,
+	output io.Writer,
+	interaction api.InteractionMode,
+	projections *api.TrackerReleaseProjectionSet,
+	instructions map[api.TrackerID]api.TrackerProjectionInstructions,
+	evidence string,
+	followingEvidence string,
+) (bool, error) {
 	if projections == nil {
 		return false, errors.New("upbrr: tracker workflow produced no projections")
 	}
@@ -1372,9 +1389,10 @@ func collectCLIWorkflowQuestionnaires(
 			}
 			yesNo := field.Kind == "select" && len(field.Options) == 2 && slices.Contains(field.Options, "yes") && slices.Contains(field.Options, "no")
 			prompt := cliQuestionnairePrompt(projection, field, yesNo)
-			if writer, ok := output.(*cliPresentationWriter); ok && writer.question.Evidence != "" {
-				prompt.Evidence = writer.question.Evidence + "\n" + prompt.Evidence
+			if evidence != "" {
+				prompt.Evidence = evidence + "\n" + prompt.Evidence
 			}
+			evidence = followingEvidence
 			answer, err := askCLIField(reader, output, prompt)
 			if err != nil {
 				return false, err
