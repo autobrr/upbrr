@@ -1634,27 +1634,45 @@ func (m *Module) compositeUploadExcessScreenshotIDs(
 		}
 		return nil, err
 	}
-	required := 0
-	for _, projection := range targets.Projections().Projections {
-		required = max(required, projection.Artifacts.ScreenshotCount)
-	}
-	return compositeUploadSelectedScreenshotExcess(current.Media.Artifacts, required), nil
+	return compositeUploadSelectedScreenshotExcess(current.Media.Artifacts, targets.Projections().Projections), nil
 }
 
-func compositeUploadSelectedScreenshotExcess(artifacts []api.MediaArtifact, required int) []api.PublicResourceID {
+func compositeUploadSelectedScreenshotExcess(artifacts []api.MediaArtifact, projections []api.TrackerReleaseProjection) []api.PublicResourceID {
+	required := 0
+	var discLimits map[string]int
+	var primaryDisc string
+	for _, projection := range projections {
+		required = max(required, projection.Artifacts.ScreenshotCount)
+		if discs := projection.Artifacts.DiscScreenshots; discs != nil && len(discs.DiscIDs) > 1 {
+			if discLimits == nil {
+				discLimits = make(map[string]int, len(discs.DiscIDs))
+				primaryDisc = discs.DiscIDs[0]
+			}
+			for _, discID := range discs.DiscIDs[1:] {
+				discLimits[discID] = max(discLimits[discID], discs.AdditionalCount)
+			}
+		}
+	}
+	if discLimits != nil {
+		discLimits[primaryDisc] = required
+	}
 	ordered := append([]api.MediaArtifact(nil), artifacts...)
 	slices.SortStableFunc(ordered, func(left, right api.MediaArtifact) int {
 		return cmp.Compare(left.Order, right.Order)
 	})
-	selected := 0
+	selected := make(map[string]int, len(discLimits))
 	excess := make([]api.PublicResourceID, 0)
 	for _, artifact := range ordered {
 		if !artifact.Selected || artifact.Kind != api.MediaArtifactScreenshot ||
 			artifact.Purpose != api.ScreenshotPurposeFinal || artifact.Source == "comparison" || artifact.PackMemberID != "" {
 			continue
 		}
-		selected++
-		if selected > required {
+		lane, limit := "", required
+		if len(discLimits) > 0 {
+			lane, limit = artifact.DiscID, discLimits[artifact.DiscID]
+		}
+		selected[lane]++
+		if selected[lane] > limit {
 			excess = append(excess, artifact.ID)
 		}
 	}

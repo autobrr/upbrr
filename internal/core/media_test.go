@@ -915,25 +915,25 @@ func TestPackScreenshotIncompleteUploadFallsBackDespiteOrdinaryMinimum(t *testin
 	images := []api.ScreenshotImage{
 		{Path: "ordinary.png", Purpose: api.ScreenshotPurposeFinal},
 		{
-Path: "a1.png",
- Purpose: api.ScreenshotPurposeFinal,
- PackMemberID: "a",
-},
+			Path:         "a1.png",
+			Purpose:      api.ScreenshotPurposeFinal,
+			PackMemberID: "a",
+		},
 		{
-Path: "a2.png",
- Purpose: api.ScreenshotPurposeFinal,
- PackMemberID: "a",
-},
+			Path:         "a2.png",
+			Purpose:      api.ScreenshotPurposeFinal,
+			PackMemberID: "a",
+		},
 		{
-Path: "b1.png",
- Purpose: api.ScreenshotPurposeFinal,
- PackMemberID: "b",
-},
+			Path:         "b1.png",
+			Purpose:      api.ScreenshotPurposeFinal,
+			PackMemberID: "b",
+		},
 		{
-Path: "b2.png",
- Purpose: api.ScreenshotPurposeFinal,
- PackMemberID: "b",
-},
+			Path:         "b2.png",
+			Purpose:      api.ScreenshotPurposeFinal,
+			PackMemberID: "b",
+		},
 	}
 	for _, silent := range []bool{false, true} {
 		module := &mediaModule{
@@ -941,11 +941,11 @@ Path: "b2.png",
 				ImageHosting:       config.ImageHostingConfig{Host1: "pixhost", Host2: "imgbb"},
 				ScreenshotHandling: config.ScreenshotHandlingConfig{MinSuccessfulUploads: 3},
 			},
-			images:   &partialImageHostingService{
-published: 3,
- failHost: "pixhost",
- silentPartial: silent,
-},
+			images: &partialImageHostingService{
+				published:     3,
+				failHost:      "pixhost",
+				silentPartial: silent,
+			},
 			logger:   &recordingMediaLogger{},
 			registry: registry,
 		}
@@ -962,14 +962,14 @@ published: 3,
 		result, err := module.uploadImagesToTargetsWithFallback(ctx, subject, "", nil,
 			[]trackers.ImageUploadTarget{
 				{
-					Host: "pixhost",
+					Host:       "pixhost",
 					UsageScope: "global",
-					Trackers: []string{"PACK"},
+					Trackers:   []string{"PACK"},
 				},
 				{
-					Host: "imgbb",
+					Host:       "imgbb",
 					UsageScope: "global",
-					Trackers: []string{"ONE"},
+					Trackers:   []string{"ONE"},
 				},
 			}, images, nil, nil)
 		if err != nil || len(result.Attempts) != 3 || result.Attempts[0].Failure == nil || result.Attempts[1].Failure != nil ||
@@ -981,6 +981,21 @@ published: 3,
 		if len(completed) != 2 || completed[0].AttemptID == "" || completed[1].AttemptID == "" ||
 			completed[0].AttemptID == completed[1].AttemptID || completed[0].Fallback == completed[1].Fallback {
 			t.Fatalf("same-host fallback progress was not independent: %+v", completed)
+		}
+		target := trackers.ImageUploadTarget{
+Host: "imgbb",
+ UsageScope: "global",
+ Trackers: []string{"ONE"},
+}
+		for range 2 {
+			if _, err := module.uploadImagesToTargetsWithFallback(ctx, subject, "imgbb", nil,
+				[]trackers.ImageUploadTarget{target}, images, nil, nil); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if len(completed) != 4 || completed[2].AttemptID == "" || completed[3].AttemptID == "" ||
+			completed[2].AttemptID == completed[3].AttemptID {
+			t.Fatalf("separate batches in the same progress scope reused an attempt ID: %+v", completed)
 		}
 	}
 }

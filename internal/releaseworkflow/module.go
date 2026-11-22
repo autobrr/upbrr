@@ -7280,10 +7280,10 @@ func HostedScreenshotRequirementsMet(snapshot api.MediaArtifactSet, projections 
 				} else if final || source.Kind == api.MediaArtifactComparison && reusedComparison && !comparisonHostFailed {
 					sources[source.ID] = struct{}{}
 					if discs != nil && final && !comparisonHostFailed && host != "" {
-						if discSources[group] == nil {
-							discSources[group] = make(map[api.PublicResourceID]string)
+						if discSources[host] == nil {
+							discSources[host] = make(map[api.PublicResourceID]string)
 						}
-						discSources[group][source.ID] = source.DiscID
+						discSources[host][source.ID] = source.DiscID
 					}
 				}
 			}

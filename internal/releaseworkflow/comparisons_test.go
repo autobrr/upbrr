@@ -922,19 +922,19 @@ func TestPackScreenshotReadinessRequiresEachMemberOnOneEligibleHost(t *testing.T
 		{"ordinary", ""}, {"a1", "first"}, {"a2", "first"}, {"a3", "first"}, {"b1", "second"}, {"b2", "second"},
 	} {
 		local := api.MediaArtifact{
-ID: api.PublicResourceID(sample.id),
- Kind: api.MediaArtifactScreenshot,
-			Purpose: api.ScreenshotPurposeFinal,
- Selected: true,
- PackMemberID: sample.member,
-}
+			ID:           api.PublicResourceID(sample.id),
+			Kind:         api.MediaArtifactScreenshot,
+			Purpose:      api.ScreenshotPurposeFinal,
+			Selected:     true,
+			PackMemberID: sample.member,
+		}
 		hosted := api.MediaArtifact{
-ID: api.PublicResourceID("host-" + sample.id),
- Kind: api.MediaArtifactHostedImage,
-			Purpose: api.ScreenshotPurposeFinal,
- Selected: true,
- Source: sample.id,
-}
+			ID:       api.PublicResourceID("host-" + sample.id),
+			Kind:     api.MediaArtifactHostedImage,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+			Source:   sample.id,
+		}
 		snapshot.Artifacts = append(snapshot.Artifacts, local, hosted)
 		attempt.Results = append(attempt.Results, hosted)
 	}
@@ -942,10 +942,10 @@ ID: api.PublicResourceID("host-" + sample.id),
 	last := attempt.Results[len(attempt.Results)-1]
 	attempt.Results = attempt.Results[:len(attempt.Results)-1]
 	snapshot.HostAttempts = []api.HostedImageAttempt{attempt, {
-Host: "two",
- TrackerIDs: []api.TrackerID{"PTP"},
- Results: []api.MediaArtifact{last},
-}}
+		Host:       "two",
+		TrackerIDs: []api.TrackerID{"PTP"},
+		Results:    []api.MediaArtifact{last},
+	}}
 	if HostedScreenshotRequirementsMet(snapshot, targets) {
 		t.Fatal("surplus capture on one file or a screenshot on a different host filled the missing member slot")
 	}
@@ -976,17 +976,17 @@ func TestMultiDiscScreenshotReadinessDoesNotBorrowFramesAcrossDiscs(t *testing.T
 	for index, disc := range []string{"first", "first", "first", "first", "second", "second", "third", "third"} {
 		id := api.PublicResourceID(fmt.Sprintf("disc-screen-%d", index))
 		source := api.MediaArtifact{
-			ID: id,
-			DiscID: disc,
-			Kind: api.MediaArtifactScreenshot,
-			Purpose: api.ScreenshotPurposeFinal,
+			ID:       id,
+			DiscID:   disc,
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
 			Selected: true,
 		}
 		hosted := api.MediaArtifact{
-			ID: api.PublicResourceID("hosted-" + string(id)),
-			Kind: api.MediaArtifactHostedImage,
-			Purpose: api.ScreenshotPurposeFinal,
-			Source: string(id),
+			ID:       api.PublicResourceID("hosted-" + string(id)),
+			Kind:     api.MediaArtifactHostedImage,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Source:   string(id),
 			Selected: true,
 		}
 		snapshot.Artifacts = append(snapshot.Artifacts, source, hosted)
@@ -996,6 +996,25 @@ func TestMultiDiscScreenshotReadinessDoesNotBorrowFramesAcrossDiscs(t *testing.T
 	if !LocalScreenshotSourceRequirementsMet(snapshot.Artifacts, projections) || !HostedScreenshotRequirementsMet(snapshot, projections) {
 		t.Fatal("complete per-disc coverage was rejected")
 	}
+	scoped := attempt
+	scoped.UsageScope = "tracker:PTP"
+	scoped.Results = attempt.Results[4:]
+	snapshot.HostAttempts[0].Results = attempt.Results[:4]
+	snapshot.HostAttempts = append(snapshot.HostAttempts, scoped)
+	if !HostedScreenshotRequirementsMet(snapshot, projections) {
+		t.Fatal("same-host global and tracker-scoped attempts should provide complete disc coverage")
+	}
+	snapshot.HostAttempts[1].Host = "two"
+	if HostedScreenshotRequirementsMet(snapshot, projections) {
+		t.Fatal("different hosts must not be combined to meet disc coverage")
+	}
+	snapshot.HostAttempts[1].Host = "one"
+	snapshot.HostAttempts[1].UsageScope = "tracker:OTHER"
+	if HostedScreenshotRequirementsMet(snapshot, projections) {
+		t.Fatal("a different tracker scope must not count towards disc coverage")
+	}
+	snapshot.HostAttempts = []api.HostedImageAttempt{attempt}
+
 	last := len(snapshot.Artifacts) - 2
 	snapshot.Artifacts[last].Selected = false
 	if LocalScreenshotSourceRequirementsMet(snapshot.Artifacts, projections) || HostedScreenshotRequirementsMet(snapshot, projections) {

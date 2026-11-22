@@ -539,6 +539,17 @@ func (b workflowMediaBuilder) Build(
 	instructions api.MediaCaptureInstructions,
 	now time.Time,
 ) (api.MediaArtifactSet, any, error) {
+	return b.build(ctx, release, projections, instructions, now, true)
+}
+
+func (b workflowMediaBuilder) build(
+	ctx context.Context,
+	release api.ReleaseRef,
+	projections api.TrackerReleaseProjectionSet,
+	instructions api.MediaCaptureInstructions,
+	now time.Time,
+	checkMinimums bool,
+) (api.MediaArtifactSet, any, error) {
 	if err := ctx.Err(); err != nil {
 		return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media capture: %w", err)
 	}
@@ -566,7 +577,12 @@ func (b workflowMediaBuilder) Build(
 		Status:                  api.StageStatusCompleted,
 	}
 	projectedScreenshots, projectedDVDMenus := projectedMediaRequirements(projections.Projections)
-	additionalDiscCount := projectedAdditionalDiscCount(projections.Projections)
+	projectedDiscCount := projectedAdditionalDiscCount(projections.Projections)
+	final := instructions.Purpose == "" || instructions.Purpose == api.ScreenshotPurposeFinal
+	additionalDiscCount := 0
+	if final {
+		additionalDiscCount = projectedDiscCount
+	}
 	screenshotCount, dvdMenuCount := 0, 0
 	switch instructions.Purpose {
 	case api.ScreenshotPurposeMenu:
@@ -595,7 +611,7 @@ func (b workflowMediaBuilder) Build(
 		}
 	}
 	var pack *api.PackScreenshotRequirement
-	if instructions.Purpose == "" || instructions.Purpose == api.ScreenshotPurposeFinal {
+	if final {
 		for _, projection := range projections.Projections {
 			if projection.TrackerID == "PTP" {
 				pack = projection.Artifacts.PackScreenshots
@@ -684,13 +700,13 @@ func (b workflowMediaBuilder) Build(
 				if planErr != nil {
 					return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media resolve saved image plan subject: %w", planErr)
 				}
-				reviewedSubject.AdditionalDiscCount = additionalDiscCount
+				reviewedSubject.AdditionalDiscCount = projectedDiscCount
 				reviewedPlan, err = b.screenshots.Plan(ctx, reviewedSubject, projectedScreenshots)
 				if err != nil {
 					return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media saved image plan: %w", err)
 				}
 			}
-			if additionalDiscCount > 0 {
+			if projectedDiscCount > 0 {
 				reviewedPlan.TrackerImageLinks = nil
 			}
 			currentPlanID, planErr := api.MediaPlanContentID(release, projections, reviewedPlan.SuggestedSelections, mediaPlanSavedImages(reviewedPlan))
@@ -940,8 +956,10 @@ func (b workflowMediaBuilder) Build(
 		}
 	}
 	indexWorkflowMediaArtifacts(&privateArtifacts, snapshot)
-	applyWorkflowMediaMinimums(&snapshot, projectedScreenshots, projectedDVDMenus,
-		additionalDiscCount == 0 || releaseworkflow.LocalScreenshotSourceRequirementsMet(snapshot.Artifacts, projections.Projections))
+	if checkMinimums {
+		applyWorkflowMediaMinimums(&snapshot, projectedScreenshots, projectedDVDMenus,
+			additionalDiscCount == 0 || releaseworkflow.LocalScreenshotSourceRequirementsMet(snapshot.Artifacts, projections.Projections))
+	}
 	return snapshot, privateArtifacts, nil
 }
 
@@ -1247,7 +1265,7 @@ func (b workflowMediaBuilder) BuildIncremental(
 			return snapshot, retained, nil
 		}
 	}
-	captured, privateCaptured, err := b.Build(ctx, release, projections, instructions, now)
+	captured, privateCaptured, err := b.build(ctx, release, projections, instructions, now, existing == nil)
 	if err != nil {
 		return api.MediaArtifactSet{}, nil, err
 	}
@@ -1258,7 +1276,10 @@ func (b workflowMediaBuilder) BuildIncremental(
 	if existing == nil {
 		return captured, capturedRetained, nil
 	}
-	_, projectedDVDMenus := projectedMediaRequirements(projections.Projections)
+	projectedScreenshots, projectedDVDMenus := projectedMediaRequirements(projections.Projections)
+	// Only evaluate coverage for a completed capture path, not an early
+	// failure or an optional-menu failure whose displayed status was restored.
+	checkCombinedCoverage := captured.Status == api.StageStatusCompleted || captured.Status == api.StageStatusPartial
 	optionalMenuAttempt := instructions.CaptureDVDMenus && projectedDVDMenus == 0
 	capturedMenuCount := countMediaArtifacts(captured.Artifacts, api.MediaArtifactDVDMenu)
 	if optionalMenuAttempt && capturedMenuCount == 0 && len(captured.Failures) > 0 {
@@ -1404,6 +1425,12 @@ func (b workflowMediaBuilder) BuildIncremental(
 	combined.SavedImagePlanID = captured.SavedImagePlanID
 	if !noOp {
 		combined.Status = captured.Status
+		if checkCombinedCoverage {
+			final := instructions.Purpose == "" || instructions.Purpose == api.ScreenshotPurposeFinal
+			applyWorkflowMediaMinimums(&combined, projectedScreenshots, projectedDVDMenus,
+				!final || projectedAdditionalDiscCount(projections.Projections) == 0 ||
+					releaseworkflow.LocalScreenshotSourceRequirementsMet(combined.Artifacts, projections.Projections))
+		}
 	}
 	combined.CaptureFingerprint = captured.CaptureFingerprint
 	if len(capturedRetained.Screenshots) > 0 {

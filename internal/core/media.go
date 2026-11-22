@@ -5,6 +5,7 @@ package core
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -469,6 +470,8 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 	coveredTrackers := make(map[string]struct{})
 	results := make(chan completedAttempt)
 	pending := 0
+	// Several batches can emit progress under the same operation.
+	batchID := rand.Text()
 	declaredPack, _ := m.packUploadLanes(meta.Trackers, meta)
 	packScope := declaredPack || slices.ContainsFunc(images, func(image api.ScreenshotImage) bool { return image.PackMemberID != "" })
 
@@ -536,7 +539,16 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 					return !ok
 				})
 			}
-			links, err := m.uploadImagesToTarget(ctx, meta, target, targetImages, retainedLinks, blockedRetainedLinks, strconv.Itoa(index+1), fallback)
+			links, err := m.uploadImagesToTarget(
+				ctx,
+				meta,
+				target,
+				targetImages,
+				retainedLinks,
+				blockedRetainedLinks,
+				batchID+"-"+strconv.Itoa(index+1),
+				fallback,
+			)
 			results <- completedAttempt{
 				index: index,
 				links: links,
