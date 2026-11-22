@@ -6,6 +6,7 @@ package tl
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/providerid"
@@ -56,6 +58,13 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	if len(queries) == 0 {
 		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing title for TL dupe search", nil)
 	}
+	client, err := cookieClientWithTransport(ctx, s.cfg.MainSettings.DBPath, s.http.Timeout, s.http.Transport)
+	if errors.Is(err, cookies.ErrTrackerCookiesNotFound) {
+		return dupe.NotRun(dupe.NotRunMissingCredentials, "import TorrentLeech cookies before searching for duplicates", nil)
+	}
+	if err != nil {
+		return dupe.Failed(dupe.FailureAuthentication, "TorrentLeech search could not load stored cookies", err)
+	}
 	logger := logging.FromContext(ctx, s.logger)
 	providerBound := meta.Identity.IMDBID > 0
 	evidence := dupe.SearchEvidence{
@@ -88,7 +97,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 			}
 			dupe.TraceSearchRequest(logger, "TL", http.MethodGet, query, map[string]any{"page": page})
 			evidence.Pages++
-			payload, pageFailure := s.fetchPage(ctx, endpoint)
+			payload, pageFailure := fetchSearchPage(ctx, client, endpoint)
 			if err := ctx.Err(); err != nil {
 				return dupe.Failed(dupe.FailureRequest, "TL search canceled", err)
 			}
@@ -170,17 +179,23 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	return dupe.ResolvedWithSearch(entries, nil, evidence)
 }
 
-func (s *dupeSearcher) fetchPage(ctx context.Context, endpoint string) (searchPage, dupe.AdapterResult) {
+func fetchSearchPage(ctx context.Context, client *http.Client, endpoint string) (searchPage, dupe.AdapterResult) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return searchPage{}, dupe.Failed(dupe.FailureRequest, "TL search failed", err)
 	}
+	if len(client.Jar.Cookies(req.URL)) == 0 {
+		return searchPage{}, dupe.Failed(dupe.FailureAuthentication, "TorrentLeech cookies do not apply to the search endpoint", nil)
+	}
 	req.Header.Set("Accept", "application/json")
-	resp, err := s.http.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return searchPage{}, dupe.Failed(dupe.FailureRequest, "TL search failed", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return searchPage{}, dupe.Failed(dupe.FailureAuthentication, "TorrentLeech did not accept the stored session", nil)
+	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return searchPage{}, dupe.Failed(dupe.FailureResponseStatus, "TL search failed", nil)
 	}

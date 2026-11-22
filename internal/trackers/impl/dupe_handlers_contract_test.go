@@ -264,7 +264,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 				ReleaseName: "Example.Release.2026.1080p-GRP",
 				SourcePath:  "x",
 			},
-			setup: func(_ *testing.T, _ string, _ string) {},
+			setup: func(t *testing.T, _ string, dbPath string) { writeTextCookie(t, dbPath, "TL", ".torrentleech.org") },
 			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
 				return dupe.NewAdapter(tlimpl.New(), "TL", cfg, client, api.NopLogger{})
 			},
@@ -576,6 +576,11 @@ func TestSiteHandlersSearch(t *testing.T) {
 					}
 				case "TL":
 					if r.URL.EscapedPath() == "/torrents/browse/list/query/Example%20Release%202026" {
+						cookie, err := r.Cookie("session")
+						if err != nil || cookie.Value != "cookie" {
+							w.WriteHeader(http.StatusUnauthorized)
+							return
+						}
 						_, _ = w.Write([]byte(`{"numFound":0,"page":1,"perPage":100,"torrentList":[]}`))
 						return
 					}

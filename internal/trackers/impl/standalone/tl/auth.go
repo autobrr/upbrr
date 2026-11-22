@@ -17,13 +17,20 @@ import (
 )
 
 func cookieClient(ctx context.Context, dbPath string) (*http.Client, error) {
+	return cookieClientWithTransport(ctx, dbPath, 30*time.Second, nil)
+}
+
+// Searches and form uploads use a fresh TL-only cookie jar and never follow
+// redirects to login or another origin. Preserve the caller's transport and timeout.
+func cookieClientWithTransport(ctx context.Context, dbPath string, timeout time.Duration, transport http.RoundTripper) (*http.Client, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		return nil, fmt.Errorf("trackers: TL create cookie jar: %w", err)
 	}
 	client := &http.Client{
-		Timeout: 30 * time.Second,
-		Jar:     jar,
+		Timeout:   timeout,
+		Transport: transport,
+		Jar:       jar,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		},

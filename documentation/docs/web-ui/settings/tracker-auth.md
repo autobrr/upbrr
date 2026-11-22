@@ -105,6 +105,8 @@ Folder migration supports the two object forms as `<tracker-id>.json`; use the W
 
 A successful import does not prove the cookies belong to the correct site/account or that the exported session remains valid. Even a successful remote check is only current at the time of that check.
 
+For modes that check only local credentials, preflight verifies the required configuration and stored credentials without contacting the tracker. Duplicate search may still need a current browser session even when the selected upload method uses only a passkey.
+
 ## Cookie troubleshooting
 
 ### No cookies, login required, or expired session

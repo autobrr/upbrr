@@ -16,7 +16,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/authmaterial/authfixture"
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/cookies"
+	servicedb "github.com/autobrr/upbrr/internal/services/db"
 	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
 	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/tl"
@@ -31,6 +34,125 @@ type workflowPreflightAuthFake struct {
 	capabilityCalls *int
 	validateCalls   *int
 	validatedIDs    *[]string
+}
+
+// TL uses user-imported cookies for browsing, but has no tracker-owned login resolver.
+func TestTLPreflightChecksLocalAuthRequirements(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                                    string
+		apiUpload, passkey, storedCookie, ready bool
+		noCookieStorage, badCookieStorage bool
+	}{
+		{
+name: "API upload with passkey",
+ apiUpload: true,
+ passkey: true,
+ ready: true,
+},
+		{
+name: "API upload without cookie storage",
+ apiUpload: true,
+ passkey: true,
+ ready: true,
+ noCookieStorage: true,
+},
+		{
+name: "API upload with unreadable optional cookies",
+ apiUpload: true,
+ passkey: true,
+ badCookieStorage: true,
+ ready: true,
+},
+		{
+name: "form upload with unreadable required cookies",
+ passkey: true,
+ badCookieStorage: true,
+},
+		{
+name: "API upload without passkey",
+ apiUpload: true,
+ storedCookie: true,
+},
+		{
+name: "form upload with passkey and cookie",
+ passkey: true,
+ storedCookie: true,
+ ready: true,
+},
+		{name: "form upload missing cookie", passkey: true},
+		{name: "form upload missing passkey", storedCookie: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := t.Context()
+			dbPath := filepath.Join(t.TempDir(), "upbrr.db")
+			switch {
+			case tc.badCookieStorage:
+				if err := os.Mkdir(dbPath, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			case !tc.noCookieStorage:
+				authfixture.Write(t, dbPath)
+				repo, err := servicedb.OpenWithLoggerContext(ctx, dbPath, api.NopLogger{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = repo.MigrateContext(ctx)
+				if closeErr := repo.Close(); err != nil || closeErr != nil {
+					t.Fatal(errors.Join(err, closeErr))
+				}
+			}
+			if tc.storedCookie {
+				if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "TL", map[string]string{"fixture": "synthetic"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			trackerConfig := config.TrackerConfig{APIUpload: tc.apiUpload}
+			if tc.passkey {
+				trackerConfig.Passkey = "synthetic"
+			}
+			cfg := config.Config{
+				MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+				Trackers:     config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"TL": trackerConfig}},
+			}
+			registry := trackerspkg.NewRegistry()
+			if err := registry.Register(tl.New()); err != nil {
+				t.Fatal(err)
+			}
+			auth := trackerauth.NewServiceWithRegistryAndLogger(cfg, registry, api.NopLogger{})
+			builder := workflowPreflightBuilder{
+				auth:     auth,
+				registry: registry,
+				config:   cfg,
+				logger:   api.NopLogger{},
+			}
+			catalog := api.TrackerCatalogSnapshot{Trackers: []api.TrackerCatalogDescriptor{{TrackerID: "TL"}}}
+			projections := api.TrackerReleaseProjectionSet{
+				ExecutionMode: api.WorkflowExecutionModeDebug,
+				Projections: []api.TrackerReleaseProjection{{
+					TrackerID:   "TL",
+					Readiness:   api.ReadinessStatusReady,
+					DupeReady:   true,
+					UploadReady: true,
+				}},
+			}
+			assessment, _, err := builder.Build(ctx, api.UploadSubject{}, catalog, api.TrackerRuntimeSnapshot{}, projections, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := assessment.Results[0]
+			if result.AuthReady != tc.ready {
+				t.Fatalf("auth readiness = %t, want %t; failures=%+v", result.AuthReady, tc.ready, result.Failures)
+			}
+			if !tc.ready {
+				if len(result.Failures) != 1 || result.Failures[0].Failure.Code != api.OperationFailureTrackerAuthRequired {
+					t.Fatalf("failed local inputs must remain blocked, got %+v", result.Failures)
+				}
+			}
+		})
+	}
 }
 
 func TestTLPreflightResourceRevalidationRetainsAPIUploadMode(t *testing.T) {
@@ -841,9 +963,9 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 			t.Fatal(err)
 		}
 		builder := workflowPreflightBuilder{
-auth: workflowPreflightAuthFake{},
- registry: policyRegistry,
-			config: config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}},
+			auth:     workflowPreflightAuthFake{},
+			registry: policyRegistry,
+			config:   config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}},
 		}
 		progress := make([]api.WorkflowProgressUpdate, 0, 1)
 		ctx := api.WithWorkflowProgressReporter(context.Background(), func(update api.WorkflowProgressUpdate) {
@@ -881,15 +1003,17 @@ auth: workflowPreflightAuthFake{},
 		diagnostic.Projections = slices.Clone(projections.Projections)
 		projection := &diagnostic.Projections[0]
 		if err := trackerspkg.ApplyProjectionRuleFailures(projection, []api.RuleFailure{{
-			Rule: "manual_policy",
- Reason: "Normal upload requires approval.",
- Disposition: api.RuleDispositionWaivable,
+			Rule:        "manual_policy",
+			Reason:      "Normal upload requires approval.",
+			Disposition: api.RuleDispositionWaivable,
 		}}, api.WorkflowExecutionModeDebug, "", nil); err != nil {
 			t.Fatal(err)
 		}
 		builder := workflowPreflightBuilder{auth: workflowPreflightAuthFake{}, registry: registry}
 		assessment, finalized, err := builder.Build(t.Context(), api.UploadSubject{}, catalog, runtime, diagnostic, now)
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		if assessment.Results[0].State != api.TrackerPreflightStateFailed || len(assessment.Results[0].Failures) == 0 ||
 			!finalized[0].DiagnosticReady || finalized[0].Readiness != api.ReadinessStatusBlocked || finalized[0].UploadReady {
 			t.Fatalf("diagnostic rule outcome = %#v / %#v", assessment.Results[0], finalized[0])

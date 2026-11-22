@@ -278,6 +278,12 @@ func (s *Service) Validate(ctx context.Context, trackerID string) (status api.Tr
 	}
 	status = s.statusForSpec(ctx, spec)
 
+	// Imported-cookie or passkey requirements can be checked locally when
+	// the tracker has no session resolver. Retain any local read errors.
+	if s.localPasskeyOrCookieRequirements(spec) {
+		return status, nil
+	}
+
 	if _, ok := s.adapterFor(spec.id); ok {
 		validationCtx, cancel := context.WithTimeout(ctx, trackerAuthValidationTimeout)
 		defer cancel()
@@ -596,12 +602,16 @@ func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.Track
 	hasAPIKey := spec.apiKey && s.effectiveAPIKey(spec, cfg) != ""
 	hasPasskey := strings.TrimSpace(cfg.Passkey) != ""
 	hasCredentials := spec.login && hasCfg && hasUsableLoginConfig(spec, cfg)
+	var satisfiesWithoutCookies bool
+	if s.localPasskeyOrCookieRequirements(spec) {
+		satisfiesWithoutCookies, _ = requirementsSatisfied(spec.requirements, cfg, hasAPIKey, 0)
+	}
 	if spec.cookies {
 		values, err := cookies.LoadTrackerCookieMap(ctx, s.cfg.MainSettings.DBPath, spec.id)
 		if err == nil && len(values) > 0 {
 			status.CookieCount = len(values)
 			status.State = StateHasCookies
-		} else if err != nil && !strings.Contains(strings.ToLower(err.Error()), "no cookies found") {
+		} else if err != nil && !satisfiesWithoutCookies && !strings.Contains(strings.ToLower(err.Error()), "no cookies found") {
 			status.LastError = redact(err.Error())
 		}
 	}
@@ -650,7 +660,7 @@ func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.Track
 			}
 		}
 	}
-	if !missingAPIKey && spec.cookies && status.CookieCount == 0 && !encryptedStorage &&
+	if !missingAPIKey && !satisfiesWithoutCookies && spec.cookies && status.CookieCount == 0 && !encryptedStorage &&
 		authStatusRequiresEncryptedStorage(spec, hasCredentials, hasAPIKey, hasPasskey) {
 		status.State = StateEncryptedStorageUnavailable
 	}
@@ -662,6 +672,16 @@ func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.Track
 		status.Message = spec.policy.MissingAPIKeyMessage
 	}
 	return status
+}
+
+// Local-only hybrid auth preserves the exact effective mode requirements
+// without skipping validation for trackers with a real session resolver.
+func (s *Service) localPasskeyOrCookieRequirements(spec trackerSpec) bool {
+	if spec.authKind != "passkey_or_cookies" || len(spec.requirements.Alternatives) == 0 {
+		return false
+	}
+	_, remote := s.registry.LookupAuthSessionResolver(spec.id)
+	return !remote
 }
 
 // currentTime returns the service clock, falling back to the wall clock for

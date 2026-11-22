@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,6 +19,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -25,24 +28,118 @@ type tlRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f tlRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
 
+func TestDuplicateSearchUsesTLSessionInEitherUploadMode(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                 string
+		apiUpload, hasCookie bool
+		redirect             string
+		want                 dupe.Disposition
+	}{
+		{
+name: "API upload",
+ apiUpload: true,
+ hasCookie: true,
+ want: dupe.DispositionResolved,
+},
+		{
+name: "form upload",
+ hasCookie: true,
+ want: dupe.DispositionResolved,
+},
+		{
+name: "no session",
+ apiUpload: true,
+ want: dupe.DispositionNotRun,
+},
+		{
+name: "login redirect",
+ hasCookie: true,
+ redirect: "/user/login",
+ want: dupe.DispositionFailed,
+},
+		{
+name: "other site redirect",
+ hasCookie: true,
+ redirect: "https://unrelated.invalid/capture",
+ want: dupe.DispositionFailed,
+},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dbPath := filepath.Join(t.TempDir(), "upbrr.db")
+			if tc.hasCookie {
+				writeTLSearchCookie(t, dbPath)
+			}
+			calls := 0
+			client := &http.Client{Transport: tlRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+				calls++
+				if req.URL.Host != "www.torrentleech.org" || !strings.HasPrefix(req.URL.Path, "/torrents/browse/list/") {
+					t.Fatalf("unexpected request to %s %s", req.URL.Host, req.URL.Path)
+				}
+				cookie, err := req.Cookie("fixture")
+				if err != nil || cookie.Value != "synthetic" {
+					t.Error("TL search did not send its fixture cookie")
+				}
+				if req.URL.Query().Has("passkey") {
+					t.Error("TL search sent upload passkey")
+				}
+				headers := make(http.Header)
+				status := http.StatusOK
+				if tc.redirect != "" {
+					headers.Set("Location", tc.redirect)
+					status = http.StatusFound
+				}
+				return &http.Response{
+StatusCode: status,
+ Header: headers,
+					Body: io.NopCloser(strings.NewReader(`{"numFound":0,"page":1,"perPage":100,"torrentList":[]}`)),
+}, nil
+			})}
+			adapter := New().NewDuplicateAdapter(dupe.NewDependencies(
+				"TL", config.TrackerConfig{Passkey: "synthetic", APIUpload: tc.apiUpload}, dbPath, client, api.NopLogger{},
+			))
+			result := adapter.Search(t.Context(), api.DuplicateSubject{Identity: api.ExternalIdentity{IMDBID: 1234567}})
+			if result.Disposition() != tc.want {
+				t.Fatalf("disposition = %v, want %v; code=%q", result.Disposition(), tc.want, result.Code())
+			}
+			wantCalls := 1
+			if !tc.hasCookie {
+				wantCalls = 0
+			}
+			if calls != wantCalls {
+				t.Fatalf("HTTP calls=%d, want %d", calls, wantCalls)
+			}
+		})
+	}
+}
+
+func writeTLSearchCookie(t *testing.T, dbPath string) {
+	t.Helper()
+	cookiePath := commonhttp.CookiePathCandidates(dbPath, "TL", ".json")[0]
+	if err := os.MkdirAll(filepath.Dir(cookiePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cookiePath, []byte(`{"fixture":"synthetic"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDuplicateSearchTitleFallbackHonorsManualTitle(t *testing.T) {
 	t.Parallel()
 
 	requests := 0
-	searcher := &dupeSearcher{
-		cfg: config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"TL": {Passkey: "passkey"}}}},
-		http: &http.Client{Transport: tlRoundTripFunc(func(request *http.Request) (*http.Response, error) {
-			requests++
-			if !strings.HasSuffix(request.URL.Path, "/Projected Release") {
-				t.Errorf("automatic TL search path = %q", request.URL.Path)
-			}
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Body:       io.NopCloser(strings.NewReader(`{"numFound":0,"page":1,"perPage":100,"torrentList":[]}`)),
-				Header:     make(http.Header),
-			}, nil
-		})},
-	}
+	searcher := testSearcher(t, func(request *http.Request) (*http.Response, error) {
+		requests++
+		if !strings.HasSuffix(request.URL.Path, "/Projected Release") {
+			t.Errorf("automatic TL search path = %q", request.URL.Path)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"numFound":0,"page":1,"perPage":100,"torrentList":[]}`)),
+			Header:     make(http.Header),
+		}, nil
+	})
 	projection := &api.TrackerReleaseProjection{DuplicateCriteria: api.TrackerDuplicateCriteria{Name: "Projected Release"}}
 	result := searcher.Search(context.Background(), api.DuplicateSubject{
 		Projection:        projection,
@@ -215,7 +312,7 @@ func TestIMDbSearchPagination(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			requests := 0
-			searcher := testSearcher(func(request *http.Request) (*http.Response, error) {
+			searcher := testSearcher(t, func(request *http.Request) (*http.Response, error) {
 				requests++
 				identity := "tt0000456"
 				if test.imdb == 12345678 {
@@ -317,7 +414,7 @@ func TestIMDbSearchBindingAndFailures(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			searcher := testSearcher(func(*http.Request) (*http.Response, error) {
+			searcher := testSearcher(t, func(*http.Request) (*http.Response, error) {
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(test.body))}, nil
 			})
 			result := searcher.Search(t.Context(), api.DuplicateSubject{Identity: api.ExternalIdentity{IMDBID: 456}})
@@ -327,7 +424,7 @@ func TestIMDbSearchBindingAndFailures(t *testing.T) {
 		})
 	}
 	ctx, cancel := context.WithCancel(t.Context())
-	searcher := testSearcher(func(*http.Request) (*http.Response, error) { cancel(); return nil, ctx.Err() })
+	searcher := testSearcher(t, func(*http.Request) (*http.Response, error) { cancel(); return nil, ctx.Err() })
 	if result := searcher.Search(ctx, api.DuplicateSubject{Identity: api.ExternalIdentity{IMDBID: 456}}); result.Disposition() != dupe.DispositionFailed || !errors.Is(result.Cause(), context.Canceled) {
 		t.Fatalf("cancellation = %+v", result)
 	}
@@ -361,7 +458,7 @@ func TestTitleFallbackIncludesEpisodeRangesAndPacks(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			requests := 0
-			searcher := testSearcher(func(request *http.Request) (*http.Response, error) {
+			searcher := testSearcher(t, func(request *http.Request) (*http.Response, error) {
 				requests++
 				category := test.category
 				if requests == 2 {
@@ -417,8 +514,17 @@ func TestTitleFallbackIncludesEpisodeRangesAndPacks(t *testing.T) {
 	}
 }
 
-func testSearcher(transport tlRoundTripFunc) *dupeSearcher {
-	return &dupeSearcher{cfg: config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"TL": {Passkey: "synthetic"}}}}, http: &http.Client{Transport: transport}}
+func testSearcher(t *testing.T, transport tlRoundTripFunc) *dupeSearcher {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
+	writeTLSearchCookie(t, dbPath)
+	return &dupeSearcher{
+		cfg: config.Config{
+			MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+			Trackers:     config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"TL": {Passkey: "synthetic"}}},
+		},
+		http: &http.Client{Transport: transport},
+	}
 }
 
 func jsonResponse(t *testing.T, body any) *http.Response {
