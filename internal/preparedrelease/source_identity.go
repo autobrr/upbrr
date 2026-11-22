@@ -110,29 +110,13 @@ func verifyInputSource(
 	return api.VerifiedInputSource{Manifest: manifest, Identity: identity}, nil
 }
 
-// VerifySourceContentIdentity samples at most SourceContentIdentitySampleBytes
-// from each manifest file and returns a bounded source identity. It checks the
-// inventory's paths, sizes, and modification times before and after sampling,
-// but does not provide complete local-byte verification.
-func VerifySourceContentIdentity(
-	ctx context.Context,
-	manifest api.SourceManifest,
-	report SourceIdentityProgressReporter,
-) (api.SourceContentIdentity, error) {
-	return verifySourceContentIdentity(ctx, manifest, report, nil)
-}
-
+// verifySourceContentIdentity samples a freshly inspected manifest and
+// verifies that it still describes the source after all reads.
 func verifySourceContentIdentity(
 	ctx context.Context, manifest api.SourceManifest, report SourceIdentityProgressReporter, opened *os.File,
 ) (api.SourceContentIdentity, error) {
-	if ctx == nil {
-		return api.SourceContentIdentity{}, errors.New("prepared release: source identity context is required")
-	}
 	files, layout, total, err := sourceIdentityManifest(manifest)
 	if err != nil {
-		return api.SourceContentIdentity{}, err
-	}
-	if err := VerifySourceManifestStability(ctx, manifest); err != nil {
 		return api.SourceContentIdentity{}, err
 	}
 	if opened != nil && len(files) != 1 {
@@ -140,6 +124,7 @@ func verifySourceContentIdentity(
 	}
 
 	verified := make([]api.VerifiedSourceFile, 0, len(files))
+	buffer := make([]byte, 256*1024)
 	var completed int64
 	for _, file := range files {
 		if err := ctx.Err(); err != nil {
@@ -153,7 +138,7 @@ func verifySourceContentIdentity(
 			})
 		}
 		sampleBytes := min(file.size, api.SourceContentIdentitySampleBytes)
-		digest, bytesRead, err := hashSourceFileSample(ctx, file.localPath, sampleBytes, completed, total, report, opened)
+		digest, bytesRead, err := hashSourceFileSample(ctx, file.localPath, sampleBytes, completed, total, report, opened, buffer)
 		if err != nil {
 			return api.SourceContentIdentity{}, err
 		}
@@ -161,13 +146,7 @@ func verifySourceContentIdentity(
 			return api.SourceContentIdentity{}, fmt.Errorf("%w: file size changed while sampling %q", ErrSourceChanged, file.localPath)
 		}
 		completed += bytesRead
-		for index := range layout {
-			if layout[index].Path == file.relativePath &&
-				(layout[index].Type == api.SourceEntryTypeFile || layout[index].Type == api.SourceEntryTypePlaylist) {
-				layout[index].SampleSHA256 = digest
-				break
-			}
-		}
+		layout[file.layoutIndex].SampleSHA256 = digest
 		verified = append(verified, api.VerifiedSourceFile{
 			LocalPath:    file.localPath,
 			RelativePath: file.relativePath,
@@ -179,6 +158,12 @@ func verifySourceContentIdentity(
 		return api.SourceContentIdentity{}, err
 	}
 
+	sort.Slice(layout, func(left, right int) bool {
+		if layout[left].Path == layout[right].Path {
+			return layout[left].Type < layout[right].Type
+		}
+		return layout[left].Path < layout[right].Path
+	})
 	payload, err := json.Marshal(sourceContentIdentityPayload{
 		CanonicalPath:  canonicalSourceKey(manifest.SourcePath),
 		Classification: manifest.Classification,
@@ -195,29 +180,54 @@ func verifySourceContentIdentity(
 	}, nil
 }
 
+// VerifyInputManifestStability validates an input request before it reuses an
+// inventory captured under the same normalized source path.
+func VerifyInputManifestStability(ctx context.Context, input api.PrepareInput, verified api.VerifiedInputSource) error {
+	normalized, err := normalizePrepareInput(input)
+	if err != nil {
+		return err
+	}
+	if normalized.input.SourcePath != verified.Manifest.SourcePath {
+		return fmt.Errorf("%w: verified source path differs", ErrSourceChanged)
+	}
+	fingerprint, err := inspectStableSourceManifest(ctx, verified.Manifest)
+	if err != nil {
+		return err
+	}
+	if fingerprint != verified.Identity.ManifestFingerprint {
+		return fmt.Errorf("%w: verified source fingerprint differs", ErrSourceChanged)
+	}
+	return nil
+}
+
 // VerifySourceManifestStability rejects a source whose observed local state no
 // longer matches the manifest used to begin an operation.
 func VerifySourceManifestStability(ctx context.Context, manifest api.SourceManifest) error {
+	_, err := inspectStableSourceManifest(ctx, manifest)
+	return err
+}
+
+func inspectStableSourceManifest(ctx context.Context, manifest api.SourceManifest) (string, error) {
 	if ctx == nil {
-		return errors.New("prepared release: source stability context is required")
+		return "", errors.New("prepared release: source stability context is required")
 	}
 	if strings.TrimSpace(manifest.SourcePath) == "" {
-		return errors.New("prepared release: source identity manifest path is required")
+		return "", errors.New("prepared release: source identity manifest path is required")
 	}
 	layout, err := sourcelayout.Resolve(ctx, manifest.SourcePath)
 	if err != nil {
-		return fmt.Errorf("%w: resolve current source layout: %w", ErrSourceChanged, err)
+		return "", fmt.Errorf("%w: resolve current source layout: %w", ErrSourceChanged, err)
 	}
-	current, _, err := inspectSource(ctx, api.PrepareInput{SourcePath: manifest.SourcePath}, layout)
+	current, fingerprint, err := inspectSource(ctx, api.PrepareInput{SourcePath: manifest.SourcePath}, layout)
 	if err != nil {
-		return fmt.Errorf("%w: inspect current source: %w", ErrSourceChanged, err)
+		return "", fmt.Errorf("%w: inspect current source: %w", ErrSourceChanged, err)
 	}
 	if canonicalSourceKey(current.SourcePath) != canonicalSourceKey(manifest.SourcePath) ||
 		!reflect.DeepEqual(stableSourceManifestEntries(current.Entries), stableSourceManifestEntries(manifest.Entries)) ||
 		current.Classification != manifest.Classification {
-		return fmt.Errorf("%w: manifest inventory differs", ErrSourceChanged)
+		return "", fmt.Errorf("%w: manifest inventory differs", ErrSourceChanged)
 	}
-	return nil
+	return fingerprint, nil
 }
 
 func stableSourceManifestEntries(entries []api.SourceManifestEntry) []api.SourceManifestEntry {
@@ -283,6 +293,7 @@ type sourceIdentityFile struct {
 	localPath    string
 	relativePath string
 	size         int64
+	layoutIndex  int
 }
 
 type sourceContentIdentityPayload struct {
@@ -312,7 +323,7 @@ func sourceIdentityManifest(manifest api.SourceManifest) ([]sourceIdentityFile, 
 	}
 	files := make([]sourceIdentityFile, 0, len(manifest.Entries))
 	layout := make([]sourceContentIdentityEntry, 0, len(manifest.Entries))
-	fileByPath := make(map[string]int, len(manifest.Entries))
+	seenFiles := make(map[string]struct{}, len(manifest.Entries))
 	seenLayout := make(map[string]struct{}, len(manifest.Entries))
 	var total int64
 	for _, entry := range manifest.Entries {
@@ -346,25 +357,20 @@ func sourceIdentityManifest(manifest api.SourceManifest) ([]sourceIdentityFile, 
 		}
 		localPath := filepath.Clean(entry.Path)
 		key := canonicalSourceKey(localPath)
-		if _, exists := fileByPath[key]; exists {
+		if _, exists := seenFiles[key]; exists {
 			return nil, nil, 0, fmt.Errorf("prepared release: duplicate source identity file %q", localPath)
 		}
-		fileByPath[key] = len(files)
+		seenFiles[key] = struct{}{}
 		files = append(files, sourceIdentityFile{
 			localPath:    localPath,
 			relativePath: relativePath,
 			size:         entry.Size,
+			layoutIndex:  len(layout) - 1,
 		})
 		total += sampleBytes
 	}
 	sort.Slice(files, func(left, right int) bool {
 		return files[left].relativePath < files[right].relativePath
-	})
-	sort.Slice(layout, func(left, right int) bool {
-		if layout[left].Path == layout[right].Path {
-			return layout[left].Type < layout[right].Type
-		}
-		return layout[left].Path < layout[right].Path
 	})
 	return files, layout, total, nil
 }
@@ -398,6 +404,7 @@ func hashSourceFileSample(
 	total int64,
 	report SourceIdentityProgressReporter,
 	file *os.File,
+	buffer []byte,
 ) (string, int64, error) {
 	if file == nil {
 		var err error
@@ -409,7 +416,6 @@ func hashSourceFileSample(
 	}
 
 	hash := sha256.New()
-	buffer := make([]byte, 256*1024)
 	var bytesRead int64
 	for bytesRead < sampleBytes {
 		if err := ctx.Err(); err != nil {

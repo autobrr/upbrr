@@ -29,6 +29,8 @@ type ActiveInputSnapshot struct {
 type OpenActiveInputRequest struct {
 	ExpectedRevision uint64                         `json:"expectedRevision"`
 	Request          ContinueReleaseWorkflowRequest `json:"request"`
+	// ReuseVerifiedSource allows a metadata correction to reuse matching active verification.
+	ReuseVerifiedSource bool `json:"reuseVerifiedSource,omitempty"`
 }
 
 // CancelActiveInputOpenRequest targets one caller-owned open before operation

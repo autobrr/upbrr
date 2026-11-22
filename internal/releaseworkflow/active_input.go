@@ -14,6 +14,7 @@ import (
 	"github.com/autobrr/upbrr/internal/logging"
 
 	"github.com/autobrr/upbrr/internal/pathing"
+	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -38,6 +39,7 @@ type OpenInputRequest struct {
 	ExpectedRevision    uint64
 	Input               api.PrepareInput
 	CorrectionPatch     *api.ReleaseCorrectionPatch
+	ReuseVerifiedSource bool
 	IdempotencyKey      string
 	TrackerDecisionMode TrackerDecisionMode
 	Composite           *compositeUploadSession
@@ -285,7 +287,8 @@ func (m *Module) ResetIdleInputOnStartup(ctx context.Context) (resetErr error) {
 	return nil
 }
 
-// OpenInput verifies each explicit new open request under a renewable reservation.
+// OpenInput verifies explicit opens under a renewable reservation. A metadata
+// edit can reuse the current input's verification if its inventory still matches.
 // A repeated idempotency key returns the already committed result without repeating work.
 // Canceled admission retains the prior worker's authority until its cleanup finishes.
 func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputRequest) (api.ActiveInputRecord, error) {
@@ -305,10 +308,16 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		fingerprintInput.ExternalFreshness = api.ExternalFreshnessReuse
 	}
 	fingerprint, err := canonicalCommandFingerprint(struct {
-		Input           api.PrepareInput
-		CorrectionPatch *api.ReleaseCorrectionPatch `json:",omitempty"`
-		Request         api.WorkflowFingerprint
-	}{fingerprintInput, request.CorrectionPatch, request.RequestFingerprint})
+		Input               api.PrepareInput
+		CorrectionPatch     *api.ReleaseCorrectionPatch `json:",omitempty"`
+		Request             api.WorkflowFingerprint
+		ReuseVerifiedSource bool `json:",omitempty"`
+	}{
+		Input:               fingerprintInput,
+		CorrectionPatch:     request.CorrectionPatch,
+		Request:             request.RequestFingerprint,
+		ReuseVerifiedSource: request.ReuseVerifiedSource,
+	})
 	if err != nil {
 		return api.ActiveInputRecord{}, err
 	}
@@ -318,7 +327,9 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 	}
 	admissionRevision := prior.Revision
 	logging.FromContext(ctx, m.logger).Debugf("active input: open admission decision=check state=%s revision=%d", prior.State, prior.Revision)
-	if prior.State != api.ActiveInputEmpty && !prior.LeaseExpiresAt.After(m.clock.Now()) {
+	leaseLive := prior.LeaseExpiresAt.After(m.clock.Now())
+	reuseVerification := request.ReuseVerifiedSource && leaseLive && prior.State == api.ActiveInputActive && m.OwnsActiveInput(prior)
+	if prior.State != api.ActiveInputEmpty && !leaseLive {
 		foreignOwner := prior.OwnerID != owner
 		prior, err = m.recoverActiveInput(ctx, prior, owner, false)
 		if err != nil {
@@ -443,9 +454,19 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 	if err := m.reconcileReusableMedia(ctx, owner, prior.WorkflowID); err != nil {
 		return api.ActiveInputRecord{}, err
 	}
-	record, err := m.inputVerifier(ctx, request.Input)
-	if err != nil {
-		return api.ActiveInputRecord{}, fmt.Errorf("release workflow verify input: %w", err)
+	record := api.InputRecord{}
+	if reuseVerification {
+		record = m.reusableInputVerification(ctx, prior, request)
+	}
+	if record.ID == "" {
+		record, err = m.inputVerifier(ctx, request.Input)
+		if err != nil {
+			return api.ActiveInputRecord{}, fmt.Errorf("release workflow verify input: %w", err)
+		}
+	} else {
+		api.EmitPreparationProgress(ctx, api.NewPreparationProgressUpdate(
+			api.PreparationPhaseSourceInspection, api.PreparationProgressCompleted, "Verified source inventory. Reused content samples.",
+		))
 	}
 	// Verification may resolve a different canonical path than the requested alias.
 	if err := m.requireInputSourceReconciled(ctx, owner, record.CanonicalPath); err != nil {
@@ -666,6 +687,30 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 	}
 	committed = true
 	return active, nil
+}
+
+// reusableInputVerification keeps sampled evidence for an in-place correction
+// while the committed source inventory still matches. Explicit opens and
+// confirmation of content-bound corrections run fresh verification.
+func (m *Module) reusableInputVerification(ctx context.Context, prior api.ActiveInputRecord, request OpenInputRequest) api.InputRecord {
+	patch := request.CorrectionPatch
+	if patch == nil || len(patch.ConfirmFields) != 0 || request.Composite != nil ||
+		!ordinaryMetadataRefresh(request.Input) || request.Input.Controls.BlurayDetails != nil {
+		return api.InputRecord{}
+	}
+	record, err := m.activeInputs.LoadInputRecord(ctx, preparedrelease.CanonicalSourceKey(request.Input.SourcePath))
+	if err != nil || record.ID != prior.InputID || record.SourceVersion != prior.SourceVersion {
+		return api.InputRecord{}
+	}
+	var verified api.VerifiedInputSource
+	if err := json.Unmarshal(record.Manifest, &verified); err != nil ||
+		verified.Identity.Version != api.SourceContentIdentityVersion || verified.Identity.Digest != record.SourceVersion {
+		return api.InputRecord{}
+	}
+	if err := preparedrelease.VerifyInputManifestStability(ctx, request.Input, verified); err != nil {
+		return api.InputRecord{}
+	}
+	return record
 }
 
 // ordinaryMetadataRefresh excludes explicit collection and evidence renewal.

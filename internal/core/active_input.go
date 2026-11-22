@@ -229,10 +229,11 @@ func (c *Core) OpenActiveInput(ctx context.Context, owner string, request api.Op
 	slot, err := func() (api.ActiveInputRecord, error) {
 		defer func() { verificationErr = finishVerification() }()
 		return c.workflow.OpenInput(verificationCtx, owner, releaseworkflow.OpenInputRequest{
-			ExpectedRevision: request.ExpectedRevision,
-			Input:            *request.Request.Intent.Preparation,
-			CorrectionPatch:  request.Request.Intent.CorrectionPatch,
-			IdempotencyKey:   request.Request.IdempotencyKey,
+			ExpectedRevision:    request.ExpectedRevision,
+			Input:               *request.Request.Intent.Preparation,
+			CorrectionPatch:     request.Request.Intent.CorrectionPatch,
+			IdempotencyKey:      request.Request.IdempotencyKey,
+			ReuseVerifiedSource: request.ReuseVerifiedSource,
 		})
 	}()
 	if err != nil {
