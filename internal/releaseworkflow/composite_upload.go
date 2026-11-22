@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/comparisons"
 	"github.com/autobrr/upbrr/internal/logging"
 
 	"github.com/autobrr/upbrr/internal/pathing"
@@ -58,8 +59,10 @@ type compositeUploadSession struct {
 }
 
 type compositeUploadManualMedia struct {
-	Attachments []api.MediaAttachment `json:"attachments,omitempty"`
-	Attached    bool                  `json:"attached,omitempty"`
+	Attachments           []api.MediaAttachment       `json:"attachments,omitempty"`
+	Attached              bool                        `json:"attached,omitempty"`
+	Comparisons           *api.ComparisonInstructions `json:"comparisons,omitempty"`
+	ComparisonsConfigured bool                        `json:"comparisonsConfigured,omitempty"`
 }
 
 type compositeUploadFeedbackReceipt struct {
@@ -140,18 +143,19 @@ func (c applyCompositeUploadFeedbackCommand) commandFingerprint() (api.WorkflowF
 }
 
 type compositeUploadFeedbackResponse struct {
-	Kind              api.ReleaseWorkflowUploadFeedbackKind
-	SelectedValues    []string
-	Confirmed         bool
-	UseAll            bool
-	TrackerID         api.TrackerID
-	Projection        *api.ReleaseWorkflowUploadTrackerProjection
-	Questionnaire     map[string]*string
-	DuplicateDecision api.DupeDecision
-	TrackerIDs        []api.TrackerID
-	Facts             *api.ReleaseWorkflowUploadFacts
-	Preparation       *api.ReleaseWorkflowUploadPreparation
-	Reconciliation    string
+	Kind                api.ReleaseWorkflowUploadFeedbackKind
+	SelectedValues      []string
+	Confirmed           bool
+	UseAll              bool
+	TrackerID           api.TrackerID
+	Projection          *api.ReleaseWorkflowUploadTrackerProjection
+	Questionnaire       map[string]*string
+	DuplicateDecision   api.DupeDecision
+	TrackerIDs          []api.TrackerID
+	Facts               *api.ReleaseWorkflowUploadFacts
+	Preparation         *api.ReleaseWorkflowUploadPreparation
+	Reconciliation      string
+	ExpectedFingerprint api.WorkflowFingerprint
 }
 
 // StartUpload validates and normalizes one owner-scoped request, idempotently
@@ -416,6 +420,9 @@ func normalizeCompositeUploadRequest(
 	if request.Execution.PreparedRelease == api.ReleaseWorkflowPreparedReleaseRequire {
 		prepareInput.RequirePrepared = true
 	}
+	if request.Torrent.InfoHash != nil {
+		prepareInput.Search.InfoHash = *request.Torrent.InfoHash
+	}
 	projections := compositeUploadProjectionInstructions(request.Trackers.Projection)
 	trackerIDs := normalizeCompositeTrackerIDs(request.Trackers.Include)
 	if len(trackerIDs) > 0 {
@@ -524,10 +531,15 @@ func (m *Module) ensureCompositeUploadMediaInputs(
 	if state.Composite == nil {
 		return fmt.Errorf("%w: composite upload session is unavailable", ErrInvalidTransition)
 	}
-	if len(state.Composite.ManualMedia.Attachments) > 0 {
+	if err := rejectLegacyCompositeComparisons(state.Composite); err != nil {
+		return err
+	}
+	if len(state.Composite.ManualMedia.Attachments) > 0 || state.Composite.ManualMedia.Comparisons != nil {
 		return nil
 	}
 	attachments := make([]api.MediaAttachment, 0, len(inputs.Comparisons)+len(inputs.DVDMenus))
+	var imported *api.ComparisonInstructions
+	var comparisonImages []comparisons.ImportedImage
 	stage := func(content StagedMediaContent, kind api.MediaArtifactKind, purpose api.ScreenshotPurpose) error {
 		resource, stageErr := m.StageMediaResource(ctx, ownerID, workflowID, expectedRevision, content)
 		if stageErr != nil {
@@ -542,9 +554,30 @@ func (m *Module) ensureCompositeUploadMediaInputs(
 		return nil
 	}
 	for _, content := range inputs.Comparisons {
-		if err := stage(content, api.MediaArtifactScreenshot, api.ScreenshotPurposeFinal); err != nil {
+		if err := stage(content, api.MediaArtifactComparison, api.ScreenshotPurposeComparison); err != nil {
 			return fmt.Errorf("release workflow stage comparison image: %w", err)
 		}
+		comparisonImages = append(comparisonImages, comparisons.ImportedImage{
+			ID:    string(attachments[len(attachments)-1].Resource.ID),
+			Name:  content.Name,
+			Bytes: content.Bytes,
+		})
+	}
+	if requiresComparisons {
+		if request.Media.Screenshots.ComparisonPrimaryIndex == nil {
+			return errors.New("comparison import requires the main source group number before starting upload")
+		}
+		plan, problems := comparisons.Import(comparisonImages, strconv.Itoa(*request.Media.Screenshots.ComparisonPrimaryIndex))
+		if len(problems) > 0 {
+			return fmt.Errorf("comparison row %q source %q: %s", problems[0].RowID, problems[0].SourceID, problems[0].Message)
+		}
+		plan.ReuseMainScreenshots = request.Media.Screenshots.ComparisonReuseMain
+		imported = &api.ComparisonInstructions{
+			Action:      "configure",
+			Plan:        plan,
+			Attachments: attachments,
+		}
+		attachments = nil
 	}
 	for _, content := range inputs.DVDMenus {
 		if err := stage(content, api.MediaArtifactDVDMenu, api.ScreenshotPurposeMenu); err != nil {
@@ -561,8 +594,9 @@ func (m *Module) ensureCompositeUploadMediaInputs(
 	if state.Workflow.Revision != expectedRevision || state.Composite == nil {
 		return ErrRevisionConflict
 	}
-	if len(state.Composite.ManualMedia.Attachments) == 0 {
+	if len(state.Composite.ManualMedia.Attachments) == 0 && state.Composite.ManualMedia.Comparisons == nil {
 		state.Composite.ManualMedia.Attachments = attachments
+		state.Composite.ManualMedia.Comparisons = imported
 		if err := m.saveCompositeMetadata(ctx, ownerID, &state); err != nil {
 			return fmt.Errorf("release workflow retain staged upload media: %w", err)
 		}
@@ -889,6 +923,9 @@ func (m *Module) checkpointCompositeStage(
 	if _, attached := command.(AttachMediaArtifactsCommand); attached {
 		state.Composite.ManualMedia.Attached = true
 	}
+	if comparison, configured := command.(EditComparisonsCommand); configured && comparison.Instructions.Action == "configure" {
+		state.Composite.ManualMedia.ComparisonsConfigured = true
+	}
 }
 
 func clearStaleCompositeApproval(
@@ -1002,6 +1039,27 @@ func (m *Module) runCompositeUpload(
 		if err != nil {
 			return CommandResult{}, err
 		}
+		intent := compositeContinuationIntent(initial, session)
+		intent.TrackerIDs = workflowTrackerScope(state, intent.TrackerIDs)
+		request := api.ContinueReleaseWorkflowRequest{
+			Authority: &api.WorkflowAuthority{
+				WorkflowID:       current.Workflow.ID,
+				ExpectedRevision: current.Workflow.Revision,
+			},
+			IdempotencyKey: compositeUploadOperationKey(string(session.RequestFingerprint), uint64(current.Workflow.Revision)),
+			Goal:           session.Goal,
+			Intent:         intent,
+		}
+		if !compositeUploadAllTrackersRemoved(current, session) {
+			if refresh, refreshErr := m.planCatalogRefresh(request, current, m.clock.Now().UTC()); refreshErr != nil {
+				return CommandResult{}, refreshErr
+			} else if refresh != nil {
+				if _, err := m.execute(ctx, ownerID, refresh); err != nil {
+					return CommandResult{}, fmt.Errorf("release workflow composite refresh projection catalog: %w", err)
+				}
+				continue
+			}
+		}
 		if compositeUploadGoalReached(current, session, command.ExpectedRevision) {
 			if err := m.finishCompositeSession(ctx, ownerID, command.WorkflowID, operationID, "goal_reached"); err != nil {
 				return CommandResult{}, err
@@ -1009,6 +1067,7 @@ func (m *Module) runCompositeUpload(
 			return m.Current(ctx, ownerID, command.WorkflowID)
 		}
 		if session.Goal == api.WorkflowGoalUploaded && current.DryRun != nil &&
+			!duplicateSearchModeChanged(current.Dupes, session.Intent.SkipRemoteDuplicates) &&
 			current.DryRun.Revision > command.ExpectedRevision && current.DryRun.Status == api.StageStatusFailed &&
 			dryRunMatchesIntent(current.DryRun, session.Intent.NoSeed, session.Intent.UploadTrackerIDs) {
 			if err := m.finishCompositeSession(ctx, ownerID, command.WorkflowID, operationID, "dry_run_failed"); err != nil {
@@ -1033,17 +1092,6 @@ func (m *Module) runCompositeUpload(
 			}, errors.New("release workflow composite upload has no remaining trackers"))
 		}
 
-		intent := compositeContinuationIntent(initial, session)
-		intent.TrackerIDs = workflowTrackerScope(state, intent.TrackerIDs)
-		request := api.ContinueReleaseWorkflowRequest{
-			Authority: &api.WorkflowAuthority{
-				WorkflowID:       current.Workflow.ID,
-				ExpectedRevision: current.Workflow.Revision,
-			},
-			IdempotencyKey: compositeUploadOperationKey(string(session.RequestFingerprint), uint64(current.Workflow.Revision)),
-			Goal:           session.Goal,
-			Intent:         intent,
-		}
 		_, recovered, plannerTransition, recoveryErr := m.recoverPersistedMediaForContinuation(
 			ctx,
 			ownerID,
@@ -1065,6 +1113,19 @@ func (m *Module) runCompositeUpload(
 		if changed, updateErr := m.applyCompositeAutomaticPolicy(ctx, ownerID, current, session, operationID); updateErr != nil {
 			return CommandResult{}, updateErr
 		} else if changed {
+			continue
+		}
+		if !plannerTransition && current.Projections != nil && current.Dupes != nil && dupesAllowContinuation(current.Projections, current.Dupes) &&
+			session.ManualMedia.Comparisons != nil && !session.ManualMedia.ComparisonsConfigured {
+			if _, err := m.execute(ctx, ownerID, EditComparisonsCommand{
+				WorkflowID:       current.Workflow.ID,
+				ExpectedRevision: current.Workflow.Revision,
+				Media:            current.Workflow.Media,
+				Instructions:     *session.ManualMedia.Comparisons,
+				IdempotencyKey:   compositeUploadOperationKey(string(session.RequestFingerprint)+":import-comparisons", uint64(current.Workflow.Revision)),
+			}); err != nil {
+				return CommandResult{}, fmt.Errorf("release workflow import comparisons: %w", err)
+			}
 			continue
 		}
 		if !plannerTransition && current.Media != nil && len(session.ManualMedia.Attachments) > 0 && !session.ManualMedia.Attached {
@@ -1317,6 +1378,9 @@ func (m *Module) currentCompositeUpload(
 		state.Composite.ActiveOperationID != operationID {
 		return CommandResult{}, nil, nil, fmt.Errorf("%w: composite upload session failed integrity validation", ErrInvalidTransition)
 	}
+	if err := rejectLegacyCompositeComparisons(state.Composite); err != nil {
+		return CommandResult{}, nil, nil, err
+	}
 	return current, state.Composite, &state, nil
 }
 
@@ -1324,6 +1388,9 @@ func compositeUploadGoalReached(current CommandResult, session *compositeUploadS
 	if current.Workflow.AllSelectedTrackersAlreadyUploaded() &&
 		len(withoutConfirmedSubmissions(session.Intent.TrackerIDs, current.Workflow.SubmissionExclusions)) == 0 {
 		return true
+	}
+	if duplicateSearchModeChanged(current.Dupes, session.Intent.SkipRemoteDuplicates) {
+		return false
 	}
 	switch session.Goal {
 	case api.WorkflowGoalDryRun:
@@ -1367,6 +1434,29 @@ func compositeUploadPendingAction(
 		if action.Status != api.RequiredActionStatusPending {
 			continue
 		}
+		if action.Kind == api.RequiredActionProvideTrackerInput && action.TrackerID == "" &&
+			continuationIntentResolvesAction(session.Intent, current, *action) &&
+			!continuationMediaCaptureSatisfied(current, session.Intent.Media) {
+			continue
+		}
+		if (action.Kind == api.RequiredActionReviewDuplicates || action.Kind == api.RequiredActionApproveTrackers) &&
+			duplicateSearchModeChanged(current.Dupes, session.Intent.SkipRemoteDuplicates) {
+			continue
+		}
+		if action.Kind == api.RequiredActionApproveTrackers && session.Intent.ExecutionMode == api.WorkflowExecutionModeDebug &&
+			current.Dupes != nil && slices.ContainsFunc(current.Dupes.Results, func(result api.TrackerDupeAssessment) bool {
+			if strictDupeResult(result) {
+				return false
+			}
+			decision, decided := session.Intent.DuplicateDecisions[result.TrackerID]
+			if decided {
+				return decision != result.Decision
+			}
+			return result.Decision == api.DupeDecisionAccepted && session.DuplicateDisposition != api.ReleaseWorkflowDuplicateBlock
+		}) {
+			// Finish duplicate choices before binding the explicit preparation subset.
+			continue
+		}
 		if strictDuplicateForTracker(current.Dupes, action.TrackerID) {
 			continue
 		}
@@ -1385,7 +1475,8 @@ func compositeUploadPendingAction(
 			}
 			if decided {
 				// An ignored intent cannot replace a confirmation for the current assessment.
-				requiresConfirmation := decision == api.DupeDecisionIgnored && current.Dupes != nil &&
+				requiresConfirmation := session.Intent.ExecutionMode != api.WorkflowExecutionModeDebug &&
+					decision == api.DupeDecisionIgnored && current.Dupes != nil &&
 					session.Intent.StaffTokenConfirmations[action.TrackerID] != current.Dupes.ID &&
 					slices.ContainsFunc(current.Dupes.Results, func(result api.TrackerDupeAssessment) bool {
 						return result.TrackerID == action.TrackerID && result.RequiresStaffToken && !result.StaffTokenConfirmed
@@ -1474,7 +1565,7 @@ func (m *Module) applyCompositeAutomaticPolicy(
 		}
 		return true, nil
 	}
-	if current.Dupes == nil {
+	if current.Dupes == nil || duplicateSearchModeChanged(current.Dupes, session.Intent.SkipRemoteDuplicates) {
 		return false, nil
 	}
 	decisions := make(map[api.TrackerID]api.DupeDecision)
@@ -1497,7 +1588,7 @@ func (m *Module) applyCompositeAutomaticPolicy(
 		}
 		switch onEvidence {
 		case api.ReleaseWorkflowDuplicateUpload:
-			if result.RequiresStaffToken {
+			if result.RequiresStaffToken && session.Intent.ExecutionMode != api.WorkflowExecutionModeDebug {
 				continue
 			}
 			decisions[result.TrackerID] = api.DupeDecisionIgnored
@@ -1968,6 +2059,8 @@ func compositeUploadFeedbackActionKind(kind api.ReleaseWorkflowUploadFeedbackKin
 		return api.RequiredActionReviewDuplicates
 	case api.ReleaseWorkflowUploadFeedbackTrackerApproval:
 		return api.RequiredActionApproveTrackers
+	case api.ReleaseWorkflowUploadFeedbackComparisonApproval:
+		return api.RequiredActionReviewComparisons
 	case api.ReleaseWorkflowUploadFeedbackUploadApproval: //nolint:staticcheck // Map retained v1 feedback for explicit rejection.
 		return api.RequiredActionApproveUpload //nolint:staticcheck // Retained v1 action mapping.
 	case api.ReleaseWorkflowUploadFeedbackReprepare:
@@ -2010,6 +2103,9 @@ func normalizedCompositeFeedback(feedback api.ReleaseWorkflowUploadFeedback) com
 	case api.ReleaseWorkflowUploadFeedbackTrackerApproval:
 		response.Confirmed = feedback.Response.TrackerApproval.Confirmed
 		response.TrackerIDs = normalizeContinuationTrackerIDs(feedback.Response.TrackerApproval.TrackerIDs)
+	case api.ReleaseWorkflowUploadFeedbackComparisonApproval:
+		response.Confirmed = feedback.Response.ComparisonApproval.Confirmed
+		response.ExpectedFingerprint = feedback.Response.ComparisonApproval.ExpectedFingerprint
 	case api.ReleaseWorkflowUploadFeedbackUploadApproval: //nolint:staticcheck // Normalize retained v1 feedback before explicit rejection.
 		response.Confirmed = feedback.Response.UploadApproval.Confirmed //nolint:staticcheck // Retained v1 decoding compatibility.
 		response.TrackerIDs = normalizeContinuationTrackerIDs(
@@ -2226,6 +2322,22 @@ func (m *Module) applyCompositeUploadFeedback(
 		resolvedByCommand = true
 	}
 	switch command.Response.Kind {
+	case api.ReleaseWorkflowUploadFeedbackComparisonApproval:
+		if !command.Response.Confirmed || state.Workflow.Media == nil {
+			return CommandResult{}, fmt.Errorf("%w: comparison approval requires retained media and explicit confirmation", ErrInvalidTransition)
+		}
+		approved, err := m.editComparisons(ctx, ownerID, state, nextRevision, now, EditComparisonsCommand{
+			WorkflowID:       command.WorkflowID,
+			ExpectedRevision: command.ExpectedRevision,
+			Media:            state.Workflow.Media,
+			Instructions:     api.ComparisonInstructions{Action: "approve", ExpectedFingerprint: command.Response.ExpectedFingerprint},
+			IdempotencyKey:   command.IdempotencyKey,
+		})
+		if err != nil {
+			return CommandResult{}, err
+		}
+		result = approved
+		resolvedByCommand = true
 	case api.ReleaseWorkflowUploadFeedbackPlaylistSelection:
 		if state.Composite.Intent.Preparation == nil {
 			return CommandResult{}, fmt.Errorf("%w: preparation intent is unavailable", ErrInvalidTransition)

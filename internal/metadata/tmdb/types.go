@@ -157,17 +157,19 @@ type MetadataResult struct {
 	ExternalTVDBID   int
 	OriginCountry    []string
 	OriginalLanguage string
-	OriginalTitle    string
-	Keywords         string
-	Genres           string
-	GenreIDs         string
-	Creators         []string
-	Directors        []string
-	Cast             []string
-	MALID            int
-	Anime            bool
-	Demographic      string
-	RetrievedAKA     string
+	// SpokenLanguages retains normalized identified dialogue-language codes as a set.
+	SpokenLanguages []string
+	OriginalTitle   string
+	Keywords        string
+	Genres          string
+	GenreIDs        string
+	Creators        []string
+	Directors       []string
+	Cast            []string
+	MALID           int
+	Anime           bool
+	Demographic     string
+	RetrievedAKA    string
 	// LocalizedTitles maps generic language keys and regional variants to TMDB translations.
 	LocalizedTitles     map[string]string
 	Poster              string

@@ -71,6 +71,16 @@ func TestReleaseWorkflowUploadRequestValidation(t *testing.T) {
 		Trackers:       ReleaseWorkflowUploadTrackers{Include: []TrackerID{"EXAMPLE"}},
 		IdempotencyKey: "upload-1",
 	}
+	group := 2
+	withComparisons := valid
+	withComparisons.Media.Screenshots = ReleaseWorkflowUploadScreenshots{
+		ComparisonPaths:        []string{"comparisons"},
+		ComparisonPrimaryIndex: &group,
+		ComparisonReuseMain:    true,
+	}
+	if err := withComparisons.Validate(); err != nil {
+		t.Fatalf("source group from one folder was treated as path index: %v", err)
+	}
 	tests := []struct {
 		name   string
 		mutate func(*CreateReleaseWorkflowUploadRequest)
@@ -83,7 +93,7 @@ func TestReleaseWorkflowUploadRequestValidation(t *testing.T) {
 			request.Trackers.Remove = []TrackerID{"ALPHA"}
 		}},
 		{"bad comparison index", func(request *CreateReleaseWorkflowUploadRequest) {
-			index := 2
+			index := 0
 			request.Media.Screenshots.ComparisonPaths = []string{`D:\comparisons`}
 			request.Media.Screenshots.ComparisonPrimaryIndex = &index
 		}},
@@ -117,6 +127,27 @@ func TestReleaseWorkflowUploadRequestValidation(t *testing.T) {
 	inherited.Trackers.Include = nil
 	if err := inherited.Validate(); err != nil {
 		t.Fatalf("upload request inheriting default trackers: %v", err)
+	}
+}
+
+func TestReleaseWorkflowComparisonApprovalBindsReviewedFingerprint(t *testing.T) {
+	feedback := ReleaseWorkflowUploadFeedback{
+		Action: ReleaseWorkflowUploadActionIdentity{ID: "review", WorkflowRevision: 3},
+		Response: ReleaseWorkflowUploadFeedbackResponse{Kind: ReleaseWorkflowUploadFeedbackComparisonApproval,
+			ComparisonApproval: &ReleaseWorkflowUploadComparisonApproval{Confirmed: true, ExpectedFingerprint: "retained-comparison"}},
+		IdempotencyKey: "review-comparison",
+	}
+	if err := feedback.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	feedback.Response.ComparisonApproval.ExpectedFingerprint = ""
+	if err := feedback.Validate(); err == nil {
+		t.Fatal("comparison approval lacked retained image authority")
+	}
+	feedback.Response.ComparisonApproval.ExpectedFingerprint = "retained-comparison"
+	feedback.Response.ComparisonApproval.Confirmed = false
+	if err := feedback.Validate(); err == nil {
+		t.Fatal("comparison images were implicitly approved")
 	}
 }
 

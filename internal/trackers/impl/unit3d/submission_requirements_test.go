@@ -4,10 +4,16 @@
 package unit3d
 
 import (
+	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -72,13 +78,151 @@ func TestFinalDescriptionValidationRunsAfterAppendix(t *testing.T) {
 	if err := applySubmissionRequirements(trackers.PreparationInput{ExecutionMode: api.WorkflowExecutionModeDebug}, data, profile); err != nil {
 		t.Fatal(err)
 	}
-	if calls != 1 {
-		t.Fatal("debug preparation invoked live-only description gate")
+	if calls != 2 {
+		t.Fatal("debug preparation skipped final description validation")
 	}
 	want := errors.New("missing final assets")
 	profile.SubmissionRequirements = nil
 	profile.ValidateFinalDescription = func(api.UploadSubject, string, string, string) error { return want }
-	if err := applySubmissionRequirements(trackers.PreparationInput{}, data, profile); !errors.Is(err, want) {
-		t.Fatalf("final validation error=%v", err)
+	for _, mode := range []api.WorkflowExecutionMode{api.WorkflowExecutionModeNormal, api.WorkflowExecutionModeDebug} {
+		if err := applySubmissionRequirements(trackers.PreparationInput{ExecutionMode: mode}, data, profile); !errors.Is(err, want) || !errors.Is(err, errFinalDescriptionRequirements) {
+			t.Fatalf("final validation mode=%s error=%v", mode, err)
+		}
+	}
+}
+
+func TestDebugFinalDescriptionFailureRetainsPayload(t *testing.T) {
+	input := diagnosticUploadTestInput(t)
+	want := errors.New("missing final assets")
+	profile := SiteProfile{ValidateFinalDescription: func(api.UploadSubject, string, string, string) error { return want }}
+	if _, err := buildUploadDryRunUnit3D(t.Context(), input, "https://tracker.example.invalid", profile); !errors.Is(err, want) {
+		t.Fatalf("normal description validation = %v", err)
+	}
+	input.ExecutionMode = api.WorkflowExecutionModeDebug
+	preview, err := buildUploadDryRunUnit3D(t.Context(), input, "https://tracker.example.invalid", profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Status != "blocked" || !strings.Contains(preview.Message, want.Error()) || preview.Payload["description"] != "description" || len(preview.Files) != 1 {
+		t.Fatal("debug lost final payload or its blocked validation outcome")
+	}
+	definition := NewWithProfile(Profile{
+		Name:    "EXAMPLE",
+		BaseURL: "https://tracker.example.invalid",
+		Site:    profile,
+		ReleaseNamePolicy: trackers.SubjectReleaseNamePolicy("example/v1", func(api.UploadSubject, config.TrackerConfig) string {
+			return "Example.Release.2026.1080p.WEB-DL-GRP"
+		}),
+	})
+	input.Projection = nil
+	input.Intent = trackers.PreparationIntentUpload
+	input, nameFailure := trackers.PrepareInputWithReleaseNamePolicy(input, definition.ReleaseNamePolicy())
+	if nameFailure != nil {
+		t.Fatal(nameFailure)
+	}
+	input.Projection.Readiness = api.ReadinessStatusBlocked
+	input.Projection.UploadReady = false
+	input.Projection.DiagnosticReady = true
+	plan, failure := definition.Prepare(t.Context(), input)
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	prepared := plan.DryRun()
+	if prepared.Status != "blocked" || !strings.Contains(prepared.Message, want.Error()) || prepared.Payload["description"] != "description" {
+		t.Fatal("definition preparation lost diagnostic payload")
+	}
+	if _, err := plan.Submit(t.Context()); !errors.Is(err, trackers.ErrPlanNotSubmittable) || submission.OutcomeOf(err) != submission.NotSent {
+		t.Fatal("debug definition permitted a tracker submission")
+	}
+}
+
+func diagnosticUploadTestInput(t *testing.T) trackers.PreparationInput {
+	t.Helper()
+	mediaPath := filepath.Join(t.TempDir(), "mediainfo.txt")
+	if err := os.WriteFile(mediaPath, []byte("General\nFormat: Matroska"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	input := trackers.PreparationInput{
+		Tracker:       "EXAMPLE",
+		TrackerConfig: config.TrackerConfig{APIKey: "test-key"},
+		Projection: &api.TrackerReleaseProjection{
+			TrackerID:         "EXAMPLE",
+			UploadReleaseName: "Example.Release.2026.1080p.WEB-DL-GRP",
+			Readiness:         api.ReadinessStatusReady,
+			UploadReady:       true,
+			DiagnosticReady:   true,
+		},
+		Meta: api.UploadSubject{
+			TorrentPath:       filepath.Join(t.TempDir(), "example.torrent"),
+			MediaInfoTextPath: mediaPath,
+			Identity:          api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 1234567},
+			Type:              "WEBDL",
+			Release:           api.ReleaseInfo{Resolution: "1080p"},
+			Assessments:       api.ReleaseAssessments{MediaInfoEncodeSettings: api.EncodeSettingsStatusPresent},
+		},
+		Assets: &trackers.DescriptionAssets{Description: "description", Final: true},
+	}
+	if err := os.WriteFile(input.Meta.TorrentPath, []byte("synthetic torrent"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return input
+}
+
+type disappearingAttachmentLogger struct {
+	api.NopLogger
+	t     *testing.T
+	field string
+	path  string
+}
+
+func (l disappearingAttachmentLogger) Debugf(format string, _ ...any) {
+	if strings.Contains(format, "attaching "+l.field+" file") {
+		if err := os.Remove(l.path); err != nil {
+			l.t.Fatal(err)
+		}
+	}
+}
+
+func TestDebugUploadChecksAttachmentReads(t *testing.T) {
+	for _, field := range []string{"torrent", "NFO"} {
+		for _, mode := range []api.WorkflowExecutionMode{api.WorkflowExecutionModeNormal, api.WorkflowExecutionModeDebug} {
+			t.Run(field+"/"+string(mode), func(t *testing.T) {
+				input := diagnosticUploadTestInput(t)
+				input.Intent = trackers.PreparationIntentUpload
+				input.ExecutionMode = mode
+				path := input.Meta.TorrentPath
+				if field == "NFO" {
+					path = filepath.Join(t.TempDir(), "example.nfo")
+					if err := os.WriteFile(path, []byte("synthetic NFO"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+					input.Meta.SceneNFOPath = path
+				}
+				input.Logger = disappearingAttachmentLogger{
+t: t,
+ field: field,
+ path: path,
+}
+				plan, failure := trackers.PrepareAdapter(t.Context(), input, nil, func(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
+					return prepareUnit3DUpload(ctx, req, "https://tracker.example.invalid")
+				})
+				if mode == api.WorkflowExecutionModeNormal {
+					if failure == nil {
+						t.Fatal("normal preparation ignored unreadable attachment")
+					}
+					return
+				}
+				if failure != nil {
+					t.Fatal(failure)
+				}
+				preview := plan.DryRun()
+				if preview.Status != "blocked" || !strings.Contains(preview.Message, "open multipart file") || preview.Payload["description"] != "description" {
+					t.Fatalf("diagnostic preview: %+v", preview)
+				}
+				if _, err := plan.Submit(t.Context()); !errors.Is(err, trackers.ErrPlanNotSubmittable) {
+					t.Fatalf("debug submission: %v", err)
+				}
+			})
+		}
 	}
 }

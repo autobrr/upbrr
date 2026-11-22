@@ -32,6 +32,8 @@ When tone mapping is applied, the overlay identifies the source format from insp
 | **Software tone-mapping algorithm** | `mobius` | Selects the software FFmpeg tone-map algorithm.                                            |
 | **Software highlight desaturation** | `10.0`   | Passes the desaturation value to the software tone-map filter.                             |
 
+An empty software tone-mapping algorithm resolves to `mobius`. The libplacebo renderer uses `hable` instead and does not use the software algorithm or desaturation setting.
+
 **Cutoff screens** remains in the schema but has no current runtime reader.
 
 For Dolby Vision Profile 5 inputs, enable **Tone map HDR screenshots** and **Use Vulkan/libplacebo tone mapping**, including when **Show frame information on captures** is enabled. Profile 5 needs Dolby Vision-aware processing to avoid green/purple screenshots. This requires a compatible FFmpeg build and Vulkan setup; Profile 5 skips software tone mapping because its base layer is incompatible; a last-resort non-tonemapped image is visibly marked as degraded, and its colours may be inaccurate. HDR-compatible Dolby Vision and HDR10 sources can use the configured software path. See the [FFmpeg libplacebo documentation](https://ffmpeg.org/ffmpeg-filters.html#libplacebo).

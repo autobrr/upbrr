@@ -202,25 +202,6 @@ function ClientSetupHarness() {
   );
 }
 
-function TorrentCreationHarness() {
-  const state = useSettingsState({ activeTab: "settings" });
-  const torrentCreation = state.settingsConfigData?.TorrentCreation;
-
-  if (!torrentCreation || typeof torrentCreation !== "object" || Array.isArray(torrentCreation)) {
-    return createElement("div", null);
-  }
-
-  const meta = state.sectionFieldMeta.TorrentCreation ?? {};
-
-  return createElement(
-    "div",
-    null,
-    ...Object.entries(torrentCreation).map(([key, value]) =>
-      state.renderField(key, value, ["TorrentCreation", key], meta[key]),
-    ),
-  );
-}
-
 function TrackerSettingsHarness() {
   const state = useSettingsState({ activeTab: "settings" });
   const trackerAnonymous = (config: ConfigMap | null) => {
@@ -761,23 +742,6 @@ describe("settings advanced fields", () => {
     expect(advancedBySection.PostUpload).toEqual(["InjectDelay", "MaxConcurrentTrackers"]);
     expect(advancedBySection.TorrentCreation).toEqual([]);
     expect(advancedBySection.TorrentClients).toEqual(["VerifyWebUICertificate"]);
-  });
-});
-
-describe("torrent creation settings", () => {
-  it("identifies the 16 MiB preference as reusable-torrent selection", async () => {
-    installAppOperationMocks({
-      GetConfig: async () => JSON.stringify({ TorrentCreation: { PreferMax16: false } }),
-      GetDefaultConfig: async () => JSON.stringify({}),
-      ListTrackerCatalog: async () => trackerCatalog(),
-      GetImageHostPolicyMetadata: async () => ({}),
-    });
-
-    render(createElement(TorrentCreationHarness));
-
-    expect(
-      await screen.findByLabelText("Prefer reusable torrents with pieces up to 16 MiB"),
-    ).not.toBeChecked();
   });
 });
 
@@ -2206,6 +2170,44 @@ describe("tracker catalog loading", () => {
 });
 
 describe("tracker catalog interactions", () => {
+  it("saves the generated screenshot spacing switch as a PTP boolean", async () => {
+    installAppOperationMocks({
+      GetConfig: async () =>
+        JSON.stringify({
+          Trackers: { Trackers: { PTP: { ApiUser: "example", ScreenshotBlankLine: true } } },
+        }),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () =>
+        trackerCatalog(
+          trackerCatalogEntry(
+            "PTP",
+            [
+              ["ApiUser", "", true],
+              ["ScreenshotBlankLine", true],
+            ],
+            true,
+            "standalone",
+          ),
+        ),
+      GetImageHostPolicyMetadata: async () => ({}),
+    });
+
+    render(createElement(TrackerSettingsHarness));
+
+    const summary = await screen.findByText("PTP", { selector: ".settings-card__summary-name" });
+    await userEvent.click(summary);
+    const control = screen.getByRole("switch", {
+      name: "Blank line between generated screenshots",
+    });
+    expect(control).toBeChecked();
+    await userEvent.click(control);
+    expect(control).not.toBeChecked();
+    expect(
+      readPayload<{ Trackers: { Trackers: { PTP: { ScreenshotBlankLine: boolean } } } }>().Trackers
+        .Trackers.PTP.ScreenshotBlankLine,
+    ).toBe(false);
+  });
+
   it("preserves a tracker removal completed while a reload is in flight", async () => {
     const config = JSON.stringify({
       Trackers: {

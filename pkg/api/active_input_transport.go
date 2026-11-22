@@ -29,6 +29,22 @@ type ActiveInputSnapshot struct {
 type OpenActiveInputRequest struct {
 	ExpectedRevision uint64                         `json:"expectedRevision"`
 	Request          ContinueReleaseWorkflowRequest `json:"request"`
+	// ReuseVerifiedSource allows a metadata correction to reuse matching active verification.
+	ReuseVerifiedSource bool `json:"reuseVerifiedSource,omitempty"`
+}
+
+// CancelActiveInputOpenRequest targets one caller-owned open before operation
+// acceptance. A successful response confirms verification and its rollback have
+// stopped; a missing request must be resolved through the original receipt.
+type CancelActiveInputOpenRequest struct {
+	IdempotencyKey string `json:"idempotencyKey"`
+}
+
+func (r CancelActiveInputOpenRequest) Validate() error {
+	if strings.TrimSpace(r.IdempotencyKey) == "" {
+		return errors.New("input open cancellation requires its idempotency key")
+	}
+	return nil
 }
 
 // Validate requires source preparation without existing workflow authority and

@@ -167,6 +167,31 @@ type NamingFacts struct {
 	Personal      bool
 }
 
+// EpisodeCoverage retains explicit pack identity and filename membership.
+// Complete means every supplied media member is identified, not that the season
+// is complete. Partial/unavailable membership cannot prove disjoint coverage;
+// contradictory evidence must be reviewed. Part retains a source part or explicit
+// episode expression; a part number never implies episode numbers.
+type EpisodeCoverage struct {
+	// SeasonKnown distinguishes explicit season zero from an unspecified season.
+	SeasonKnown bool
+	// CompleteSeason retains an explicit complete-season source assertion, never a file-count inference.
+	CompleteSeason bool
+	Part           string
+	Episodes       []int
+	Status         MetadataEvidenceStatus
+}
+
+// NamingPart retains explicit part labels while omitting episode expressions
+// that conflict with the inventory or the caller's season/episode omission.
+func (c EpisodeCoverage) NamingPart(omitSeasonEpisode bool) string {
+	part := strings.TrimSpace(c.Part)
+	if strings.HasPrefix(part, "E") && (omitSeasonEpisode || c.Status == MetadataEvidenceStatusContradictory) {
+		return ""
+	}
+	return part
+}
+
 // EpisodeFacts contains canonical reusable episodic identity and schedule
 // facts, independent of tracker policy.
 type EpisodeFacts struct {
@@ -174,6 +199,7 @@ type EpisodeFacts struct {
 	Episode int
 	// MultipleEpisodes retains known combined or conflicting source episode membership.
 	MultipleEpisodes  bool
+	Coverage          EpisodeCoverage
 	SeasonLabel       string
 	EpisodeLabel      string
 	DailyDate         string
@@ -290,6 +316,17 @@ type MediaFacts struct {
 	MediaInfoUniqueID string
 	Anime             bool
 	AnimeKnown        bool
+
+	// TitleLanguages retains automatic TMDB spoken-language evidence. Rule consumers
+	// use LanguageFacts, which preserves OriginalLanguage corrections and clears.
+	// These values never populate inspected soundtrack languages.
+	TitleLanguages []string `json:",omitempty"`
+	// EditionRuntimeSeconds is the measured runtime of one presentation, or zero if unavailable.
+	EditionRuntimeSeconds float64 `json:",omitempty"`
+	// EditionFrameRate is the measured fixed cadence for that presentation.
+	EditionFrameRate float64 `json:",omitempty"`
+	// EditionOriginalFrameRate is the original cadence when the source reports it.
+	EditionOriginalFrameRate float64 `json:",omitempty"`
 }
 
 // DiscFacts contains typed disc measurements that are safe to publish as
@@ -784,6 +821,9 @@ func (i ExternalIdentity) RequireCategory() (CanonicalCategory, error) {
 // SourceScopedMetadata stores optional provider enrichment for one source and
 // prepared generation.
 type SourceScopedMetadata struct {
+	// IdentityCandidates retain advisory provider matches for this generation.
+	// They never select or replace a canonical provider ID.
+	IdentityCandidates []ExternalIdentityCandidate `json:",omitempty"`
 	// ImportedScreenshotEvidence is a receipt snapshot, not a local image asset.
 	ImportedScreenshotEvidence *ImportedScreenshotEvidence `json:",omitempty"`
 	SourcePath                 string
@@ -884,8 +924,11 @@ type ExternalIdentityCandidate struct {
 	Overview      string
 	PosterURL     string
 	Similarity    float64
-	Directors     []string
-	Cast          []string
+	// TentativeConfidence is the IMDb identity score of a weak suggestion.
+	// It excludes ranking-only bonuses; nil denotes an ordinary candidate.
+	TentativeConfidence *float64 `json:",omitempty"`
+	Directors           []string
+	Cast                []string
 	// CastSource identifies verified billing order or the provider's curated principal credits.
 	CastSource     string
 	RuntimeMinutes int

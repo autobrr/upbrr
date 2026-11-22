@@ -8,6 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -498,9 +501,19 @@ func TestCandidateLogShowsDifferentTargetAndCandidateOperands(t *testing.T) {
 	}
 }
 
-func TestCheckWithAssessmentReportsDebugBannedGroupAsBypassed(t *testing.T) {
+func TestCheckWithAssessmentSearchesDebugBannedGroupWithoutWaiver(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte(`{"data":[{"name":"GRP"}]}`))
+	}))
+	defer server.Close()
 	registry := trackerspkg.NewRegistry()
-	if err := registry.Register(bannedGroupDefinition{}); err != nil {
+	if err := registry.RegisterDescriptor(trackerspkg.Descriptor{
+		Name:         "DP",
+		Definition:   bannedGroupDefinition{},
+		BannedPolicy: &trackerspkg.BannedGroupPolicy{DefaultEndpoint: server.URL},
+	}); err != nil {
 		t.Fatalf("register banned-group definition: %v", err)
 	}
 	tempDir := t.TempDir()
@@ -523,28 +536,64 @@ func TestCheckWithAssessmentReportsDebugBannedGroupAsBypassed(t *testing.T) {
 	})
 	summary, assessment, err := service.CheckWithAssessment(ctx, api.DuplicateSubject{
 		SourcePath: filepath.Join(tempDir, "Example.Release.2026.1080p-GRP.mkv"),
-		Tag:        "SubsPlease",
-	}, []string{"DP"}, CheckOptions{BypassBannedGroups: true})
+		Tag:        "GRP",
+	}, []string{"DP"}, CheckOptions{Diagnostic: true})
 	if err != nil {
 		t.Fatalf("check bypassed banned group: %v", err)
 	}
-	if adapterCalled.Load() {
-		t.Fatal("bypassed banned-group result invoked duplicate adapter")
+	if !adapterCalled.Load() {
+		t.Fatal("diagnostic banned-group check skipped duplicate adapter")
 	}
-	if len(summary.Results) != 1 || summary.Results[0].Status != "bypassed" ||
-		summary.Results[0].SkipCode != NotRunBannedGroup ||
-		!strings.Contains(summary.Results[0].SkipReason, "debug mode bypassed policy") {
-		t.Fatalf("bypassed duplicate result = %#v", summary.Results)
+	if len(summary.Results) != 1 || summary.Results[0].Status != "completed" || summary.Results[0].SkipCode != "" {
+		t.Fatalf("diagnostic duplicate result = %#v", summary.Results)
+	}
+	if !slices.Contains(summary.Results[0].Notes, "Diagnostic policy: group grp is banned on DP") {
+		t.Fatalf("diagnostic search lost banned-group outcome: %+v", summary.Results[0])
 	}
 	decision, ok := assessment.Decision("DP")
-	if !ok || decision.Verdict != VerdictWaived || decision.Authorization != AuthorizationWaiver {
-		t.Fatalf("bypassed assessment decision = %#v found=%t", decision, ok)
+	if !ok || decision.Verdict == VerdictWaived || decision.Authorization == AuthorizationWaiver {
+		t.Fatalf("diagnostic search fabricated a waiver = %#v found=%t", decision, ok)
 	}
 	progressMu.Lock()
-	defer progressMu.Unlock()
-	if len(progress) == 0 || progress[len(progress)-1].Status != "bypassed" ||
-		!strings.Contains(progress[len(progress)-1].Message, "debug mode bypassed policy") {
-		t.Fatalf("bypassed duplicate progress = %#v", progress)
+	if len(progress) == 0 || progress[len(progress)-1].Status != "completed" {
+		t.Fatalf("diagnostic duplicate progress = %#v", progress)
+	}
+	progressMu.Unlock()
+	if requests.Load() != 1 {
+		t.Fatalf("diagnostic refresh requests = %d, want 1", requests.Load())
+	}
+	for _, diagnostic := range []bool{true, false} {
+		adapterCalled.Store(false)
+		result, _, canceled := service.checkTracker(context.Background(), api.DuplicateSubject{Tag: "GRP"}, "DP", CheckOptions{Diagnostic: diagnostic})
+		if canceled || adapterCalled.Load() != diagnostic {
+			t.Fatalf("diagnostic=%t adapterCalled=%t canceled=%t", diagnostic, adapterCalled.Load(), canceled)
+		}
+		if !diagnostic && result.SkipCode != NotRunBannedGroup {
+			t.Fatalf("normal banned outcome = %#v", result)
+		}
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("fresh banned-group cache was not reused: requests=%d", requests.Load())
+	}
+	adapterCalled.Store(false)
+	result, entry, canceled := service.checkTracker(context.Background(), api.DuplicateSubject{
+		Tag:             "GRP",
+		MatchedTrackers: []string{"DP"},
+	}, "DP", CheckOptions{Diagnostic: true})
+	if canceled || adapterCalled.Load() || !result.HasDupes || entry.verdict != VerdictBlocked {
+		t.Fatalf("diagnostic local-client gate = %#v, adapterCalled=%t", result, adapterCalled.Load())
+	}
+	brokenCache := t.TempDir()
+	service.banned = trackerspkg.NewBannedGroupCheckerWithRegistry(filepath.Join(brokenCache, "upbrr.db"), registry)
+	if err := os.WriteFile(filepath.Join(brokenCache, "cache", "banned"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	adapterCalled.Store(false)
+	result, _, canceled = service.checkTracker(context.Background(), api.DuplicateSubject{Tag: "GRP"}, "DP", CheckOptions{Diagnostic: true})
+	if canceled || !adapterCalled.Load() || result.Status != "completed" || !slices.ContainsFunc(result.Notes, func(note string) bool {
+		return strings.HasPrefix(note, "Diagnostic policy: banned group check failed:")
+	}) {
+		t.Fatalf("diagnostic refresh failure lost or search blocked: %+v", result)
 	}
 }
 
@@ -700,6 +749,27 @@ func TestCheckProjectionSetUsesExactCriteriaAndRetainsBlockedClientMatch(t *test
 		len(clientResult.Evaluations[0].Reasons) != 1 || clientResult.Evaluations[0].Reasons[0].Code != "in_client" ||
 		clientResult.Search.Scope != "local_client" {
 		t.Fatalf("blocked local-client result = %#v adapter_calls=%d", clientResult, blockedAdapterCalls.Load())
+	}
+	projectionSet.Projections = projectionSet.Projections[:1]
+	projectionSet.Status = api.StageStatusBlocked
+	projectionSet.Failures = []api.WorkflowFailure{{TrackerID: "A", Failure: api.OperationFailure{
+		Code:      api.OperationFailureNoEligibleTrackers,
+		Operation: api.OperationKindDuplicateCheck,
+		Message:   "policy restriction",
+	}}}
+	projectionSet.Projections[0].Readiness = api.ReadinessStatusIneligible
+	projectionSet.Projections[0].DupeReady = false
+	projectionSet.Projections[0].UploadReady = false
+	projectionSet.Projections[0].DiagnosticReady = true
+	for _, diagnostic := range []bool{false, true} {
+		received = api.DuplicateSubject{}
+		_, _, err := service.CheckProjectionSet(t.Context(), api.DuplicateSubject{SourcePath: projectionSet.ReleaseRef.SourcePath}, projectionSet, api.ProjectionDupeCheckOptions{Diagnostic: diagnostic})
+		if err != nil || (received.Projection != nil) != diagnostic {
+			t.Fatalf("diagnostic=%t adapter subject=%+v err=%v", diagnostic, received, err)
+		}
+		if diagnostic && (received.ReleaseName != "Example Release 2026" || received.Projection.DupeReady) {
+			t.Fatalf("diagnostic search changed criteria or granted readiness: %+v", received)
+		}
 	}
 }
 

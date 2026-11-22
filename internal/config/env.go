@@ -60,12 +60,6 @@ func ApplyEnvOverrides(cfg *Config) {
 		cfg.ClientSetup.SearchClients = CSVList(splitCSV(value))
 	}
 
-	if value := os.Getenv(envPrefix + "DEFAULT_PREFER_MAX_16_TORRENT"); value != "" {
-		if parsed, err := strconv.ParseBool(value); err == nil {
-			cfg.TorrentCreation.PreferMax16 = parsed
-		}
-	}
-
 	if value := os.Getenv(envPrefix + "SONARR_USE"); value != "" {
 		if parsed, err := strconv.ParseBool(value); err == nil {
 			cfg.ArrIntegration.UseSonarr = parsed

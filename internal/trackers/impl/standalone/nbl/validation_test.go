@@ -93,7 +93,7 @@ func TestNBLDoesNotApplyMediaOnlyPackageRuleToDiscs(t *testing.T) {
 func TestNBLValidationPolicyVersion(t *testing.T) {
 	t.Parallel()
 
-	if got := Profile().ValidationPolicy.ID; got != "standalone-nbl-policy-v5/languages-v3" {
+	if got := Profile().ValidationPolicy.ID; got != "standalone-nbl-policy-v5/languages-v6" {
 		t.Fatalf("validation policy ID = %q", got)
 	}
 }

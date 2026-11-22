@@ -349,7 +349,7 @@ func TestHDRCLIRetainsCompletedImagesOnReportFailure(t *testing.T) {
 					t.Fatalf("completed image missing: %v", imageErr)
 				}
 				failure, typed := api.AsHDRAnalysisFailure(err)
-				if !typed || failure.Code != api.HDRAnalysisFailureRead || !strings.Contains(diagnostic.String(), "save HDR summary") ||
+				if !typed || failure.Code != api.HDRAnalysisFailureOutput || !strings.Contains(diagnostic.String(), "save HDR summary") ||
 					!strings.Contains(diagnostic.String(), "retained") {
 					t.Fatalf("summary failure lost its operation or retained-output guidance: %q", diagnostic.String())
 				}

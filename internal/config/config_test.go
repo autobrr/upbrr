@@ -1410,3 +1410,78 @@ func TestResolveTrackerDomain(t *testing.T) {
 		})
 	}
 }
+
+func TestRetiredTorrentPreferenceImport(t *testing.T) {
+	t.Parallel()
+	for name, decode := range map[string]func(*Config) error{
+		"json": func(cfg *Config) error {
+			return json.Unmarshal([]byte(`{"TorrentCreation":{"PreferMax16":true,"RehashCooldown":7}}`), cfg)
+		},
+		"yaml": func(cfg *Config) error {
+			return yaml.Unmarshal([]byte("torrent_creation:\n  prefer_max_16_torrent: true\n  rehash_cooldown: 7\n"), cfg)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var cfg Config
+			if err := decode(&cfg); err != nil {
+				t.Fatal(err)
+			}
+			if cfg.TorrentCreation.RehashCooldown != 7 {
+				t.Fatal("retiring the preference changed an active sibling setting")
+			}
+			for _, encode := range []func(any) ([]byte, error){json.Marshal, yaml.Marshal} {
+				out, err := encode(cfg.TorrentCreation)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(out), "PreferMax16") || strings.Contains(string(out), "prefer_max_16_torrent") {
+					t.Fatal("retired preference remains in exported settings")
+				}
+			}
+		})
+	}
+}
+
+func TestPTPScreenshotSpacingDefaultsAndRoundTrips(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{"existing config", "", true},
+		{"disabled", "    screenshot_blank_line: false\n", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var cfg Config
+			if err := yaml.Unmarshal([]byte("trackers:\n  PTP:\n    username: example\n"+c.value), &cfg); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := MergeMissingTrackerDefaults(&cfg); err != nil {
+				t.Fatal(err)
+			}
+			payload, err := json.Marshal(cfg.Trackers)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var settings TrackersConfig
+			if err := json.Unmarshal(payload, &settings); err != nil {
+				t.Fatal(err)
+			}
+			serialized, err := yaml.Marshal(settings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var loaded TrackersConfig
+			if err := yaml.Unmarshal(serialized, &loaded); err != nil {
+				t.Fatal(err)
+			}
+			ptp := loaded.Trackers["PTP"]
+			if ptp.ScreenshotBlankLine == nil || *ptp.ScreenshotBlankLine != c.want || ptp.Username != "example" {
+				t.Fatalf("PTP spacing or unrelated tracker settings changed during round trip: enabled=%v", ptp.ScreenshotBlankLineEnabled())
+			}
+			if loaded.Trackers["BTN"].ScreenshotBlankLine != nil {
+				t.Fatal("PTP setting leaked into unrelated tracker")
+			}
+		})
+	}
+}

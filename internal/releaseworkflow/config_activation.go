@@ -32,9 +32,11 @@ func ApplyConfigImpact(record api.ReleaseWorkflowStateRecord, impact api.ConfigI
 	}
 	switch impact.Kind {
 	case api.ConfigImpactProvider:
+		retainInputReview(&state)
 		state.PendingDuplicateReuse = nil
 		invalidatePreparedAndDownstream(&state.Workflow)
 	case api.ConfigImpactTrackers:
+		retainInputReview(&state)
 		state.PendingDuplicateReuse = nil
 		if len(impact.TrackerIDs) == 0 {
 			invalidateTrackerAndDownstream(&state.Workflow)
@@ -65,6 +67,7 @@ func ApplyConfigImpact(record api.ReleaseWorkflowStateRecord, impact api.ConfigI
 	default:
 		return api.ReleaseWorkflowStateRecord{}, errors.New("release workflow: unknown config impact")
 	}
+	removeOrphanedMediaPreparationActions(&state)
 	state.Workflow.Revision++
 	state.Workflow.UpdatedAt = nextConfigActivationTime(state.Workflow.UpdatedAt)
 	if err := state.Workflow.Validate(); err != nil {

@@ -5,6 +5,7 @@ package bhd
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"testing"
 
@@ -190,4 +191,40 @@ func TestBHDLanguageRoleAndDiscBoundaries(t *testing.T) {
 	requireBHDValidationFailure(t, languageAssessment(subject), "language_compatibility_mix", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
 	subject.Type, subject.DiscType = "DISC", ""
 	requireBHDSourceWarnings(t, subject, "language_foreign_dialogue_subtitles")
+}
+
+func TestAnimationAlreadyHasEnglishOriginalSoundtrack(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		title, audio []string
+		wantAdvice   bool
+	}{
+		{"English original with incidental French dialogue", []string{"en", "fr"}, []string{"English"}, false},
+		{"incidental English in a multilingual original", []string{"ja", "en"}, []string{"Japanese", "English"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			subject := bhdValidationSubject()
+			subject.Anime = true
+			subject.EffectiveMetadata.OriginalLanguage = "Italian"
+			subject.LanguageFacts = mediafacts.ResolveLanguages(api.MediaFacts{
+				OriginalLanguage:      "it",
+				TitleLanguages:        tc.title,
+				TrackCoverageComplete: true,
+				Tracks: []api.MediaTrackFacts{{
+					Kind:        api.MediaTrackAudio,
+					Role:        api.AudioRoleProgramme,
+					Languages:   tc.audio,
+					AudioOrigin: api.TrackAudioOriginal,
+				}},
+			})
+			failures := languageAssessment(subject)
+			got := slices.ContainsFunc(failures, func(f api.RuleFailure) bool { return f.Rule == "language_animated_dual_audio" })
+			if got != tc.wantAdvice {
+				t.Fatalf("animated English-dub advice=%t, want %t: %#v", got, tc.wantAdvice, failures)
+			}
+			if !slices.ContainsFunc(failures, func(f api.RuleFailure) bool { return f.Rule == "language_foreign_dialogue_subtitles" }) {
+				t.Fatal("existing foreign-dialogue subtitle guidance disappeared")
+			}
+		})
+	}
 }

@@ -48,9 +48,12 @@ func (s *cliWorkflowSession) completeComposite(
 		// would ask authority adoption to force a second generation.
 		request.Preparation.Force = false
 	}
-	ctx, request, err = resolveCLICompositeUploadInputs(ctx, request)
+	ctx, request, err = s.resolveCompositeUploadInputs(ctx, reader, request)
 	if err != nil {
 		return 0, err
+	}
+	if request.ImageHosting.SkipUpload != nil && *request.ImageHosting.SkipUpload {
+		fmt.Fprintln(s.streams.out, "New image-host uploads are disabled for this run; existing hosted images must still meet tracker requirements.")
 	}
 	ctx = api.WithDupeProgressReporter(ctx, func(update api.DupeProgressUpdate) {
 		printCLIWorkflowDupeProgress(s.streams.out, update)
@@ -166,6 +169,34 @@ func resolveCLICompositeUploadInputs(
 	return resolvedContext, resolved, nil
 }
 
+func (s *cliWorkflowSession) resolveCompositeUploadInputs(ctx context.Context, reader *bufio.Reader,
+	request api.CreateReleaseWorkflowUploadRequest) (context.Context, api.CreateReleaseWorkflowUploadRequest, error) {
+	resolvedContext, resolved, err := resolveCLICompositeUploadInputs(ctx, request)
+	missing, missingMain := errors.AsType[*uploadinput.ComparisonMainRequiredError](err)
+	if !missingMain {
+		return resolvedContext, resolved, err
+	}
+	if s.intent.interaction == api.InteractionModeUnattended {
+		return ctx, api.CreateReleaseWorkflowUploadRequest{}, errors.New(
+			"upbrr: unattended comparison import requires --comparison_index with the main source group number",
+		)
+	}
+	action := api.RequiredAction{Prompt: "Choose the comparison column belonging to the main release input."}
+	for _, source := range missing.Sources {
+		action.Options = append(action.Options, api.RequiredActionOption{Value: source.ID, Label: source.ID + ": " + source.Label})
+	}
+	selected, err := selectCLICompositeOption(reader, s.streams.out, action, "Main comparison column")
+	if err != nil {
+		return ctx, api.CreateReleaseWorkflowUploadRequest{}, err
+	}
+	index, err := strconv.Atoi(selected)
+	if err != nil || index < 1 {
+		return ctx, api.CreateReleaseWorkflowUploadRequest{}, errors.New("upbrr: main comparison group must be a positive decimal number")
+	}
+	request.Media.Screenshots.ComparisonPrimaryIndex = &index
+	return resolveCLICompositeUploadInputs(ctx, request)
+}
+
 func (s *cliWorkflowSession) waitForCompositeUpload(
 	ctx context.Context,
 	current releaseworkflow.CommandResult,
@@ -238,6 +269,11 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 	if s.intent.interaction == api.InteractionModeUnattended &&
 		action.Kind != api.RequiredActionAuthorizeRules && action.Kind != api.RequiredActionResolveTrackerPreparation &&
 		action.Kind != api.RequiredActionApproveTrackers {
+		if action.Kind == api.RequiredActionReviewComparisons {
+			return feedback, false, errors.New(
+				"upbrr: unattended comparison upload requires explicit image review; run interactively or with --uac to inspect and approve the retained comparisons",
+			)
+		}
 		return feedback, false, fmt.Errorf("upbrr: strict unattended upload requires global action %s: %s", action.Kind, action.Prompt)
 	}
 	s.bindAction(ctx, action, action.Prompt)
@@ -302,6 +338,8 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 		return s.collectCompositeDuplicateFeedback(reader, action, feedback)
 	case api.RequiredActionApproveTrackers:
 		return s.collectCompositeTrackerApproval(reader, logger, action, feedback)
+	case api.RequiredActionReviewComparisons:
+		return s.collectCompositeComparisonApproval(ctx, reader, feedback)
 	case api.RequiredActionApproveUpload: //nolint:staticcheck // Reject retained v1 actions explicitly.
 		return feedback, false, errors.New("upbrr: obsolete final upload approval requires a fresh workflow continuation")
 	case api.RequiredActionReprepare:
@@ -329,6 +367,50 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 	default:
 		return feedback, false, fmt.Errorf("upbrr: unsupported composite upload action %s", action.Kind)
 	}
+	return feedback, false, nil
+}
+
+func (s *cliWorkflowSession) collectCompositeComparisonApproval(ctx context.Context, reader *bufio.Reader,
+	feedback api.ReleaseWorkflowUploadFeedback) (api.ReleaseWorkflowUploadFeedback, bool, error) {
+	if s.current.Media == nil || s.current.Media.Comparisons == nil || s.current.Media.Comparisons.Fingerprint == "" {
+		return feedback, false, errors.New("upbrr: comparison review requires retained images; import or capture comparisons first")
+	}
+	plan := s.current.Media.Comparisons
+	labels := make(map[string]string, len(plan.Sources))
+	for _, source := range plan.Sources {
+		labels[source.ID] = source.Label
+	}
+	fmt.Fprintln(s.streams.out, "Review the retained comparison images before uploading:")
+	for _, row := range plan.Rows {
+		if row.Excluded {
+			continue
+		}
+		fmt.Fprintf(s.streams.out, "Row %s:\n", safeTerminalText(row.ID))
+		for _, cell := range row.Cells {
+			path, err := s.core.ReleaseWorkflowMediaArtifactPath(ctx, cliWorkflowOwnerID, s.current.Workflow.ID,
+				api.MediaArtifactSetRef{ID: s.current.Media.ID, Revision: s.current.Media.Revision}, cell.ArtifactID)
+			if err != nil {
+				return feedback, false, fmt.Errorf("upbrr: resolve comparison image for review: %w", err)
+			}
+			//logpolicy:allow local CLI review intentionally exposes an owner-authorized retained artifact path
+			fmt.Fprintf(s.streams.out, "  %s (%s): %s\n", safeTerminalText(labels[cell.SourceID]), safeTerminalText(cell.SourceID), safeTerminalText(path))
+		}
+	}
+	fmt.Fprintf(s.streams.out, "Use main column %s as normal screenshots: %t\n", safeTerminalText(plan.MainSourceID), plan.ReuseMainScreenshots)
+	confirmed, err := askCLIConfirmation(reader, s.streams.out, cliPrompt{
+		Kind:       cliPromptConfirm,
+		Question:   "Have you inspected and approved these comparison images?",
+		DefaultYes: false,
+		Help:       "Open every retained image listed above. Approval applies only to these images, labels and row mapping. Decline to correct the comparison inputs before uploading.",
+	})
+	if err != nil {
+		return feedback, false, err
+	}
+	if !confirmed {
+		return feedback, true, nil
+	}
+	feedback.Response = api.ReleaseWorkflowUploadFeedbackResponse{Kind: api.ReleaseWorkflowUploadFeedbackComparisonApproval,
+		ComparisonApproval: &api.ReleaseWorkflowUploadComparisonApproval{Confirmed: true, ExpectedFingerprint: plan.Fingerprint}}
 	return feedback, false, nil
 }
 
@@ -405,6 +487,7 @@ func compositeCLIConfirmationFeedback(
 		api.ReleaseWorkflowUploadFeedbackTrackerPreparation,
 		api.ReleaseWorkflowUploadFeedbackDuplicateReview,
 		api.ReleaseWorkflowUploadFeedbackTrackerApproval,
+		api.ReleaseWorkflowUploadFeedbackComparisonApproval,
 		api.ReleaseWorkflowUploadFeedbackUploadApproval, //nolint:staticcheck // Reject retained v1 feedback explicitly.
 		api.ReleaseWorkflowUploadFeedbackReconciliation:
 		return feedback, false, fmt.Errorf("upbrr: unsupported confirmation feedback %s", kind)
@@ -421,6 +504,7 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 	if s.current.Projections == nil || s.current.Dupes == nil {
 		return feedback, false, errors.New("upbrr: post-dupe tracker review is unavailable")
 	}
+	diagnostic := s.current.Projections.ExecutionMode == api.WorkflowExecutionModeDebug
 	projectionByTracker := make(map[api.TrackerID]api.TrackerReleaseProjection, len(s.current.Projections.Projections))
 	for _, projection := range s.current.Projections.Projections {
 		projectionByTracker[projection.TrackerID] = projection
@@ -464,7 +548,10 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 		printCLICompositeDupeEvidence(output, dupe)
 		fmt.Fprintf(output, "Preparation: %d screenshots; %d DVD menu images.\n", projection.Artifacts.ScreenshotCount, projection.Artifacts.DVDMenuCount)
 		if projection.Artifacts.ImageHosting {
-			fmt.Fprintln(output, "Images will be uploaded to an image host.")
+			fmt.Fprintln(
+				output,
+				"Image-host requirements will be checked; compatible existing uploads may be reused. Missing images may be uploaded when uploads are enabled.",
+			)
 		}
 		if projection.Artifacts.Description {
 			fmt.Fprintln(output, "A tracker description will be prepared.")
@@ -482,13 +569,20 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 				projection.Artifacts.Description,
 			)
 		}
-		// Only a completed clear check grants affirmative authorization by default.
-		// Duplicate overrides remain a separate decision, including in unattended mode.
+		// An explicit remote-search waiver grants the same default as a clear check.
+		// Other skipped prerequisites and duplicate overrides still require a decision.
+		clearCheck := dupe.Decision == api.DupeDecisionNoMatch && dupe.Status == api.StageStatusCompleted && dupe.Search.Complete
+		waivedCheck := s.uploadRequest.SkipDupeCheck && s.current.Dupes.SkipRemote &&
+			dupe.Decision == api.DupeDecisionSkipped && dupe.Status == api.StageStatusSkipped &&
+			projection.DupeReady && len(dupe.Matches) == 0 && s.current.Preflight != nil &&
+			slices.ContainsFunc(s.current.Preflight.Results, func(result api.TrackerPreflightResult) bool {
+				return result.TrackerID == trackerID && result.State == api.TrackerPreflightStateReady
+			})
 		defaultYes := releaseworkflow.ProjectionEligibleForDownstream(projection, dupe, true) &&
-			dupe.Decision == api.DupeDecisionNoMatch && dupe.Status == api.StageStatusCompleted &&
-			dupe.Search.Complete && !dupe.RequiresStaffToken && !cliDupeRequiresRiskAcknowledgement(dupe)
-		confirmed := defaultYes
-		if s.intent.interaction != api.InteractionModeUnattended {
+			(clearCheck || waivedCheck) && !dupe.RequiresStaffToken && !cliDupeRequiresRiskAcknowledgement(dupe)
+		// Debug prepares every diagnostic candidate; upload approval cannot prune previews.
+		confirmed := diagnostic || defaultYes
+		if !diagnostic && s.intent.interaction != api.InteractionModeUnattended {
 			choice := "[y/N]"
 			if defaultYes {
 				choice = "[Y/n]"
@@ -507,7 +601,7 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 				return feedback, false, err
 			}
 		}
-		if s.intent.interaction == api.InteractionModeUnattended {
+		if diagnostic || s.intent.interaction == api.InteractionModeUnattended {
 			fmt.Fprint(s.streams.out, safeTerminalText(evidence.String()))
 		}
 		if confirmed {
@@ -776,6 +870,11 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 	if result.RequiresStaffToken {
 		help += "\nYes attests that you already have the required staff-issued token; do not enter the token here. No leaves this tracker blocked."
 	}
+	debug := s.current.Projections != nil && s.current.Projections.ExecutionMode == api.WorkflowExecutionModeDebug
+	if debug {
+		prompt = fmt.Sprintf("Record an override of the duplicate evidence for %s? [y/N]: ", result.TrackerID)
+		help = "Debug never submits tracker uploads. Yes records the diagnostic override; No preserves the duplicate block. Both answers continue to payload inspection when inputs permit it. Neither answer establishes missing evidence or confirms possession of a staff token."
+	}
 	allow, err := askCLIConfirmation(reader, s.streams.out, cliPrompt{
 		Kind:     cliPromptConfirm,
 		Question: prompt,
@@ -793,7 +892,7 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 	feedback.Response = api.ReleaseWorkflowUploadFeedbackResponse{
 		Kind: api.ReleaseWorkflowUploadFeedbackDuplicateReview,
 		DuplicateReview: &api.ReleaseWorkflowUploadDuplicateReview{
-			StaffTokenConfirmed: result.RequiresStaffToken && allow,
+			StaffTokenConfirmed: result.RequiresStaffToken && allow && !debug,
 			TrackerID:           result.TrackerID,
 			Decision:            decision,
 		},
@@ -815,7 +914,7 @@ func printCLICompositeDupeEvidence(output io.Writer, result api.TrackerDupeAsses
 	case api.DupeDecisionIgnored:
 		decision = "An explicit duplicate override is retained for this assessment"
 	case api.DupeDecisionBypassed:
-		decision = "The run's debug authority bypasses this duplicate gate"
+		decision = "The retained assessment records a bypass of this duplicate gate"
 	case api.DupeDecisionSkipped:
 		decision = "The duplicate search was skipped by workflow policy"
 	}
@@ -1069,6 +1168,7 @@ func mapCLICompositeUploadRequest(
 				Frames:                 append([]int(nil), request.ScreenshotOverrides.ManualFrames...),
 				ComparisonPaths:        append([]string(nil), request.ScreenshotOverrides.ComparisonPaths...),
 				ComparisonPrimaryIndex: cloneCLIIntPointer(request.ScreenshotOverrides.ComparisonPrimaryIndex),
+				ComparisonReuseMain:    request.ScreenshotOverrides.ComparisonReuseMain,
 			},
 			DVDMenus: api.ReleaseWorkflowUploadDVDMenus{
 				Capture:   &captureMenus,

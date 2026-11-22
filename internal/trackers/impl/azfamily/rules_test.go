@@ -35,59 +35,65 @@ func azTestLanguageFacts(original string, audio ...string) api.LanguageFacts {
 }
 
 func TestAZRegionalDialectEvidenceAndIndependentRules(t *testing.T) {
-	meta := api.UploadSubject{
-		Type:          "WEBDL",
-		Identity:      api.ExternalIdentity{SourcePath: "az-language", Generation: 1},
-		LanguageFacts: azTestLanguageFacts("Chinese", "Cantonese"),
-	}
-	question := New("AZ").ProjectionQuestionnaire(trackers.PreparationInput{Meta: meta})
-	if question == nil || len(question.Fields) != 1 {
-		t.Fatal("regional dialect exception was not reviewable")
-	}
-	key := question.Fields[0].Key
-	for _, answer := range []string{"", "no", "yes"} {
-		meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"AZ": {key: answer}}
-		failures := evaluateAZLanguageRules(siteFor("AZ"), api.NewTrackerValidationSubject(meta, "AZ"))
-		if answer == "yes" {
-			if len(failures) != 0 {
-				t.Fatalf("established regional dialect blocked: %#v", failures)
+	for _, audio := range [][]string{{"Cantonese"}, {"mul", "Cantonese"}} {
+		meta := api.UploadSubject{
+			Type:          "WEBDL",
+			Identity:      api.ExternalIdentity{SourcePath: "az-language", Generation: 1},
+			LanguageFacts: azTestLanguageFacts("Chinese", audio...),
+		}
+		if len(audio) == 2 {
+			meta.LanguageFacts.Tracks[0].AudioOrigin = api.TrackAudioOriginal
+			meta.LanguageFacts.Tracks[1].AudioOrigin = api.TrackAudioDubbed
+		}
+		question := New("AZ").ProjectionQuestionnaire(trackers.PreparationInput{Meta: meta})
+		if question == nil || len(question.Fields) != 1 {
+			t.Fatal("regional dialect exception was not reviewable")
+		}
+		key := question.Fields[0].Key
+		for _, answer := range []string{"", "no", "yes"} {
+			meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"AZ": {key: answer}}
+			failures := evaluateAZLanguageRules(siteFor("AZ"), api.NewTrackerValidationSubject(meta, "AZ"))
+			if answer == "yes" {
+				if len(failures) != 0 {
+					t.Fatalf("established regional dialect blocked: %#v", failures)
+				}
+			} else if !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
+				return f.Rule == "language_regional_dialect" && f.Disposition == api.RuleDispositionStrict && f.QuestionnaireInput == (answer == "")
+			}) {
+				t.Fatalf("unestablished regional dialect accepted: %#v", failures)
 			}
-		} else if !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
-			return f.Rule == "language_regional_dialect" && f.Disposition == api.RuleDispositionStrict && f.QuestionnaireInput == (answer == "")
+		}
+		for _, change := range []func(*api.UploadSubject){
+			func(m *api.UploadSubject) { m.Identity.Generation++ },
+			func(m *api.UploadSubject) { m.LanguageFacts = azTestLanguageFacts("Japanese", "German") },
+		} {
+			changed := meta
+			change(&changed)
+			question := New("AZ").ProjectionQuestionnaire(trackers.PreparationInput{Meta: changed})
+			if question == nil || question.Fields[0].Key == key || question.Fields[0].Value != "" {
+				t.Fatalf("changed facts reused dialect answer: %#v", question)
+			}
+		}
+		meta.LanguageFacts.Tracks = append(meta.LanguageFacts.Tracks, api.MediaTrackFacts{
+			Kind:      api.MediaTrackAudio,
+			Role:      api.AudioRoleVoiceOver,
+			Languages: []string{"Chinese"},
+		})
+		question = New("AZ").ProjectionQuestionnaire(trackers.PreparationInput{Meta: meta})
+		meta.TrackerQuestionnaireAnswers["AZ"][question.Fields[0].Key] = "yes"
+		failures := evaluateAZLanguageRules(siteFor("AZ"), api.NewTrackerValidationSubject(meta, "AZ"))
+		if !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
+			return f.Rule == "language_track_role" && !f.QuestionnaireInput && trackers.RuleFailureBlocksExecution(f, api.WorkflowExecutionModeNormal, true)
 		}) {
-			t.Fatalf("unestablished regional dialect accepted: %#v", failures)
+			t.Fatalf("dialect answer waived prohibited voice-over: %#v", failures)
 		}
-	}
-	for _, change := range []func(*api.UploadSubject){
-		func(m *api.UploadSubject) { m.Identity.Generation++ },
-		func(m *api.UploadSubject) { m.LanguageFacts = azTestLanguageFacts("Japanese", "German") },
-	} {
-		changed := meta
-		change(&changed)
-		question := New("AZ").ProjectionQuestionnaire(trackers.PreparationInput{Meta: changed})
-		if question == nil || question.Fields[0].Key == key || question.Fields[0].Value != "" {
-			t.Fatalf("changed facts reused dialect answer: %#v", question)
+		meta.Type = "DISC"
+		if failures := evaluateAZLanguageRules(siteFor("AZ"), api.NewTrackerValidationSubject(meta, "AZ")); len(failures) != 0 {
+			t.Fatalf("full disc assessed: %#v", failures)
 		}
-	}
-	meta.LanguageFacts.Tracks = append(meta.LanguageFacts.Tracks, api.MediaTrackFacts{
-		Kind:      api.MediaTrackAudio,
-		Role:      api.AudioRoleVoiceOver,
-		Languages: []string{"Chinese"},
-	})
-	question = New("AZ").ProjectionQuestionnaire(trackers.PreparationInput{Meta: meta})
-	meta.TrackerQuestionnaireAnswers["AZ"][question.Fields[0].Key] = "yes"
-	failures := evaluateAZLanguageRules(siteFor("AZ"), api.NewTrackerValidationSubject(meta, "AZ"))
-	if !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
-		return f.Rule == "language_track_role" && !f.QuestionnaireInput && trackers.RuleFailureBlocksExecution(f, api.WorkflowExecutionModeNormal, true)
-	}) {
-		t.Fatalf("dialect answer waived prohibited voice-over: %#v", failures)
-	}
-	meta.Type = "DISC"
-	if failures := evaluateAZLanguageRules(siteFor("AZ"), api.NewTrackerValidationSubject(meta, "AZ")); len(failures) != 0 {
-		t.Fatalf("full disc assessed: %#v", failures)
-	}
-	if New("AZ").ProjectionQuestionnaire(trackers.PreparationInput{Meta: meta}) != nil {
-		t.Fatal("full disc acquired dialect question")
+		if New("AZ").ProjectionQuestionnaire(trackers.PreparationInput{Meta: meta}) != nil {
+			t.Fatal("full disc acquired dialect question")
+		}
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/authmaterial"
@@ -1131,133 +1132,133 @@ func TestEventQuerySessionTokenDoesNotOverrideCookie(t *testing.T) {
 }
 
 func TestStopSessionLogStreamsIfIdleLatestDisconnectWins(t *testing.T) {
-	backend := &Backend{
-		streams: make(map[string]*backendLogStream),
-	}
-	stream := &backendLogStream{
-		id:        "stream-1",
-		sessionID: "session-a",
-		stop:      make(chan struct{}),
-		done:      make(chan struct{}),
-	}
-	backend.streams[stream.id] = stream
-	backend.streamWG.Go(func() {
-		<-stream.stop
-		close(stream.done)
-	})
-	t.Cleanup(func() {
-		_ = backend.StopLogStream("session-a", stream.id)
-	})
-
-	hub := newEventHub()
-	server := &Server{
-		backend:        backend,
-		hub:            hub,
-		generalLimiter: newFixedWindowLimiter(300, time.Minute),
-	}
-	t.Cleanup(func() {
-		clearSessionLogStopGeneration(server, "session-a")
-	})
-
-	server.stopSessionLogStreamsIfIdle("session-a")
-
-	hub.mu.Lock()
-	time.Sleep(eventSessionLogStopGracePeriod + eventSessionLogStopGracePeriod/2)
-	server.stopSessionLogStreamsIfIdle("session-a")
-	hub.mu.Unlock()
-
-	deadline := time.Now().Add(10 * time.Second)
-	for testSessionALogStopGeneration(t, server) != 2 {
-		if time.Now().After(deadline) {
-			t.Fatalf("expected latest disconnect to own generation 2, got %d", testSessionALogStopGeneration(t, server))
+	synctest.Test(t, func(t *testing.T) {
+		backend := &Backend{
+			streams: make(map[string]*backendLogStream),
 		}
-		time.Sleep(5 * time.Millisecond)
-	}
+		stream := &backendLogStream{
+			id:        "stream-1",
+			sessionID: "session-a",
+			stop:      make(chan struct{}),
+			done:      make(chan struct{}),
+		}
+		backend.streams[stream.id] = stream
+		backend.streamWG.Go(func() {
+			<-stream.stop
+			close(stream.done)
+		})
+		t.Cleanup(func() {
+			_ = backend.StopLogStream("session-a", stream.id)
+		})
 
-	select {
-	case <-stream.done:
-		t.Fatal("expected stale disconnect timer to leave session log streams active during newer grace window")
-	default:
-	}
+		hub := newEventHub()
+		server := &Server{
+			backend:        backend,
+			hub:            hub,
+			generalLimiter: newFixedWindowLimiter(300, time.Minute),
+		}
+		t.Cleanup(func() {
+			clearSessionLogStopGeneration(server, "session-a")
+		})
 
-	backend.streamMu.Lock()
-	_, streamStillRegistered := backend.streams[stream.id]
-	backend.streamMu.Unlock()
-	if !streamStillRegistered {
-		t.Fatal("expected stale disconnect timer to leave session log streams registered during newer grace window")
-	}
+		hub.mu.Lock()
+		server.stopSessionLogStreamsIfIdle("session-a")
+		// Wake at the callback deadline while holding the stop-boundary lock;
+		// settle the callback only after releasing the mutex.
+		time.Sleep(eventSessionLogStopGracePeriod)
+		server.stopSessionLogStreamsIfIdle("session-a")
+		hub.mu.Unlock()
 
-	select {
-	case <-stream.done:
-	case <-time.After(10 * time.Second):
-		t.Fatal("expected latest disconnect grace timer to stop session log streams")
-	}
+		synctest.Wait()
+		if generation := testSessionALogStopGeneration(t, server); generation != 2 {
+			t.Fatalf("expected latest disconnect to own generation 2, got %d", generation)
+		}
+
+		select {
+		case <-stream.done:
+			t.Fatal("expected stale disconnect timer to leave session log streams active during newer grace window")
+		default:
+		}
+
+		backend.streamMu.Lock()
+		_, streamStillRegistered := backend.streams[stream.id]
+		backend.streamMu.Unlock()
+		if !streamStillRegistered {
+			t.Fatal("expected stale disconnect timer to leave session log streams registered during newer grace window")
+		}
+
+		select {
+		case <-stream.done:
+		case <-time.After(10 * time.Second):
+			t.Fatal("expected latest disconnect grace timer to stop session log streams")
+		}
+	})
 }
 
 func TestStopSessionLogStreamsIfIdleSubscriberAtStopBoundaryKeepsStreamActiveAndClearsGeneration(t *testing.T) {
-	backend := &Backend{
-		streams: make(map[string]*backendLogStream),
-	}
-	stream := &backendLogStream{
-		id:        "stream-1",
-		sessionID: "session-a",
-		stop:      make(chan struct{}),
-		done:      make(chan struct{}),
-	}
-	backend.streams[stream.id] = stream
-	backend.streamWG.Go(func() {
-		<-stream.stop
-		close(stream.done)
-	})
+	synctest.Test(t, func(t *testing.T) {
+		backend := &Backend{
+			streams: make(map[string]*backendLogStream),
+		}
+		stream := &backendLogStream{
+			id:        "stream-1",
+			sessionID: "session-a",
+			stop:      make(chan struct{}),
+			done:      make(chan struct{}),
+		}
+		backend.streams[stream.id] = stream
+		backend.streamWG.Go(func() {
+			<-stream.stop
+			close(stream.done)
+		})
 
-	hub := newEventHub()
-	server := &Server{
-		backend:        backend,
-		hub:            hub,
-		generalLimiter: newFixedWindowLimiter(300, time.Minute),
-	}
-	t.Cleanup(func() {
-		hub.mu.Lock()
-		if subs, ok := hub.subscribers["session-a"]; ok {
-			for ch := range subs {
-				delete(subs, ch)
-				close(ch)
+		hub := newEventHub()
+		server := &Server{
+			backend:        backend,
+			hub:            hub,
+			generalLimiter: newFixedWindowLimiter(300, time.Minute),
+		}
+		t.Cleanup(func() {
+			hub.mu.Lock()
+			if subs, ok := hub.subscribers["session-a"]; ok {
+				for ch := range subs {
+					delete(subs, ch)
+					close(ch)
+				}
+				delete(hub.subscribers, "session-a")
 			}
-			delete(hub.subscribers, "session-a")
-		}
+			hub.mu.Unlock()
+			clearSessionLogStopGeneration(server, "session-a")
+			_ = backend.StopLogStream("session-a", stream.id)
+		})
+
+		hub.mu.Lock()
+		server.stopSessionLogStreamsIfIdle("session-a")
+		// Wake at the callback deadline while holding the stop-boundary lock;
+		// settle the callback only after releasing the mutex.
+		time.Sleep(eventSessionLogStopGracePeriod)
+		reconnected := make(chan serverEvent)
+		hub.subscribers["session-a"] = map[chan serverEvent]struct{}{reconnected: {}}
 		hub.mu.Unlock()
-		clearSessionLogStopGeneration(server, "session-a")
-		_ = backend.StopLogStream("session-a", stream.id)
-	})
 
-	server.stopSessionLogStreamsIfIdle("session-a")
-
-	hub.mu.Lock()
-	time.Sleep(eventSessionLogStopGracePeriod + eventSessionLogStopGracePeriod/2)
-	reconnected := make(chan serverEvent)
-	hub.subscribers["session-a"] = map[chan serverEvent]struct{}{reconnected: {}}
-	hub.mu.Unlock()
-
-	deadline := time.Now().Add(10 * time.Second)
-	for testSessionALogStopGeneration(t, server) != 0 {
-		if time.Now().After(deadline) {
-			t.Fatalf("expected active replacement subscriber to clear idle-stop generation, got %d", testSessionALogStopGeneration(t, server))
+		synctest.Wait()
+		if generation := testSessionALogStopGeneration(t, server); generation != 0 {
+			t.Fatalf("expected active replacement subscriber to clear idle-stop generation, got %d", generation)
 		}
-		time.Sleep(5 * time.Millisecond)
-	}
 
-	select {
-	case <-stream.done:
-		t.Fatal("expected replacement subscriber at stop boundary to keep session log streams active")
-	default:
-	}
+		select {
+		case <-stream.done:
+			t.Fatal("expected replacement subscriber at stop boundary to keep session log streams active")
+		default:
+		}
 
-	backend.streamMu.Lock()
-	_, streamStillRegistered := backend.streams[stream.id]
-	backend.streamMu.Unlock()
-	if !streamStillRegistered {
-		t.Fatal("expected replacement subscriber at stop boundary to keep session log streams registered")
-	}
+		backend.streamMu.Lock()
+		_, streamStillRegistered := backend.streams[stream.id]
+		backend.streamMu.Unlock()
+		if !streamStillRegistered {
+			t.Fatal("expected replacement subscriber at stop boundary to keep session log streams registered")
+		}
+	})
 }
 
 func testSessionALogStopGeneration(t *testing.T, s *Server) uint64 {

@@ -66,8 +66,8 @@ type FilesystemService interface {
 type ProjectionDupeCheckOptions struct {
 	// SkipRemote limits evaluation to local/client evidence when true.
 	SkipRemote bool
-	// BypassBannedGroups allows debug-mode callers to bypass banned-group policy.
-	BypassBannedGroups bool
+	// Diagnostic permits independent searches after policy failures without waiving them.
+	Diagnostic bool
 }
 
 // DupeAssessmentEvidence is private retained duplicate authority. Public
@@ -116,6 +116,7 @@ type DuplicateSubject struct {
 	VideoEncode          string
 	VideoCodec           string
 	HasEncodeSettings    bool
+	EpisodeCoverage      EpisodeCoverage
 	SeasonInt            int
 	EpisodeInt           int
 	SeasonStr            string
@@ -212,26 +213,31 @@ const (
 )
 
 // ExactMediaAssets is one authoritative workflow-owned media revision.
-// Screenshots, DVD menus, and audio analysis are independent channels, as are
+// Screenshots, comparisons, DVD menus, and audio analysis are independent channels, as are
 // their hosted variants. Audio tracks, uploads, and host choices require an
 // AudioAnalysis reference to the exact revision used for a description.
 type ExactMediaAssets struct {
 	// ImageHostUploadSkipped preserves the workflow's explicit upload opt-out.
 	// Compatible cached links remain usable, but missing variants must not trigger uploads.
 	ImageHostUploadSkipped bool
-	HDRAnalysis            *HDRAnalysisRef
-	HDRPlots               []HDRDescriptionPlot
-	HDRStats               []HDRDescriptionStats
-	HDRUploads             []UploadedImageLink
-	HDRUploadHosts         map[string]string
-	Screenshots            []ScreenshotImage
-	DVDMenus               []DVDMenuCaptureImage
-	ScreenshotUploads      []UploadedImageLink
-	DVDMenuUploads         []UploadedImageLink
-	AudioAnalysis          *AudioAnalysisRef
-	AudioTracks            []AudioDescriptionTrack
-	AudioUploads           []UploadedImageLink
-	AudioUploadHosts       map[string]string
+	// Comparisons keeps reviewed rows separate from ordinary screenshots. Map
+	// keys are the retained cell artifact identities, not slice positions.
+	Comparisons       *ComparisonPlan
+	ComparisonImages  map[PublicResourceID]ScreenshotImage
+	ComparisonUploads map[PublicResourceID][]UploadedImageLink
+	HDRAnalysis       *HDRAnalysisRef
+	HDRPlots          []HDRDescriptionPlot
+	HDRStats          []HDRDescriptionStats
+	HDRUploads        []UploadedImageLink
+	HDRUploadHosts    map[string]string
+	Screenshots       []ScreenshotImage
+	DVDMenus          []DVDMenuCaptureImage
+	ScreenshotUploads []UploadedImageLink
+	DVDMenuUploads    []UploadedImageLink
+	AudioAnalysis     *AudioAnalysisRef
+	AudioTracks       []AudioDescriptionTrack
+	AudioUploads      []UploadedImageLink
+	AudioUploadHosts  map[string]string
 }
 
 type HDRDescriptionPlot struct {
@@ -274,6 +280,8 @@ func (a *ExactMediaAssets) Clone() *ExactMediaAssets {
 	}
 	cloned := &ExactMediaAssets{
 		ImageHostUploadSkipped: a.ImageHostUploadSkipped,
+		Comparisons:            cloneTrackerValidationValue(a.Comparisons),
+		ComparisonImages:       cloneTrackerValidationValue(a.ComparisonImages),
 		HDRPlots:               cloneOptionalSlice(a.HDRPlots),
 		HDRStats:               cloneOptionalSlice(a.HDRStats),
 		HDRUploads:             cloneOptionalSlice(a.HDRUploads),
@@ -285,6 +293,12 @@ func (a *ExactMediaAssets) Clone() *ExactMediaAssets {
 		AudioTracks:            cloneOptionalSlice(a.AudioTracks),
 		AudioUploads:           cloneOptionalSlice(a.AudioUploads),
 		AudioUploadHosts:       maps.Clone(a.AudioUploadHosts),
+	}
+	if a.ComparisonUploads != nil {
+		cloned.ComparisonUploads = make(map[PublicResourceID][]UploadedImageLink, len(a.ComparisonUploads))
+		for id, uploads := range a.ComparisonUploads {
+			cloned.ComparisonUploads[id] = cloneOptionalSlice(uploads)
+		}
 	}
 	if a.HDRAnalysis != nil {
 		ref := *a.HDRAnalysis
@@ -300,7 +314,7 @@ func (a *ExactMediaAssets) Clone() *ExactMediaAssets {
 	return cloned
 }
 
-// Validate enforces the normal-screenshot and DVD-menu channel boundary.
+// Validate enforces media channel boundaries and retained image/upload identity.
 func (a *ExactMediaAssets) Validate() error {
 	if a == nil {
 		return nil
@@ -365,7 +379,45 @@ func (a *ExactMediaAssets) Validate() error {
 	if err := validateExactMediaUploads("audio analysis", a.AudioUploads, audioPaths); err != nil {
 		return err
 	}
+	if err := a.validateComparisonAssets(); err != nil {
+		return err
+	}
 	return a.validateHDRAssets()
+}
+
+func (a *ExactMediaAssets) validateComparisonAssets() error {
+	if a.Comparisons == nil {
+		if len(a.ComparisonImages) != 0 || len(a.ComparisonUploads) != 0 {
+			return errors.New("exact media comparison images require their reviewed row mapping")
+		}
+		return nil
+	}
+	for id, image := range a.ComparisonImages {
+		if id == "" || image.Purpose != ScreenshotPurposeComparison || strings.TrimSpace(image.Path) == "" {
+			return errors.New("exact media comparison image has invalid identity, purpose or path")
+		}
+	}
+	for _, row := range a.Comparisons.Rows {
+		if row.Excluded {
+			continue
+		}
+		for _, cell := range row.Cells {
+			image, exists := a.ComparisonImages[cell.ArtifactID]
+			if !exists || image.ContentSHA256 == "" || image.ContentSHA256 != cell.ContentSHA256 {
+				return errors.New("exact media comparison cell does not match its retained image")
+			}
+		}
+	}
+	for id, uploads := range a.ComparisonUploads {
+		image, exists := a.ComparisonImages[id]
+		for _, upload := range uploads {
+			if !exists || upload.Purpose != ScreenshotPurposeComparison || upload.ImagePath != image.Path ||
+				upload.ContentSHA256 == "" || upload.ContentSHA256 != image.ContentSHA256 {
+				return errors.New("exact media comparison upload does not match its retained cell")
+			}
+		}
+	}
+	return nil
 }
 
 func validateExactMediaUploads(channel string, uploads []UploadedImageLink, allowedPaths map[string]struct{}) error {
@@ -467,15 +519,19 @@ type UploadSubject struct {
 	// from a complete client record bound to the prepared source path.
 	ClientTorrentDataVerified bool
 	TorrentPath               string
-	ArrReleaseGroup           string
-	ReleaseNameOverrides      ReleaseNameOverrides
-	NamePresentation          ReleaseNamePresentation
+	// TrackerTorrentArtifacts binds each selected tracker to its validated base.
+	// These private paths never replace registered post-upload artifacts.
+	TrackerTorrentArtifacts map[string]TorrentArtifact `json:"-"`
+	ArrReleaseGroup         string
+	ReleaseNameOverrides    ReleaseNameOverrides
+	NamePresentation        ReleaseNamePresentation
 	// GeneratedName is the exact prepared generation's structured automatic name.
 	GeneratedName               *ReleaseNameDocument
 	TrackerQuestionnaireAnswers map[string]map[string]string
 	SeasonInt                   int
 	EpisodeInt                  int
 	MultipleEpisodes            bool
+	EpisodeCoverage             EpisodeCoverage
 	SeasonStr                   string
 	EpisodeStr                  string
 	TVDBAiredDate               string
@@ -2006,6 +2062,7 @@ type ImageHostOverrides struct {
 }
 
 type TorrentOverrides struct {
+	// InfoHash is a preparation-time client lookup hint, not a required output hash.
 	InfoHash        *string
 	MaxPieceSizeMiB *int
 	NoHash          *bool
@@ -2032,7 +2089,8 @@ type TorrentSubject struct {
 	ClientTorrentDataVerified bool
 	// ForceRecheck requests a local piece check before reusing a candidate.
 	ForceRecheck bool
-	// DeferWrapperConversion lets an operation search for exact-layout alternatives first.
+	// DeferWrapperConversion searches for exact-layout alternatives when none are usable.
+	// Known metadata-only conversions still compete with usable artifacts.
 	DeferWrapperConversion bool
 	// DeferGenerationPublication transfers a newly generated artifact to the caller
 	// for publication after its source-stability fence succeeds.
@@ -2048,6 +2106,8 @@ type TorrentSubject struct {
 // for torrent-client search, linking, and injection. [TorrentResult] paths and
 // URLs identify torrent artifacts and do not replace these source facts.
 type ClientSubject struct {
+	// InfoHash optionally selects one client torrent; exports still require source validation.
+	InfoHash        string
 	SourcePath      string
 	FileList        []string
 	DiscType        string
@@ -2447,6 +2507,15 @@ type TMDBMetadata struct {
 	IMDbMismatch        bool
 	MismatchedIMDbID    int
 	Localized           map[string]TMDBLocalizedData
+
+	// SpokenLanguages is the normalized automatic title-level dialogue-language set.
+	// It does not identify release tracks or override explicit corrections.
+	SpokenLanguages []string `json:",omitempty"`
+
+	// LogoLanguagePreference identifies the order used for the retained artwork.
+	LogoLanguagePreference string `json:",omitempty"`
+	// LogoLookupPending records a failed artwork lookup that ordinary preparation can retry.
+	LogoLookupPending bool `json:",omitempty"`
 }
 
 type TMDBLocalizedData struct {
@@ -2536,6 +2605,12 @@ type IMDBMetadata struct {
 	SoundMixes       []string
 	TVYear           int
 	OriginalLanguage string
+	// SpokenLanguages contains IMDb's title-level language names for provider display.
+	SpokenLanguages []string `json:",omitempty"`
+	// EditionRuntimes retains each comparison row, including multiple editions
+	// in the same minute. Nil marks older snapshots; empty marks a title
+	// fetched with the runtime query but without conclusive rows.
+	EditionRuntimes []IMDBEditionDetail `json:",omitzero"`
 }
 
 type IMDBPerson struct {
@@ -2829,14 +2904,25 @@ type TrackerQuestionnaireField struct {
 	Required    bool
 }
 
-// TorrentResult carries a torrent artifact reference and tracker context
+// TorrentArtifact is an exact reusable base metainfo reference.
+type TorrentArtifact struct {
+	Path          string
+	InfoHash      string
+	ContentSHA256 string
+}
+
+// TorrentResult carries base-artifact selections or one registered torrent
 // between creation, upload, and client-injection services.
 type TorrentResult struct {
-	Path      string
-	InfoHash  string
-	URL       string
-	Tracker   string
-	CrossSeed bool
+	// TrackerArtifacts contains an immutable compatible base for each retained tracker.
+	TrackerArtifacts map[string]TorrentArtifact
+	// BaseArtifacts retains unique compatible and general-purpose variants for later reuse.
+	BaseArtifacts []TorrentArtifact
+	Path          string
+	InfoHash      string
+	URL           string
+	Tracker       string
+	CrossSeed     bool
 	// VerifyInjection requires proof that qBittorrent has the local artifact's
 	// infohash and required announce URLs instead of trusting its add response.
 	// URL-only qBittorrent adds cannot provide that proof. Workflow callers set

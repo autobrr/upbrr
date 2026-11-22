@@ -142,6 +142,7 @@ type cliOptions struct {
 	ManualFrames               string
 	Comparison                 string
 	ComparisonIndex            int
+	ComparisonReuseMain        bool
 	MenuImages                 string
 	GetDVDMenus                bool
 	HDRResumeWorkflow          string
@@ -235,8 +236,8 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.IntVar(&opts.Screens, "s", -1, "Number of screenshots to take")
 	fs.BoolVar(&opts.NoSeed, "no-seed", false, "Do not inject torrent into clients")
 	fs.BoolVar(&opts.NoSeed, "ns", false, "Do not inject torrent into clients")
-	fs.BoolVar(&opts.SkipAutoTorrent, "skip_auto_torrent", false, "Skip automated torrent client searching")
-	fs.BoolVar(&opts.SkipAutoTorrent, "sat", false, "Skip automated torrent client searching")
+	fs.BoolVar(&opts.SkipAutoTorrent, "skip_auto_torrent", false, "Skip initial torrent-client discovery; BASE reuse still checks clients before hashing")
+	fs.BoolVar(&opts.SkipAutoTorrent, "sat", false, "Skip initial torrent-client discovery; BASE reuse still checks clients before hashing")
 	fs.BoolVar(&opts.KeepFolder, "keep-folder", false, "Keep the supplied folder around one movie or episode video, excluding sidecars")
 	fs.BoolVar(&opts.KeepFolder, "kf", false, "Keep the supplied folder around one movie or episode video, excluding sidecars")
 	fs.BoolVar(&opts.OnlyID, "onlyID", false, "Only grab tracker metadata IDs")
@@ -328,8 +329,9 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.StringVar(&opts.ManualFrames, "mf", "", "Comma-separated frame numbers to use for screenshots")
 	fs.StringVar(&opts.Comparison, "comparison", "", "Comparison folder path or comma-separated paths")
 	fs.StringVar(&opts.Comparison, "comps", "", "Comparison folder path or comma-separated paths")
-	fs.IntVar(&opts.ComparisonIndex, "comparison_index", 0, "Primary comparison index")
-	fs.IntVar(&opts.ComparisonIndex, "comps_index", 0, "Primary comparison index")
+	fs.IntVar(&opts.ComparisonIndex, "comparison_index", 0, "Main source group number from comparison image names")
+	fs.IntVar(&opts.ComparisonIndex, "comps_index", 0, "Main source group number from comparison image names")
+	fs.BoolVar(&opts.ComparisonReuseMain, "comparison-use-main-screenshots", false, "Use the main comparison column as normal screenshots")
 	fs.StringVar(&opts.MenuImages, "menu-images", "", "Path to manually captured disc menu screenshots (Disc releases only)")
 	fs.BoolVar(&opts.GetDVDMenus, "get-dvd-menus", false, "Capture distinct menus from an extracted DVD VIDEO_TS (requires compatible FFmpeg)")
 	fs.StringVar(&opts.HDRResumeWorkflow, "hdr-resume-workflow", "", "Resume HDR output in an exact retained active CLI workflow")
@@ -363,9 +365,7 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.StringVar(&opts.AudioOutput, "audio-output", "", "Output directory for --audio-analysis-only artifacts")
 	fs.StringVar(&opts.AudioTracks, "audio-tracks", "primary", "Audio tracks: primary (default), all, or comma-separated one-based audio ordinals")
 	fs.StringVar(&opts.AudioImages, "audio-images", "both", "Audio images: both (default), waveform, or spectrogram")
-	fs.StringVar(&opts.InfoHash, "torrenthash", "", "Reuse an existing torrent info hash")
-	fs.StringVar(&opts.InfoHash, "th", "", "Reuse an existing torrent info hash")
-	fs.StringVar(&opts.InfoHash, "infohash", "", "Override v1 info hash")
+	fs.StringVar(&opts.InfoHash, "infohash", "", "Find an existing client torrent by v1 info hash before ordinary discovery")
 	fs.IntVar(&opts.MaxPieceSize, "max-piece-size", 0, "Set maximum torrent piece size in MiB")
 	fs.IntVar(&opts.MaxPieceSize, "mps", 0, "Set maximum torrent piece size in MiB")
 	fs.BoolVar(&opts.NoHash, "nohash", false, "Reuse existing torrents only without generating a new one")
@@ -774,8 +774,6 @@ func cliFlagAliases() map[string]string {
 		"mf":                   "manual_frames",
 		"comps":                "comparison",
 		"comps_index":          "comparison_index",
-		"th":                   "infohash",
-		"torrenthash":          "infohash",
 		"mps":                  "max-piece-size",
 		"nh":                   "nohash",
 		"rh":                   "rehash",
@@ -977,6 +975,7 @@ func cliHelpSections(name string) []helpSection {
 			"manual_frames",
 			"comparison",
 			"comparison_index",
+			"comparison-use-main-screenshots",
 			"menu-images",
 			"get-dvd-menus",
 			"imghost",
@@ -1202,7 +1201,7 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, d
 		if err != nil {
 			return api.Request{}, err
 		}
-		if category != "" {
+		if category != "" && req.ReleaseNameOverrides.Category == nil && !opts.resetsCategory() {
 			req.ReleaseNameOverrides.Category = stringPtr(category)
 		}
 	}
@@ -1310,9 +1309,22 @@ func validateCLIInputFlagOccurrences(fs *pflag.FlagSet, flagArgs []string) error
 }
 
 func mergeCLIInputEditArgs(currentArgs, editArgs []string) ([]string, error) {
-	_, changed, _, err := parseCLIOptions(editArgs)
+	edits, changed, _, err := parseCLIOptions(editArgs)
 	if err != nil {
 		return nil, err
+	}
+	identityFlags := map[string]string{
+		string(api.CorrectionFieldIdentityTMDB):        "tmdb",
+		string(api.CorrectionFieldIdentityIMDB):        "imdb",
+		string(api.CorrectionFieldIdentityTVDB):        "tvdb",
+		string(api.CorrectionFieldIdentityTVmaze):      "tvmaze",
+		string(api.CorrectionFieldIdentityMAL):         "mal",
+		string(api.CorrectionFieldReleaseNameCategory): "category",
+	}
+	for _, field := range edits.ResetInput {
+		if flag := identityFlags[strings.TrimSpace(field)]; flag != "" {
+			changed[flag] = true
+		}
 	}
 	var opts cliOptions
 	fs := pflag.NewFlagSet("upbrr", pflag.ContinueOnError)
@@ -1329,6 +1341,16 @@ func mergeCLIInputEditArgs(currentArgs, editArgs []string) ([]string, error) {
 		}
 		if canonical, exists := aliases[name]; exists {
 			name = canonical
+		}
+		// An earlier Auto request must not reset a later explicit provider choice.
+		if name == "reset-input" {
+			_, field, inline := strings.Cut(flags[start], "=")
+			if !inline {
+				field = flags[i]
+			}
+			if changed[identityFlags[strings.TrimSpace(field)]] {
+				continue
+			}
 		}
 		if !changed[name] {
 			merged = append(merged, flags[start:i+1]...)
@@ -1505,7 +1527,7 @@ func buildCLIInputCorrectionValues(opts cliOptions, visited map[string]bool) (ap
 		if err != nil {
 			return api.ReleaseCorrectionValues{}, err
 		}
-		if category != "" {
+		if category != "" && releaseName.Category == nil && !opts.resetsCategory() {
 			releaseName.Category = stringPtr(category)
 		}
 	}
@@ -1514,6 +1536,13 @@ func buildCLIInputCorrectionValues(opts cliOptions, visited map[string]bool) (ap
 		ReleaseName: releaseName,
 		Metadata:    buildMetadataOverrides(opts, visited),
 	}, nil
+}
+
+// resetsCategory keeps a provider URL hint from replacing an explicit Auto request.
+func (o cliOptions) resetsCategory() bool {
+	return slices.ContainsFunc(o.ResetInput, func(field string) bool {
+		return strings.TrimSpace(field) == string(api.CorrectionFieldReleaseNameCategory)
+	})
 }
 
 func parseCLIInputFieldRef(raw string) (api.CorrectionFieldRef, error) {
@@ -1657,6 +1686,9 @@ func buildScreenshotOverrides(opts cliOptions, visited map[string]bool) api.Scre
 	if visited["comparison_index"] {
 		value := opts.ComparisonIndex
 		overrides.ComparisonPrimaryIndex = &value
+	}
+	if visited["comparison-use-main-screenshots"] {
+		overrides.ComparisonReuseMain = opts.ComparisonReuseMain
 	}
 	return overrides
 }

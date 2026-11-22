@@ -40,6 +40,11 @@ AvistaZ-family (`azfamily`) trackers are intentionally out of scope.
 - Package completeness comes from the prepared source's `PackageInventory`, collected through
   the torrent inclusion policy. Validation receives those intended files, including full-disc
   structure and deliberate exclusions. A bare media-selection `FileList` remains partial.
+  `EpisodeCoverage` retains source part/range identity and known episode membership. Its complete
+  status identifies all included members; it never establishes season completeness. Custom generated
+  upload names must preserve its part/range label, and duplicate targets must retain its evidence.
+  Season presence remains explicit for `S00`. Naming omissions never discard duplicate coverage;
+  contradictory episode expressions must not be published as verified ranges.
   Complete inventory does not imply complete episode, technical, or language coverage; included
   prohibited files still produce violations. Retain the torrent scope so a collapsed single-file
   payload is not mistaken for a retained folder. Preserve inventory authority through rule adapters.
@@ -487,6 +492,10 @@ adapter consumes. Choose by protocol behavior, not tracker identity:
 Ready-empty content is valid and differs from failed content. Generic coordinators never infer a
 failure from empty text or zero selected images.
 
+Shared description assets also retain explicitly reviewed, complete comparison rows and source
+columns. Preserve their owned block when replacing ordinary screenshots; main-column screenshot
+reuse shares the same image/upload identity and never flattens the other columns into screenshots.
+
 All Unit3D and AvistaZ-family definitions currently declare `description` once at family level.
 Standalone profiles must set `UploadContentMode` explicitly. Current protocol examples are BTN/NBL
 for `none`, RTF for `screenshots`, and ANT and most other standalone trackers for `description`.
@@ -824,8 +833,8 @@ Do not infer specials from a release name or relax other sites' season requireme
 Choose dispositions deliberately:
 
 - `advisory` records a decision but never blocks;
-- `waivable` records an upload warning; exact user approval permits that tracker, while no response leaves only that tracker excluded; debug mode bypasses it automatically;
-- `strict` blocks normal uploads and cannot be acknowledged. An explicitly marked `RuleFailure.DebugBypass` may preserve a tracker eligibility bypass in debug mode; unrelated strict constructibility checks still block.
+- `waivable` records an upload warning; exact user approval permits that tracker, while no response leaves only that tracker excluded; debug records the same outcome but permits non-submitting diagnostic preparation;
+- `strict` blocks normal uploads and cannot be acknowledged. An explicitly marked `RuleFailure.DebugBypass` permits diagnostic preparation in debug mode without changing the blocked policy outcome; unrelated strict constructibility checks still block.
 
 The workflow emits one tracker-scoped override for the exact current tracker warning set.
 The shared heuristic `modified_release` warning is separate: one generation-bound release
@@ -984,6 +993,11 @@ needed. If the tracker requires a genuinely new config field, also update:
 - config persistence, catalog, and frontend settings tests
 
 Prefer an existing semantically correct field over adding an alias for the same credential.
+
+Retained compatibility controls without feature consumers are excluded from workflow comparisons
+in `internal/config/effective_fingerprint.go`. When wiring one of these controls, remove its
+comparison exclusion and cover active-setting invalidation. Persist and export the original
+configuration, never the comparison-only view.
 
 ### 9. Unit3D tests
 
@@ -1419,7 +1433,28 @@ with `python3 scripts/languages/update-registry.py <downloaded-registry-file> > 
 regenerate correction choices when changing it.
 
 Use `WithLanguagePolicy` or `WithLanguageAssessment` to expose the same pure language predicate
-through `ValidationPolicyBinding.LanguageAssessment` for source-level readiness. A custom binding
+through `ValidationPolicyBinding.LanguageAssessment` for source-level readiness.
+Canonical `LanguageFacts.OriginalLanguages` prefers TMDB's normalized spoken-language
+set when available. Explicit original-language corrections and clears remain
+authoritative; the scalar provider original language remains available for other
+owned metadata policies. Treat the preferred reference as a set, never as an ordered
+primary-language choice or a requirement for one stream per title language.
+Classify actual soundtracks through `ProgrammeAudioOrigin`: matching title evidence
+cannot override a confirmed dub. English title dialogue alone does not establish
+English programme audio or subtitle coverage. `HasEnglishOriginalAudio` requires
+an original programme track identified only as English; English dialogue in a
+multilingual original or an English dub does not satisfy it. Original-soundtrack
+policy evidence takes precedence over a conflicting provider production-language
+value. For original-show classification, a verified title-language correction
+governs even when track-origin facts disagree. Auto title-language matches can
+fill an evidence gap but cannot override an established original soundtrack.
+A language set alone does not establish dialogue predominance; preserve
+site-specific uncertainty and do not turn possible trumpability into prohibition.
+A country derivation for one original
+primary soundtrack needs that soundtrack's origin evidence and an unambiguous
+reference, rather than the first title-language entry.
+
+A custom binding
 wrapper must preserve that callback when composing validation. Missing programme-language findings
 carry `LanguageCorrectionTrackIDs`; source review requests only the addressable tracks needed by
 non-advisory current policy, once across selected trackers. Save answers through canonical,
@@ -1431,7 +1466,7 @@ use `WithEnglishLanguageFallback`. BLU and PHD opt into this maintainer-selected
 it is not a claim about verified site rules. It reuses `EnglishLanguagePolicy`, the common
 AITHER original-audio, extra-dub and English-accessibility predicates, without AITHER's
 questionnaire, compatibility or music-video extensions. Known failures remain strict in normal
-execution; full-disc exemptions, source-level corrections and the non-submitting debug bypass
+execution; full-disc exemptions, source-level corrections and non-submitting diagnostic preparation
 remain shared. Keep a verified tracker-specific policy in preference to this fallback, and do
 not infer English orientation from membership in a tracker family.
 
@@ -1483,9 +1518,13 @@ Advice about primary programme audio must use an unambiguous inspected primary t
 and exclude secondary roles. Missing facts produce no speculative recommendation.
 
 Origin-country defaults must use current, source-bound provider evidence and the inspected primary
-original-language audio. Normalize supported country codes and names, retain all co-production
-countries when checking agreement, and never use the work’s origin to infer a dub’s country.
-Explicit answers and finalized language corrections retain precedence.
+original-language audio. Normalize supported country codes and names. For BTN non-disc country autofill,
+each provider with at least one supported origin counts once toward the majority total. Only fully
+supported origins identifying one country cast a vote; co-productions and partly supported origins
+remain in the total without voting. Missing or entirely unsupported origins do not count. Autofill
+requires a strict majority of that total; otherwise, leave the country unresolved for the existing
+country question. Never use the work’s origin to infer a dub’s country. Explicit answers and finalized
+language corrections retain precedence.
 
 Compatibility-audio inference stays tracker-local and uses the shared measured-relationship
 helpers. A distinct same-resource stream with fully known matching languages may accompany one

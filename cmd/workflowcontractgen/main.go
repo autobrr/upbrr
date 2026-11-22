@@ -211,6 +211,7 @@ func contractRoots() []reflect.Type {
 	values := []any{
 		api.ActiveInputSnapshot{},
 		api.OpenActiveInputRequest{},
+		api.CancelActiveInputOpenRequest{},
 		api.ReleaseActiveInputRequest{},
 		api.RecoverLegacyActiveInputRequest{},
 		api.ReconcileActiveInputRequest{},
@@ -225,6 +226,9 @@ func contractRoots() []reflect.Type {
 		api.DeleteReleaseWorkflowMediaRequest{},
 		api.ReorderReleaseWorkflowMediaRequest{},
 		api.AttachReleaseWorkflowMediaRequest{},
+		api.EditReleaseWorkflowComparisonsRequest{},
+		api.DiscoverReleaseWorkflowComparisonSourceRequest{},
+		api.ComparisonSourceDiscovery{},
 		api.AnalyzeReleaseWorkflowAudioRequest{},
 		api.SelectReleaseWorkflowHDRComparisonRequest{},
 		api.AnalyzeReleaseWorkflowHDRRequest{},
@@ -561,6 +565,17 @@ func routeManifest() []route {
 			Errors:      errorProfileJSONMutation,
 		},
 		{
+			Path:        "/workflows/{workflowId}/media/comparisons/sources/discover",
+			Method:      http.MethodPost,
+			OperationID: "discoverWorkflowComparisonSource",
+			Tag:         "Media",
+			Summary:     "Discover comparison programmes",
+			Description: "Reads programme choices without changing workflow or media revisions.",
+			Request:     reflect.TypeFor[api.DiscoverReleaseWorkflowComparisonSourceRequest](),
+			Success:     jsonSuccess("200", "Discovered comparison programmes.", reflect.TypeFor[api.ComparisonSourceDiscovery](), false),
+			Errors:      errorProfileJSONMutation,
+		},
+		{
 			Path:        "/workflows/{workflowId}/media/previews/{previewId}",
 			Method:      http.MethodGet,
 			OperationID: "openWorkflowMediaPreview",
@@ -580,6 +595,17 @@ func routeManifest() []route {
 			Success:     jsonSuccess("201", "Staged workflow resource reference.", reflect.TypeFor[api.WorkflowResourceRef](), false),
 			Errors:      errorProfileMultipartMutation,
 			Multipart:   true,
+		},
+		{
+			Path:        "/workflows/{workflowId}/media/comparisons",
+			Method:      http.MethodPost,
+			OperationID: "editWorkflowComparisons",
+			Tag:         "Media",
+			Summary:     "Configure, match, capture or approve comparisons",
+			Description: "Retains ordered source columns and complete comparison rows. Upload requires explicit approval of the exact retained image and settings fingerprint.",
+			Request:     reflect.TypeFor[api.EditReleaseWorkflowComparisonsRequest](),
+			Success:     jsonSuccess("202", "Workflow state with the comparison operation attached.", current, true),
+			Errors:      errorProfileJSONMutation,
 		},
 		{
 			Path:        "/workflows/{workflowId}/media/attach",
@@ -890,6 +916,15 @@ func routeParameters(item route) []any {
 				"type":    "integer",
 				"minimum": 1,
 			},
+		})
+	}
+	if item.OperationID == "previewWorkflowMediaFrame" {
+		parameters = append(parameters, map[string]any{
+			"name":        "previewId",
+			"in":          "query",
+			"description": "The current comparison preview to step from. A retained comparison cell can also identify the starting picture.",
+			"required":    false,
+			"schema":      map[string]any{"type": "string"},
 		})
 	}
 	return parameters
@@ -1251,6 +1286,7 @@ func newSchemaBuilder() *schemaBuilder {
 				"trackerPreparation",
 				"duplicateReview",
 				"trackerApproval",
+				"comparisonApproval",
 				"uploadApproval",
 				"reprepare",
 				"reconciliation",

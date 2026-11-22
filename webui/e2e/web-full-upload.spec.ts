@@ -1,13 +1,18 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { expect, type Locator, type Page, type Response } from "@playwright/test";
 import type {
   ActiveInputSnapshot,
   ContinueReleaseWorkflowRequest,
+  ComparisonSourceDiscovery,
   ReleaseWorkflowCurrent,
+  FramePreview,
 } from "../src/api/generated/release-workflow";
 import {
   createAlternateSourceFixture,
@@ -26,6 +31,835 @@ import {
 
 const waitForAppMethod = (page: Page, method: string) =>
   page.waitForResponse((response) => response.url().endsWith(`/api/app/${method}`));
+
+async function openComparisonDisclosure(scope: Locator, label: string) {
+  const summary = scope
+    .getByText(label, { exact: true })
+    .locator("xpath=ancestor-or-self::summary[1]");
+  if (!(await summary.evaluate((element) => element.closest("details")?.open))) {
+    await summary.click();
+  }
+}
+
+async function openComparisonSource(scope: Locator, label: string) {
+  await openComparisonDisclosure(scope, "Sources");
+  await openComparisonDisclosure(scope, label);
+}
+
+async function openComparisonPreview(scope: Locator, source: string) {
+  await openComparisonDisclosure(scope, "Preview & alignment");
+  await openComparisonDisclosure(scope, source);
+  return scope.getByRole("group", { name: `Preview for ${source}`, exact: true });
+}
+
+async function openComparisonCorrection(row: Locator, label: string) {
+  await openComparisonDisclosure(row, "Row and image corrections");
+  await openComparisonDisclosure(
+    row.getByRole("group", { name: `Corrections for ${label}`, exact: true }),
+    "Correct frame",
+  );
+}
+
+test("embedded comparisons inherit screenshot tone mapping for HDR and keep five sources compact", async ({
+  page,
+}, testInfo) => {
+  const workspace = await createE2EWorkspace({ hdrAnalysis: "decoded" });
+  let app: AppServer | undefined;
+  try {
+    await page.addInitScript(() => {
+      localStorage.setItem(
+        "upbrr:appearance:v1",
+        JSON.stringify({ version: 1, theme: "minimal", mode: "dark", accents: {} }),
+      );
+    });
+    await writeFile(
+      workspace.configPath,
+      (await readFile(workspace.configPath, "utf8")).replace(
+        "screenshot_handling:\n",
+        "screenshot_handling:\n  tone_map: true\n  use_libplacebo: false\n",
+      ),
+    );
+    const sdr = path.join(path.dirname(workspace.sourcePath), "Example.SDR.mkv");
+    await promisify(execFile)("ffmpeg", [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-f",
+      "lavfi",
+      "-i",
+      "testsrc2=size=160x90:rate=25:duration=2",
+      "-c:v",
+      "ffv1",
+      sdr,
+    ]);
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+    await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
+    await page.getByRole("checkbox", { name: "HDS", exact: true }).check();
+    await expect
+      .poll(async () => {
+        const active = await page.request.get(
+          new URL("api/app/GetActiveInput", app!.url).toString(),
+        );
+        return ((await active.json()) as ActiveInputSnapshot).current?.selection?.trackerIds;
+      })
+      .toEqual(["HDS"]);
+    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+    const comparison = page.getByRole("region", { name: "Comparisons", exact: true });
+    await comparison.getByRole("button", { name: "Create from videos" }).click();
+    await comparison.screenshot({ path: testInfo.outputPath("comparison-setup.png") });
+    const main = comparison.getByRole("group", { name: "Main input · column 1", exact: true });
+    const tone = main.getByRole("combobox", { name: "Tone mapping · Main input", exact: true });
+    // Fixture preparation has no inspected HDR facts; configuring comparisons inspects the PQ file.
+    await expect(tone).toHaveCount(0);
+    await expect(
+      comparison.getByRole("button", { name: "Discover titles and playlists" }),
+    ).toHaveCount(0);
+    for (let index = 2; index <= 5; index++) {
+      await comparison.getByRole("button", { name: "Add comparison video" }).click();
+      await comparison.getByLabel(`Video path for Source ${index}`, { exact: true }).fill(sdr);
+    }
+    const second = comparison.getByRole("group", { name: "Source 2 · column 2", exact: true });
+    const sourceType = second.getByLabel("Source type for Source 2");
+    const discovery: ComparisonSourceDiscovery = {
+      sourceId: "column-2",
+      fingerprint: "synthetic-disc-discovery",
+      candidates: Array.from({ length: 10 }, (_, i) => ({
+        id: `playlist-${i + 1}`,
+        label: `Playlist ${i + 1}`,
+        discId: "disc-1",
+        discName: "Example Disc",
+        durationSeconds: 120,
+        kind: "bluray",
+        rank: i + 1,
+        supported: true,
+      })),
+    };
+    await page.route("**/api/app/DiscoverReleaseWorkflowComparisonSource", (route) =>
+      route.fulfill({ json: discovery }),
+    );
+    await sourceType.selectOption("folder");
+    await second.getByLabel("Video path for Source 2").fill(path.dirname(sdr));
+    await second.getByRole("button", { name: "Discover titles and playlists" }).click();
+    const firstPlaylist = second.getByRole("radio", { name: "Playlist 1", exact: true });
+    const lastPlaylist = second.getByRole("radio", { name: "Playlist 10", exact: true });
+    await firstPlaylist.hover();
+    await expect(lastPlaylist).not.toBeInViewport();
+    await page.mouse.wheel(0, 650);
+    await expect(lastPlaylist).toBeInViewport();
+    await lastPlaylist.check();
+    await expect(lastPlaylist).toBeChecked();
+    await sourceType.selectOption("file");
+    await second.getByLabel("Video path for Source 2").fill(sdr);
+    await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
+    await expect(comparison.getByRole("button", { name: "Apply comparison setup" })).toBeEnabled();
+    await expect(
+      comparison.getByRole("button", { name: "Discover titles and playlists" }),
+    ).toHaveCount(0);
+    await page.setViewportSize({ width: 3840, height: 2160 });
+    const settings = comparison.getByRole("complementary", { name: "Comparison settings" });
+    const review = comparison.getByRole("region", { name: "Review comparison images" });
+    await expect(settings.getByText("Source 5 · column 5", { exact: true })).toBeVisible();
+    const settingsBox = (await settings.boundingBox())!;
+    const reviewBox = (await review.boundingBox())!;
+    expect(settingsBox.x + settingsBox.width).toBeLessThan(reviewBox.x);
+    expect(settingsBox.width).toBeLessThan(320);
+    await comparison.screenshot({ path: testInfo.outputPath("comparison-panel-4k.png") });
+    await openComparisonSource(settings, "Main input · column 1");
+    await expect(tone).toHaveValue("default");
+    await openComparisonSource(settings, "Source 2 · column 2");
+    await expect(second.getByLabel("Video path for Source 2")).toBeVisible();
+    await expect(second.getByRole("combobox", { name: /Tone mapping/ })).toHaveCount(0);
+    for (const setting of ["default", "off", "default"]) {
+      await openComparisonSource(settings, "Main input · column 1");
+      await tone.selectOption(setting);
+      const apply = waitForAppMethod(page, "EditReleaseWorkflowComparisons");
+      await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
+      await apply;
+      await expect(
+        comparison.getByRole("button", { name: "Apply comparison setup" }),
+      ).toBeEnabled();
+      const mainPreview = await openComparisonPreview(settings, "Main input");
+      await mainPreview
+        .getByLabel("Approximate frame seek · Main input", { exact: true })
+        .fill("25");
+      const response = waitForAppMethod(page, "PreviewReleaseWorkflowFrame");
+      await mainPreview.getByRole("button", { name: "Preview Main input", exact: true }).click();
+      const preview = await response;
+      expect(preview.ok(), await preview.text()).toBe(true);
+      expect(((await preview.json()) as FramePreview).processing?.tonemapped).toBe(
+        setting !== "off",
+      );
+    }
+    await openComparisonDisclosure(settings, "Sources");
+    for (const width of [1920, 390, 360]) {
+      await page.setViewportSize({ width, height: 1080 });
+      await page.evaluate((narrow) => {
+        document.documentElement.style.fontSize = narrow ? "20px" : "16px";
+      }, width === 360);
+      const layout = await comparison.evaluate((element) => {
+        const right = element.getBoundingClientRect().right;
+        return {
+          width: element.clientWidth,
+          scrollWidth: element.scrollWidth,
+          overflow: [...element.querySelectorAll("button, input, select")]
+            .filter((child) => child.getBoundingClientRect().right > right)
+            .map((child) => ({
+              tag: child.tagName,
+              text: child.textContent?.slice(0, 80),
+              right: child.getBoundingClientRect().right,
+            }))
+            .slice(0, 12),
+        };
+      });
+      expect(layout.scrollWidth, JSON.stringify(layout)).toBeLessThanOrEqual(layout.width);
+      await comparison.screenshot({ path: testInfo.outputPath(`comparison-panel-${width}.png`) });
+    }
+    const help = comparison.getByRole("button", { name: "Help for Comparisons", exact: true });
+    await help.focus();
+    await expect(page.getByRole("tooltip")).toContainText("Create matched images");
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
+
+    const mainColumn = settings.getByLabel("Main-input column", { exact: true });
+    await openComparisonDisclosure(settings, "Screenshot sizing");
+    await expect(mainColumn).toBeHidden();
+    const sizing = comparison.getByRole("combobox", { name: "Output size" });
+    await expect(sizing).toHaveValue("fit");
+    await sizing.selectOption("source");
+    const changesPending = comparison.getByText("Comparison choices changed.", { exact: false });
+    await expect(changesPending).toBeVisible();
+    await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
+    await expect(changesPending).toHaveCount(0);
+    const secondPreview = await openComparisonPreview(settings, "Source 2");
+    await secondPreview.getByLabel("Approximate frame seek · Source 2").fill("25");
+    await secondPreview.getByRole("button", { name: "Preview Source 2", exact: true }).click();
+    await expect
+      .poll(() =>
+        secondPreview
+          .getByRole("img", { name: "Source 2 comparison preview" })
+          .evaluate((img: HTMLImageElement) => [img.naturalWidth, img.naturalHeight]),
+      )
+      .toEqual([160, 90]);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("embedded comparison imports retain complete rows and require review before controlled hosting", async ({
+  page,
+}, testInfo) => {
+  const workspace = await createE2EWorkspace();
+  // A valid stdlib-encoded PNG exercises full decoding, not only its header.
+  const imageBytes = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAH0lEQVR4nAASAO3/AmR4tP8AAAAAAAAAAAAAAAAAAwAm2AKSihO3vAAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  await writeFile(workspace.screenshotPath, imageBytes);
+  const images = [
+    "01-01-source.png",
+    "01-02-encode.png",
+    "01-03-filtered.png",
+    "02-01-source.png",
+    "02-02-encode.png",
+    "02-03-filtered.png",
+  ].map((name) => ({ name, mimeType: "image/png", buffer: imageBytes }));
+  const app = await startApp(workspace);
+  try {
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+    await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
+    await page.getByRole("checkbox", { name: "HDS", exact: true }).check();
+    await runDuplicateCheck(page);
+    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+    await page.getByRole("button", { name: "Generate screenshots", exact: true }).click();
+    await expect(page.getByText("1 retained screenshot(s)")).toBeVisible();
+    const snapshot = async () =>
+      (await (
+        await page.request.get(new URL("api/app/GetActiveInput", app.url).toString())
+      ).json()) as ActiveInputSnapshot;
+    const before = await snapshot();
+    const normalIDs = before
+      .current!.media!.artifacts.filter((artifact) => artifact.kind === "screenshot")
+      .map((artifact) => artifact.id);
+    const comparison = page.getByRole("region", { name: "Comparisons", exact: true });
+    await comparison.getByRole("button", { name: "Import existing comparisons" }).click();
+    await comparison.getByLabel("Prepared comparison images").setInputFiles(images.slice(0, 5));
+    await comparison.getByRole("button", { name: "Import images", exact: true }).click();
+    const mainColumn = comparison.getByRole("combobox", { name: "Main-input column", exact: true });
+    await expect(mainColumn).toBeEnabled();
+    await mainColumn.selectOption("2");
+    await expect(
+      comparison.getByRole("checkbox", { name: "Use the main column as normal screenshots" }),
+    ).toBeChecked();
+    await comparison
+      .getByRole("checkbox", { name: "Use the main column as normal screenshots" })
+      .uncheck();
+    await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
+    const approve = comparison.getByRole("button", { name: "Approve reviewed comparison images" });
+    await expect(
+      comparison.getByText("Supply the missing source image or explicitly exclude this row.", {
+        exact: false,
+      }),
+    ).toBeVisible();
+    await expect(approve).toBeDisabled();
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+
+    await page.getByRole("button", { name: "Upload Images", exact: true }).click();
+    const blockedUpload = waitForAppMethod(page, "UploadReleaseWorkflowImages");
+    await page.getByRole("button", { name: /^Prepare required hosts/ }).click();
+    await blockedUpload;
+    await expect(page.getByRole("button", { name: /^Prepare required hosts/ })).toBeEnabled();
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+
+    await page.getByRole("button", { name: "Review comparison images", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Review required before upload" }),
+    ).toBeVisible();
+    const secondRow = comparison.getByRole("button", {
+      name: "Select comparison row 2",
+      exact: true,
+    });
+    await secondRow.click();
+    await comparison
+      .getByLabel("Supply filtered, row 2", { exact: true })
+      .setInputFiles(images[5]!);
+    await expect(approve).toBeEnabled();
+    await expect(secondRow).toHaveAttribute("aria-current", "true");
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const image = comparison.getByRole("img", { name: /encode, row 2/ });
+    const sidebar = comparison.getByRole("complementary", { name: "Comparison settings" });
+    const review = comparison.getByRole("region", { name: "Review comparison images" });
+    await comparison.screenshot({ path: testInfo.outputPath("comparison-review-open.png") });
+    const imageWidth = (await image.boundingBox())!.width;
+    const reviewWidth = (await review.boundingBox())!.width;
+    await comparison.getByRole("button", { name: "Hide comparison settings" }).press("Space");
+    await expect(sidebar).toBeHidden();
+    await expect(secondRow).toHaveAttribute("aria-current", "true");
+    expect((await review.boundingBox())!.width).toBeGreaterThan(reviewWidth);
+    expect((await image.boundingBox())!.width).toBeGreaterThan(imageWidth);
+    await comparison.screenshot({ path: testInfo.outputPath("comparison-review-expanded.png") });
+    await image.click();
+    await expect(page.getByRole("dialog", { name: /encode, row 2/ })).toBeVisible();
+    await page.getByRole("button", { name: "Close image preview" }).click();
+    await comparison.getByRole("button", { name: "Show comparison settings" }).click();
+    await openComparisonSource(comparison, "filtered · column 3");
+    await comparison.getByRole("button", { name: "Move filtered left", exact: true }).click();
+    await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
+    await expect(approve).toBeEnabled();
+    await expect(
+      comparison.getByRole("checkbox", { name: "Use the main column as normal screenshots" }),
+    ).not.toBeChecked();
+    await expect(mainColumn).toHaveValue("2");
+    const reviewed = (await snapshot()).current!.media!.comparisons!;
+    expect(reviewed.sources.map((source) => source.id)).toEqual(["1", "3", "2"]);
+    expect(reviewed.rows.map((row) => row.cells.length)).toEqual([3, 3]);
+    await comparison.getByRole("button", { name: "Select comparison row 1", exact: true }).click();
+    await comparison.getByRole("img", { name: /encode, row 1/ }).click();
+    await expect(page.getByRole("dialog", { name: /encode, row 1/ })).toBeVisible();
+    await page.getByRole("button", { name: "Close image preview" }).click();
+    await approve.click();
+    await expect(
+      comparison.getByText("These captured comparison images are approved.", { exact: true }),
+    ).toBeVisible();
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+
+    await page.getByRole("button", { name: "Upload Images", exact: true }).click();
+    await page.getByRole("button", { name: /^Prepare required hosts/ }).click();
+    const cellIDs = reviewed.rows.flatMap((row) => row.cells.map((cell) => cell.artifactId!));
+    await expect
+      .poll(async () => {
+        const media = (await snapshot()).current!.media!;
+        const hostedSources = new Set(
+          media.artifacts
+            .filter((artifact) => artifact.kind === "hosted_image" && artifact.selected)
+            .map((artifact) => artifact.source),
+        );
+        return cellIDs.every((id) => hostedSources.has(id));
+      })
+      .toBe(true);
+    expect(workspace.fake.counters.imageUploads).toBeGreaterThan(0);
+    await page.reload();
+    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+    await expect(mainColumn).toHaveValue("2");
+    await expect(
+      comparison.getByRole("checkbox", { name: "Use the main column as normal screenshots" }),
+    ).not.toBeChecked();
+    const retained = (await snapshot()).current!.media!;
+    expect(retained.comparisons!.approvedFingerprint).toBe(retained.comparisons!.fingerprint);
+    expect(
+      retained.comparisons!.rows.flatMap((row) => row.cells.map((cell) => cell.artifactId)),
+    ).toEqual(cellIDs);
+    expect(
+      retained.artifacts
+        .filter((artifact) => artifact.kind === "screenshot")
+        .map((artifact) => artifact.id),
+    ).toEqual(normalIDs);
+
+    const publishedLinks = (media: typeof retained) =>
+      media.artifacts
+        .filter((artifact) => artifact.kind === "hosted_image" && artifact.selected)
+        .map((artifact) => artifact.url)
+        .toSorted();
+    const urls = publishedLinks(retained);
+    expect(urls).toHaveLength(cellIDs.length + normalIDs.length);
+    const imageUploads = workspace.fake.counters.imageUploads;
+    await page.getByRole("button", { name: "Unselect Screenshot 1", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Select Screenshot 1", exact: true }),
+    ).toBeEnabled();
+    const continueRoute = "**/api/app/ContinueReleaseWorkflow";
+    await page.route(continueRoute, async (route) => {
+      const body = route.request().postDataJSON() as ContinueReleaseWorkflowRequest;
+      if (body.goal === "duplicates_decided") {
+        await route.continue({
+          postData: { ...body, intent: { ...body.intent, duplicateCheckCount: 2 } },
+        });
+        return;
+      }
+      await route.continue();
+    });
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+    const rechecked = await runDuplicateCheck(page);
+    expect(rechecked.dupes?.checkOrdinal).toBe(2);
+    await page.unroute(continueRoute);
+    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+    await expect
+      .poll(async () => (await snapshot()).current?.media?.comparisons?.approvedFingerprint)
+      .toBe(retained.comparisons!.fingerprint);
+    const restored = (await snapshot()).current!.media!;
+    expect(
+      restored.artifacts
+        .filter((artifact) => artifact.kind === "screenshot")
+        .map(({ id, selected }) => ({ id, selected })),
+    ).toEqual(normalIDs.map((id) => ({ id, selected: false })));
+    expect(publishedLinks(restored)).toEqual(urls);
+    await page.getByRole("button", { name: "Select Screenshot 1", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Unselect Screenshot 1", exact: true }),
+    ).toBeEnabled();
+    expect(workspace.fake.counters.imageUploads).toBe(imageUploads);
+  } finally {
+    await app.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("embedded video comparisons match three native sources and retain reviewed capture after restart", async ({
+  page,
+}, testInfo) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  const workspace = await createE2EWorkspace();
+  try {
+    const ffmpeg = promisify(execFile);
+    const alternatePaths = ["Example.Encode.mkv", "Example.Filtered.mkv"].map((name) =>
+      path.join(path.dirname(workspace.sourcePath), name),
+    );
+    await ffmpeg("ffmpeg", [
+      "-hide_banner",
+      "-nostdin",
+      "-loglevel",
+      "error",
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "testsrc2=size=160x120:rate=10:duration=4",
+      "-c:v",
+      "ffv1",
+      workspace.sourcePath,
+    ]);
+    for (const [index, output] of alternatePaths.entries())
+      await ffmpeg("ffmpeg", [
+        "-hide_banner",
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "-i",
+        workspace.sourcePath,
+        "-vf",
+        `setpts=PTS+${(index + 1) * 2}/TB`,
+        "-c:v",
+        "ffv1",
+        output,
+      ]);
+    let app = await startApp(workspace);
+    const snapshot = async () =>
+      (await (
+        await page.request.get(new URL("api/app/GetActiveInput", app.url).toString())
+      ).json()) as ActiveInputSnapshot;
+    const verifyComparisonBytes = async (current: ReleaseWorkflowCurrent) => {
+      for (const cell of current.media!.comparisons!.rows.flatMap((row) => row.cells)) {
+        const query = new URLSearchParams({
+          workflowId: current.workflow.id,
+          mediaId: current.media!.id,
+          mediaRevision: String(current.media!.revision),
+          artifactId: cell.artifactId!,
+        });
+        const image = await page.request.get(
+          new URL(`api/app/release-workflow-media?${query}`, app.url).toString(),
+        );
+        expect(image.ok(), await image.text()).toBe(true);
+        expect(
+          createHash("sha256")
+            .update(await image.body())
+            .digest("hex"),
+        ).toBe(cell.contentSha256);
+      }
+    };
+    try {
+      await fetchMetadata(page, app.url, workspace.sourcePath);
+      await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+      await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
+      await page.getByRole("checkbox", { name: "HDS", exact: true }).check();
+      await expect
+        .poll(async () => {
+          const current = (await snapshot()).current;
+          return {
+            trackers: current?.selection?.trackerIds,
+            status: current?.operation?.status,
+          };
+        })
+        .toEqual({ trackers: ["HDS"], status: "completed" });
+      expect((await snapshot()).current?.dupes).toBeUndefined();
+      await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+      const comparison = page.getByRole("region", { name: "Comparisons", exact: true });
+      await comparison.getByRole("button", { name: "Create from videos" }).click();
+      for (const [index, label] of ["Encode", "Filtered"].entries()) {
+        await comparison.getByRole("button", { name: "Add comparison video" }).click();
+        const source = comparison.getByRole("group", {
+          name: `Source ${index + 2} · column ${index + 2}`,
+          exact: true,
+        });
+        await source.getByLabel("Column label", { exact: true }).fill(label);
+        await comparison
+          .getByLabel(`Video path for ${label}`, { exact: true })
+          .fill(alternatePaths[index]!);
+      }
+      await openComparisonDisclosure(comparison, "Scene selection");
+      await comparison.getByLabel("Comparison rows", { exact: true }).fill("1");
+      for (const [index, label] of ["Main input", "Encode", "Filtered"].entries()) {
+        await openComparisonSource(comparison, `${label} · column ${index + 1}`);
+        const source = comparison.getByRole("group", {
+          name: `${label} · column ${index + 1}`,
+          exact: true,
+        });
+        await expect(source.getByRole("checkbox", { name: "B", exact: true })).toBeChecked();
+        await expect(
+          source.getByRole("checkbox", {
+            name: "Comparison-only frame overlay and label",
+            exact: true,
+          }),
+        ).toHaveCount(0);
+        await expect(
+          source.getByRole("combobox", { name: `Tone mapping · ${label}`, exact: true }),
+        ).toHaveCount(0);
+      }
+      await expect(
+        comparison.getByRole("checkbox", { name: "Use the main column as normal screenshots" }),
+      ).toBeChecked();
+      await openComparisonDisclosure(comparison, "Scene selection");
+      await expect(comparison.getByLabel("Comparison rows", { exact: true })).toHaveValue("1");
+      await expect(
+        comparison.getByRole("combobox", { name: "Comparison scan mode", exact: true }),
+      ).toHaveValue("fast");
+      await expect(
+        comparison.getByRole("spinbutton", { name: "Flat scenes (rows)", exact: true }),
+      ).toHaveValue("0");
+      const scanHelp = comparison.getByRole("button", {
+        name: "Help for Comparison scan mode",
+        exact: true,
+      });
+      await scanHelp.focus();
+      await page.keyboard.press("Shift+Tab");
+      await page.keyboard.press("Tab");
+      await expect(scanHelp).toHaveAttribute("aria-expanded", "true");
+      await page.keyboard.press("Escape");
+      await openComparisonSource(comparison, "Encode · column 2");
+      const encode = comparison.getByRole("group", { name: "Encode · column 2", exact: true });
+      await encode.getByRole("checkbox", { name: "I", exact: true }).check();
+      await encode.getByLabel("Column label", { exact: true }).fill("Encode [HDR]");
+      const findScenes = comparison.getByRole("button", { name: "Find matching scenes" });
+      const applySetup = comparison.getByRole("button", { name: "Apply comparison setup" });
+      await expect(findScenes).toBeDisabled();
+      const invalidLabel = comparison.getByText("Invalid label in column 2.", { exact: false });
+      await expect(invalidLabel).toBeVisible();
+      await openComparisonSource(comparison, "Encode [HDR] · column 2");
+      await comparison
+        .getByRole("group", { name: "Encode [HDR] · column 2", exact: true })
+        .getByLabel("Column label", { exact: true })
+        .fill("Encode");
+      await expect(invalidLabel).toHaveCount(0);
+      await expect(findScenes).toBeDisabled();
+      await applySetup.click();
+      await expect(findScenes).toBeEnabled();
+      await comparison.getByRole("button", { name: "Hide comparison settings" }).click();
+      await applySetup.focus();
+      await page.keyboard.press("Tab");
+      await expect(findScenes).toBeFocused();
+      await page.keyboard.press("Enter");
+      await expect
+        .poll(async () => {
+          const plan = (await snapshot()).current?.media?.comparisons;
+          return plan?.rows[0]?.cells.filter((cell) => cell.timestampSeconds != null).length;
+        })
+        .toBe(3);
+      const matched = (await snapshot()).current!.media!.comparisons!;
+      const encodeScore = matched.rows[0]!.cells.find(
+        (cell) => cell.sourceId === matched.sources[1]!.id,
+      )?.confidence;
+      expect(encodeScore).toBeDefined();
+      await expect(
+        comparison
+          .getByRole("heading", { name: "Encode", level: 4, exact: true })
+          .locator("..")
+          .getByText(`Visual similarity score: ${encodeScore!.toFixed(3)}`, { exact: true }),
+      ).toBeVisible();
+      expect(
+        matched.sources.map((source) => [
+          source.label,
+          source.width,
+          source.height,
+          Boolean(source.preferBFrames),
+          source.overlay,
+        ]),
+      ).toEqual([
+        ["Main input", 160, 120, true, true],
+        ["Encode", 160, 120, false, true],
+        ["Filtered", 160, 120, true, true],
+      ]);
+      const encodePreview = comparison.getByRole("group", {
+        name: "Preview for Encode",
+        exact: true,
+      });
+      const seek = encodePreview.getByLabel("Approximate frame seek · Encode", { exact: true });
+      const seconds = comparison.getByLabel("Preview seconds · Encode", { exact: true });
+      await expect(applySetup).toBeEnabled();
+      await comparison.getByRole("button", { name: "Show comparison settings" }).click();
+      await openComparisonPreview(comparison, "Encode");
+      await expect(seek).toBeEnabled();
+      await seek.fill("11");
+      await encodePreview.getByRole("button", { name: "Preview Encode", exact: true }).click();
+      await expect(
+        encodePreview.getByText("Actual preview: 1.100s · I", { exact: true }),
+      ).toBeVisible();
+      await encodePreview.getByRole("button", { name: "Next frame", exact: true }).click();
+      await expect(seek).toHaveValue("12");
+      await expect(seconds).toContainText("1.200");
+      await openComparisonDisclosure(comparison, "Scene selection");
+      await comparison
+        .getByRole("spinbutton", { name: "Flat scenes (rows)", exact: true })
+        .fill("1");
+      await expect(findScenes).toBeDisabled();
+      await applySetup.click();
+      await expect(findScenes).toBeEnabled();
+      await openComparisonPreview(comparison, "Encode");
+      await expect(
+        encodePreview.getByRole("img", { name: "Encode comparison preview", exact: true }),
+      ).toHaveCount(0);
+      await expect(seek).toHaveValue("12");
+      await expect(seconds).toContainText("1.200");
+      await encodePreview.getByRole("button", { name: "Preview Encode", exact: true }).click();
+      await expect(
+        encodePreview.getByRole("img", { name: "Encode comparison preview", exact: true }),
+      ).toBeVisible();
+      const row = comparison.getByRole("region", { name: "Comparison row 1", exact: true });
+      for (const [index, label] of ["Main input", "Encode", "Filtered"].entries()) {
+        await openComparisonCorrection(row, `${label}, row 1, image ${index + 1}`);
+        await comparison
+          .getByLabel(`Frame time for ${label}, row 1, image ${index + 1}`, { exact: true })
+          .fill("1.2");
+      }
+      await openComparisonDisclosure(comparison, "Comparison actions");
+      await comparison.getByRole("button", { name: "Capture comparison rows" }).click();
+      const approve = comparison.getByRole("button", {
+        name: "Approve reviewed comparison images",
+      });
+      await expect(approve).toBeEnabled();
+      const captured = (await snapshot()).current!.media!.comparisons!;
+      expect(captured.sizeReferenceSourceId).toBe("main");
+      expect(captured.resizeLargerOnly).toBeFalsy();
+      expect(captured.resizeSmaller).toBeFalsy();
+      expect(captured.preferences.flatCount).toBe(1);
+      expect(captured.preferences.scanMode).toBe("fast");
+      expect(captured.sources.every((source) => source.toneMap == null)).toBe(true);
+      const cells = captured.rows[0]!.cells;
+      expect(cells).toHaveLength(3);
+      expect(
+        cells.every((cell) => cell.artifactId && cell.contentSha256 && cell.pictureType === "I"),
+      ).toBe(true);
+      for (const cell of cells) expect(cell.timestampSeconds).toBeCloseTo(1.2, 8);
+      expect(cells.map((cell) => cell.observedPts)).toEqual([1200, 3200, 5200]);
+      // Column labels differ even when the matched source pixels are identical.
+      expect(new Set(cells.map((cell) => cell.contentSha256)).size).toBe(3);
+      expect(captured.approvedFingerprint).toBeFalsy();
+      expect(workspace.fake.counters.imageUploads).toBe(0);
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      const encodeImageName = "Encode, row 1, image 2";
+      const encodeImage = row.getByRole("img", { name: encodeImageName, exact: true });
+      await expect
+        .poll(() => encodeImage.evaluate((img: HTMLImageElement) => img.naturalWidth))
+        .toBeGreaterThan(0);
+      const imageLayout = await encodeImage.evaluate((img: HTMLImageElement) => {
+        const { width, height } = img.getBoundingClientRect();
+        const button = img.parentElement!.getBoundingClientRect();
+        return {
+          imageRatio: img.naturalWidth / img.naturalHeight,
+          displayedRatio: width / height,
+          extraWidth: button.width - width,
+          extraHeight: button.height - height,
+        };
+      });
+      expect(imageLayout.displayedRatio).toBeCloseTo(imageLayout.imageRatio);
+      expect(imageLayout.extraWidth).toBe(0);
+      expect(imageLayout.extraHeight).toBe(0);
+      await expect(row.getByText(/frame unknown/i)).toHaveCount(0);
+      await comparison.evaluate((element) => element.scrollIntoView({ block: "center" }));
+      await comparison.screenshot({ path: testInfo.outputPath("captured-comparison.png") });
+      await row.getByRole("button", { name: encodeImageName, exact: true }).press("Enter");
+      await expect(page.getByRole("dialog", { name: encodeImageName, exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "Close image preview", exact: true }).click();
+      await comparison.getByRole("button", { name: "Hide comparison settings" }).click();
+      await comparison.evaluate((element) => element.scrollIntoView({ block: "center" }));
+      await comparison.screenshot({
+        path: testInfo.outputPath("captured-comparison-expanded.png"),
+      });
+      await openComparisonCorrection(row, "Encode, row 1, image 2");
+      await row
+        .getByRole("button", { name: "Preview Encode, row 1, image 2", exact: true })
+        .click();
+      const previewLabel = "Encode, row 1, image 2 preview at 1.200s";
+      await row.getByRole("img", { name: previewLabel, exact: true }).click();
+      await expect(page.getByRole("dialog", { name: previewLabel, exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "Close image preview", exact: true }).click();
+      expect((await snapshot()).current?.dupes).toBeUndefined();
+      await approve.click();
+      await expect(
+        comparison.getByText("These captured comparison images are approved.", { exact: true }),
+      ).toBeVisible();
+      await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+      await runDuplicateCheck(page);
+      await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+      await expect(
+        comparison.getByRole("img", { name: "Encode, row 1, image 2", exact: true }),
+      ).toBeVisible();
+      expect(
+        (await snapshot()).current!.media!.comparisons!.rows[0]!.cells.map(
+          (cell) => cell.contentSha256,
+        ),
+      ).toEqual(cells.map((cell) => cell.contentSha256));
+      await expect(
+        comparison.getByText("These captured comparison images are approved.", { exact: true }),
+      ).toBeVisible();
+      expect(workspace.fake.counters.imageUploads).toBe(0);
+      await page.getByRole("button", { name: "Upload Images", exact: true }).click();
+      await page.getByRole("button", { name: /^Prepare required hosts/ }).click();
+      const cellIDs = cells.map((cell) => cell.artifactId!);
+      await expect
+        .poll(async () => {
+          const hosted = new Set(
+            (await snapshot())
+              .current!.media!.artifacts.filter(
+                (artifact) => artifact.kind === "hosted_image" && artifact.selected,
+              )
+              .map((artifact) => artifact.source),
+          );
+          return cellIDs.every((id) => hosted.has(id));
+        })
+        .toBe(true);
+      const persisted = (await snapshot()).current!;
+      await app.stop();
+      app = await startApp(workspace, { seed: false });
+      await page.goto(app.url);
+      // Startup intentionally leaves the active input empty; reading retained
+      // workflow resources must not implicitly reopen it or grant upload authority.
+      const empty = await snapshot();
+      expect(empty.state).toBe("empty");
+      expect(empty.current).toBeUndefined();
+      const auth = await page.request.get(new URL("api/auth/status", app.url).toString());
+      const { csrfToken } = (await auth.json()) as { csrfToken: string };
+      const response = await page.request.post(
+        new URL("api/app/GetReleaseWorkflow", app.url).toString(),
+        {
+          headers: { Origin: new URL(app.url).origin, "X-CSRF-Token": csrfToken },
+          data: { workflowId: persisted.workflow.id },
+        },
+      );
+      expect(response.ok(), await response.text()).toBe(true);
+      const retained = (await response.json()) as ReleaseWorkflowCurrent;
+      expect(retained.media!.comparisons).toEqual(persisted.media!.comparisons);
+      await verifyComparisonBytes(retained);
+      expect(await snapshot()).toEqual(empty);
+
+      const hostedBeforeReopen = workspace.fake.counters.imageUploads;
+      await fetchMetadata(page, app.url, workspace.sourcePath);
+      await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+      await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
+      await page.getByRole("checkbox", { name: "HDS", exact: true }).check();
+      await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+      await comparison
+        .getByRole("button", { name: "Restore retained comparisons", exact: true })
+        .click();
+      await expect(
+        comparison.getByRole("img", { name: "Encode, row 1, image 2", exact: true }),
+      ).toBeVisible();
+      expect((await snapshot()).current?.dupes).toBeUndefined();
+      await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+      await runDuplicateCheck(page);
+      await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+      await expect(
+        comparison.getByRole("img", { name: "Encode, row 1, image 2", exact: true }),
+      ).toBeVisible();
+      const reopened = (await snapshot()).current!;
+      expect(reopened.workflow.id).not.toBe(persisted.workflow.id);
+      expect({ ...reopened.media!.comparisons, approvedFingerprint: undefined }).toEqual({
+        ...persisted.media!.comparisons,
+        approvedFingerprint: undefined,
+      });
+      expect(reopened.media!.comparisons!.approvedFingerprint).toBeFalsy();
+      await verifyComparisonBytes(reopened);
+      expect(workspace.fake.counters.imageUploads).toBe(hostedBeforeReopen);
+      await page.getByRole("button", { name: "Upload Images", exact: true }).click();
+      const blockedUpload = waitForAppMethod(page, "UploadReleaseWorkflowImages");
+      await page.getByRole("button", { name: /^Prepare required hosts/ }).click();
+      await blockedUpload;
+      await expect(page.getByRole("button", { name: /^Prepare required hosts/ })).toBeEnabled();
+      expect(workspace.fake.counters.imageUploads).toBe(hostedBeforeReopen);
+      await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+      await approve.click();
+      await expect(
+        comparison.getByText("These captured comparison images are approved.", { exact: true }),
+      ).toBeVisible();
+      await page.getByRole("button", { name: "Upload Images", exact: true }).click();
+      const reuseResponse = waitForAppMethod(page, "UploadReleaseWorkflowImages");
+      await page.getByRole("button", { name: /^Prepare required hosts/ }).click();
+      const reuseAccepted = await reuseResponse;
+      expect(reuseAccepted.ok()).toBe(true);
+      const reuseStarted = (await reuseAccepted.json()) as ReleaseWorkflowCurrent;
+      await expect
+        .poll(async () => {
+          const current = (await snapshot()).current!;
+          expect(current.operation?.id).toBe(reuseStarted.operation?.id);
+          if (current.operation?.status !== "completed") return false;
+          const artifacts = current.media!.artifacts;
+          return cellIDs.every((id) =>
+            artifacts.some(
+              (artifact) =>
+                artifact.kind === "hosted_image" && artifact.selected && artifact.source === id,
+            ),
+          );
+        })
+        .toBe(true);
+      expect(workspace.fake.counters.imageUploads).toBe(hostedBeforeReopen);
+    } finally {
+      await app.stop();
+    }
+  } finally {
+    await workspace.cleanup();
+  }
+});
 
 test("resolver choices survive empty and failed searches, reload, and metadata refresh", async ({
   page,
@@ -459,8 +1293,11 @@ test("embedded web blocks Dupe Check until missing saved facts are corrected", a
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
-    await page.getByText("Edit Release Details", { exact: true }).click();
+    const reviewSource = warning.getByRole("button", { name: "Review Source", exact: true });
+    await reviewSource.focus();
+    await page.keyboard.press("Enter");
     const source = page.getByRole("combobox", { name: "Source", exact: true });
+    await expect(source).toBeFocused();
     await expect(source).toHaveAttribute("aria-invalid", "true");
     await source.selectOption("Web");
     await expect(dupeCheck).toBeDisabled();
@@ -601,7 +1438,7 @@ for (const scenario of [
     mediaKind: "tv",
     preparedMediaInfo: false,
     releaseDisplayName: "E2E.Show.2026.S01E01.1080p.WEB-DL",
-    screenshots: false,
+    uploadImages: false,
     descriptions: false,
     upload: true,
   },
@@ -611,7 +1448,7 @@ for (const scenario of [
     mediaKind: "movie",
     preparedMediaInfo: true,
     releaseDisplayName: releaseWorkflowParityFixture.releaseDisplayName,
-    screenshots: true,
+    uploadImages: true,
     descriptions: false,
     upload: false,
   },
@@ -621,7 +1458,7 @@ for (const scenario of [
     mediaKind: "tv",
     preparedMediaInfo: true,
     releaseDisplayName: "E2E.Show.2026.S01E01.1080p.WEB-DL",
-    screenshots: true,
+    uploadImages: true,
     descriptions: false,
     upload: false,
   },
@@ -657,11 +1494,11 @@ for (const scenario of [
 
       await expectEnabledState(
         page.getByRole("button", { name: "Screenshots", exact: true }),
-        scenario.screenshots,
+        true,
       );
       await expectEnabledState(
         page.getByRole("button", { name: "Upload Images", exact: true }),
-        scenario.screenshots,
+        scenario.uploadImages,
       );
       await expectEnabledState(
         page.getByRole("button", { name: "Descriptions", exact: true }),
@@ -672,6 +1509,19 @@ for (const scenario of [
         scenario.upload,
       );
       await expect.poll(() => workspace.fake.counters.clientSearches).toBe(1);
+      if (!scenario.uploadImages) {
+        await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+        await expect(page.getByRole("region", { name: "Comparisons", exact: true })).toBeVisible();
+        const active = (await (
+          await page.request.get(new URL("api/app/GetActiveInput", app.url).toString())
+        ).json()) as ActiveInputSnapshot;
+        expect(
+          (active.current?.media?.artifacts || []).filter(
+            (artifact) => artifact.kind === "screenshot" || artifact.kind === "comparison",
+          ),
+        ).toHaveLength(0);
+        expect(workspace.fake.counters.imageUploads).toBe(0);
+      }
     } finally {
       await app?.stop();
       await workspace.cleanup();
@@ -1683,6 +2533,209 @@ test("embedded web recovers saved corrections before a release snapshot and pres
   } finally {
     await app?.stop();
     await workspace.cleanup();
+  }
+});
+
+test("embedded web retains warnings after accepted preparation fails and reloads without authority", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
+  workspace.env.UPBRR_E2E_CANCELLATION_STAGE = "preparation";
+  let app: AppServer | undefined;
+  let gate: ReturnType<typeof workspace.fake.holdWorkflowStage> | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath, "E2E.Show.2026.S01E01.1080p.WEB-DL");
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    await page.getByRole("button", { name: "Remove IMDb ID", exact: true }).click();
+    await page.getByRole("button", { name: "Remove TVDB ID", exact: true }).click();
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    await waitForMetadataReady(page, app.url);
+    const warning = page.getByRole("alert");
+    await expect(
+      warning.getByRole("button", { name: "Review IMDb ID", exact: true }),
+    ).toBeVisible();
+    await page.getByRole("textbox", { name: "Genres", exact: true }).fill("Comedy");
+    gate = workspace.fake.holdWorkflowStage("preparation");
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    await gate.entered;
+    gate.release(503);
+    let snapshot: ActiveInputSnapshot | undefined;
+    await expect
+      .poll(async () => {
+        const response = await page.request.get(
+          new URL("api/app/GetActiveInput", app!.url).toString(),
+        );
+        snapshot = await response.json();
+        return snapshot?.current?.operation?.status;
+      })
+      .toBe("failed");
+    expect(snapshot?.current?.release).toBeUndefined();
+    expect(snapshot?.current?.inputReadiness).toBeUndefined();
+    expect(
+      snapshot?.current?.inputReview?.fields?.some((field) => field.status === "missing"),
+    ).toBe(true);
+    await expect(warning).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry metadata", exact: true })).toBeEnabled();
+    await page.reload();
+    await expect(page.getByLabel("Source path", { exact: true })).toHaveValue(workspace.sourcePath);
+    await expect(warning).toBeVisible();
+    await expect(page.getByRole("button", { name: "Dupe Check", exact: true })).toBeDisabled();
+    await warning.getByRole("button", { name: "Review IMDb ID", exact: true }).click();
+    await page.getByRole("textbox", { name: "IMDb ID", exact: true }).fill("tt1234567");
+    await page.getByRole("textbox", { name: "TVDB ID", exact: true }).fill("2001");
+    gate = workspace.fake.holdWorkflowStage("preparation");
+    gate.release();
+    await page.getByRole("button", { name: "Retry metadata", exact: true }).click();
+    snapshot = await waitForMetadataReady(page, app.url);
+    expect(snapshot.current?.inputReview).toBeUndefined();
+    await expect(warning).toBeHidden();
+    await page.reload();
+    await expect(warning).toBeHidden();
+  } finally {
+    gate?.release();
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("embedded web correction warnings navigate and follow saved preparation state", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  let failRefresh = false;
+  try {
+    app = await startApp(workspace);
+    // Exercise the production UI with synthetic readiness requirements. Corrections still
+    // pass through the real preparation and persisted-input boundaries.
+    await page.route(
+      /\/api\/app\/(OpenActiveInput|ContinueReleaseWorkflow|GetActiveInput)$/,
+      async (route) => {
+        if (failRefresh && route.request().url().endsWith("/OpenActiveInput")) {
+          failRefresh = false;
+          await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+          return;
+        }
+        const response = await route.fetch();
+        const body = await response.json();
+        const current = body.current ?? body;
+        const release = current.release?.release;
+        const metadata = current.corrections?.corrections.metadata;
+        const track = release?.Media.Tracks.find(
+          (track: { Kind: string }) => track.Kind === "audio",
+        );
+        if (track && current.inputReadiness) {
+          current.inputReadiness.fields.push(
+            {
+              key: "synthetic-origin",
+              trackId: track.ID,
+              correctionField: "metadata.track_audio_origins",
+              status: metadata?.TrackAudioOrigins?.some(
+                (value: { trackId: string; origin: string }) =>
+                  value.trackId === track.ID && value.origin === "original",
+              )
+                ? "ready"
+                : "missing",
+              disposition: "strict",
+              trackerIds: ["EXAMPLE"],
+              message: "Review this inspected track's soundtrack origin.",
+            },
+            {
+              key: "synthetic-genres",
+              correctionField: "metadata.genres",
+              status: metadata?.Genres?.includes("Comedy") ? "ready" : "invalid",
+              disposition: "strict",
+              message: "Review this release's genres.",
+            },
+          );
+        }
+        await route.fulfill({ response, json: body });
+      },
+    );
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    const editor = page.getByText("Edit Release Details", { exact: true }).locator("..");
+    const warning = page.getByRole("alert");
+    const genresAction = warning.getByRole("button", { name: "Review Genres", exact: true });
+    const originAction = warning.getByRole("button", {
+      name: "Review Audio track 1 soundtrack origin",
+      exact: true,
+    });
+    await expect(editor).not.toHaveAttribute("open");
+    await expect(genresAction).toBeVisible();
+    await expect(originAction).toBeVisible();
+    await expect(warning).toContainText("Refresh metadata");
+    for (const mode of ["Dark", "Light"] as const) {
+      await page.getByRole("button", { name: "Appearance", exact: true }).click();
+      await page.getByRole("radio", { name: mode, exact: true }).click();
+      await page.getByRole("button", { name: "Input", exact: true }).click();
+      for (const width of [1280, 390]) {
+        await page.setViewportSize({ width, height: 844 });
+        await warning.scrollIntoViewIfNeeded();
+        await expect(warning).toBeInViewport();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+          width,
+        );
+        await page.screenshot({
+          path: test.info().outputPath(`correction-warning-${mode.toLowerCase()}-${width}.png`),
+        });
+      }
+    }
+    await genresAction.focus();
+    await page.keyboard.press("Enter");
+    const genres = page.getByRole("textbox", { name: "Genres", exact: true });
+    await expect(genres).toBeFocused();
+    await genres.fill("Comedy");
+    await expect(genresAction).toBeVisible();
+    failRefresh = true;
+    const failed = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    expect((await failed).status()).toBe(503);
+    await expect(genresAction).toBeVisible();
+    await expect(originAction).toBeVisible();
+    await page.reload();
+    await expect(editor).not.toHaveAttribute("open");
+    await expect(genresAction).toBeVisible();
+    await genresAction.click();
+    await genres.fill("Comedy");
+    let saved = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    expect((await saved).ok()).toBe(true);
+    await waitForMetadataReady(page, app.url);
+    await expect(genresAction).toBeHidden();
+    await expect(originAction).toBeVisible();
+    await page.getByTestId("input-track-coverage").locator("summary").click();
+    await expect(page.getByTestId("input-track-coverage")).not.toHaveAttribute("open");
+    await originAction.focus();
+    await page.keyboard.press("Space");
+    const origin = page.getByRole("combobox", {
+      name: "Audio track 1 soundtrack origin",
+      exact: true,
+    });
+    await expect(origin).toBeFocused();
+    await expect(origin).toBeInViewport();
+    await origin.selectOption("original");
+    await expect(originAction).toBeVisible();
+    saved = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    expect((await saved).ok()).toBe(true);
+    await waitForMetadataReady(page, app.url);
+    await expect(warning).toBeHidden();
+    await page.reload();
+    await expect(
+      page.getByText("Review release facts, source options, and selected tracker input."),
+    ).toBeVisible();
+    await expect(warning).toBeHidden();
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+    expect(workspace.fake.counters.clientInjections).toBe(0);
+  } finally {
+    try {
+      await page.unrouteAll({ behavior: "wait" });
+    } finally {
+      await app?.stop();
+      await workspace.cleanup();
+    }
   }
 });
 
@@ -2855,7 +3908,7 @@ test("embedded web restores captured screens and hosted URLs after reopening an 
   }
 });
 
-test("embedded HDR description opens a full-size lightbox without a saved preview map", async ({
+test("embedded rendered descriptions open HDR images and switch comparison sources", async ({
   page,
 }) => {
   const workspace = await createE2EWorkspace();
@@ -2923,6 +3976,94 @@ test("embedded HDR description opens a full-size lightbox without a saved previe
         await expect(dialog).toHaveCount(0);
       }
     }
+    // Reuse the prepared description group to exercise comparison rendering through its real endpoint.
+    await page.route("https://images.example.invalid/comp/**", (route) => {
+      const wide = route.request().url().includes("-2.png");
+      return route.fulfill({
+        contentType: "image/svg+xml",
+        body: `<svg xmlns="http://www.w3.org/2000/svg" width="${wide ? 600 : 400}" height="180"><rect width="100%" height="100%" fill="#5975a9"/></svg>`,
+      });
+    });
+    await page.setViewportSize({ width: 1000, height: 600 });
+    const sources = ["Main input", "Source 2", "Source 3"];
+    const images = Array.from({ length: 5 }, (_, row) =>
+      sources.map((_, source) => `https://images.example.invalid/comp/${row}-${source}.png`),
+    ).flat();
+    const viewerURL = "https://images.example.invalid/viewer?id=synthetic";
+    await page.route(viewerURL, (route) =>
+      route.fulfill({ contentType: "text/html", body: "<p>Synthetic image-host page</p>" }),
+    );
+    images[1] = `[url=${viewerURL}][img]${images[1]}[/img][/url]`;
+    const raw = `[comparison=${sources.join(", ")}]\n${images.join("\n")}\n[/comparison]`;
+    const rawEditor = page.getByRole("textbox");
+    await rawEditor.fill(raw);
+    await page.getByRole("button", { name: "Render HDS", exact: true }).click();
+    const comparison = preview.locator("details.comparison__details");
+    const disclosure = comparison.getByText("Show", { exact: true });
+    await disclosure.click();
+    const close = comparison.getByText("Close", { exact: true });
+    await close.focus();
+    const activeImages = (source: string) => comparison.getByRole("img", { name: source });
+    await expect(activeImages("Main input")).toHaveCount(5);
+    await expect
+      .poll(() =>
+        comparison
+          .locator("img")
+          .evaluateAll((images) =>
+            images.every((image) => (image as HTMLImageElement).naturalWidth > 0),
+          ),
+      )
+      .toBe(true);
+    const origins = (source: string) =>
+      activeImages(source).evaluateAll((images) =>
+        images.map((image) => {
+          const { x, y } = image.getBoundingClientRect();
+          return { x, y };
+        }),
+      );
+    const initial = await origins("Main input");
+    await page.mouse.move(500, 200);
+    await expect(activeImages("Source 2")).toHaveCount(5);
+    await expect(comparison.locator("figcaption:visible")).toHaveText("Source 2");
+    expect(await origins("Source 2")).toEqual(initial);
+    await activeImages("Source 2").first().click();
+    const failedImage = page.getByRole("dialog", { name: "Source 2" });
+    await expect(failedImage.getByRole("status")).toHaveText("Image could not be loaded.");
+    await expect(failedImage.getByRole("link", { name: "Open original link" })).toHaveAttribute(
+      "href",
+      viewerURL,
+    );
+    await failedImage.getByRole("button", { name: "Close image preview" }).click();
+    await expect(failedImage).toHaveCount(0);
+    await close.focus();
+    await close.press("ArrowRight");
+    await expect(activeImages("Source 3")).toHaveCount(5);
+    expect(await origins("Source 3")).toEqual(initial);
+    await close.press("ArrowRight");
+    await expect(activeImages("Main input")).toHaveCount(5);
+    await close.press("ArrowLeft");
+    await expect(activeImages("Source 3")).toHaveCount(5);
+    const screenshots = comparison.locator(".comparison__screenshots");
+    await screenshots.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await expect(activeImages("Source 3").first()).not.toBeInViewport();
+    await expect(comparison.locator("figcaption:visible")).toBeInViewport();
+    await expect(comparison.locator("figcaption:visible")).toHaveText("Source 3");
+    const gutter = { x: page.viewportSize()!.width - 45, y: 200 };
+    expect(
+      await screenshots.evaluate(
+        (element, { x, y }) => document.elementFromPoint(x, y) === element,
+        gutter,
+      ),
+    ).toBe(true);
+    await page.mouse.click(gutter.x, gutter.y);
+    await expect(screenshots).toBeFocused();
+    await page.keyboard.press("ArrowRight");
+    await expect(activeImages("Main input")).toHaveCount(5);
+    await page.keyboard.press("Escape");
+    await expect(comparison.getByText("Show", { exact: true })).toBeFocused();
+    await expect(rawEditor).toHaveValue(raw);
   } finally {
     await app?.stop();
     await workspace.cleanup();
@@ -3203,7 +4344,7 @@ test("embedded web reports an optional tracker dry run after a duplicate overrid
     const checked = await runDuplicateCheck(page);
     const workflowID = checked.workflow.id;
     await expect(page.getByText("Example.Release.2026.1080p-GRP")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Screenshots", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Screenshots", exact: true })).toBeEnabled();
     const restored = waitForAppMethod(page, "GetActiveInput");
     await page.goto(new URL("screenshots", app.url).toString());
     const current = await activeCurrentFromResponse(await restored);
@@ -3211,8 +4352,15 @@ test("embedded web reports an optional tracker dry run after a duplicate overrid
     expect(
       current.continuation?.availableGoals.find((goal) => goal.goal === "media_ready"),
     ).toMatchObject({ available: false, reasonCode: "duplicates_required" });
-    await expect(page.getByRole("heading", { name: "View unavailable" })).toBeVisible();
-    await page.getByRole("button", { name: "Open Dupe Checking" }).click();
+    await expect(page.getByRole("region", { name: "Comparisons", exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Load suggestions", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "Generate screenshots", exact: true }),
+    ).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Descriptions", exact: true })).toBeDisabled();
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
     await page.getByLabel("Ignore dupes for HDS").click();
     await expect(page.getByText("1 potential dupe · acknowledged")).toBeVisible();
     const accepted = await page
@@ -3623,3 +4771,395 @@ for (const size of [
     }
   });
 }
+
+for (const stage of [
+  "preparation",
+  "duplicates",
+  "screenshots",
+  "images",
+  "descriptions",
+  "torrent",
+] as const) {
+  test(`embedded web confirms cancellation at the ${stage} boundary and retains explicit retry`, async ({
+    page,
+  }) => {
+    const workspace = await createE2EWorkspace(
+      stage === "torrent" ? { mediaKind: "tv", preparedMediaInfo: true } : {},
+    );
+    workspace.env.UPBRR_E2E_CANCELLATION_STAGE = stage;
+    let app: AppServer | undefined;
+    let gate: ReturnType<typeof workspace.fake.holdWorkflowStage> | undefined;
+    try {
+      app = await startApp(workspace);
+      if (stage === "preparation") {
+        await page.goto(app.url);
+        await page.getByLabel("Source path", { exact: true }).fill(workspace.sourcePath);
+        await page.getByLabel("Source path", { exact: true }).press("Escape");
+      } else {
+        await fetchMetadata(
+          page,
+          app.url,
+          workspace.sourcePath,
+          stage === "torrent"
+            ? "E2E.Show.2026.S01E01.1080p.WEB-DL"
+            : releaseWorkflowParityFixture.releaseDisplayName,
+        );
+      }
+      const snapshot = async (): Promise<ActiveInputSnapshot> => {
+        const response = await page.request.get(
+          new URL("api/app/GetActiveInput", app!.url).toString(),
+        );
+        expect(response.ok()).toBe(true);
+        return response.json() as Promise<ActiveInputSnapshot>;
+      };
+      let start: () => Promise<void>;
+      if (stage === "preparation") {
+        start = () =>
+          page.getByRole("button", { name: /^(Fetch|Refresh) metadata$/, exact: true }).click();
+      } else {
+        await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+        if (stage !== "torrent") {
+          await page
+            .getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID })
+            .uncheck();
+          await page.getByRole("checkbox", { name: "HDS", exact: true }).check();
+        }
+        if (stage === "duplicates") {
+          start = () => page.getByRole("button", { name: "Run dupe check", exact: true }).click();
+        } else {
+          await runDuplicateCheck(page);
+          if (stage === "torrent") {
+            await page.getByRole("button", { name: "Upload", exact: true }).click();
+            await page.getByLabel("Skip client injection").setChecked(true);
+            start = () => page.getByRole("button", { name: "Run dry run", exact: true }).click();
+          } else {
+            await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+            await expect(
+              page.getByRole("button", { name: "Generate screenshots", exact: true }),
+            ).toBeEnabled();
+            if (stage === "screenshots") {
+              start = () =>
+                page.getByRole("button", { name: "Generate screenshots", exact: true }).click();
+            } else {
+              await page.getByRole("button", { name: "Generate screenshots", exact: true }).click();
+              await expect(page.getByAltText("Screenshot 1")).toBeVisible();
+              if (stage === "images") {
+                await page.getByRole("button", { name: "Upload Images", exact: true }).click();
+                start = () => page.getByRole("button", { name: /^Prepare required hosts/ }).click();
+              } else {
+                await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+                start = () =>
+                  page.getByRole("button", { name: "Refresh descriptions", exact: true }).click();
+              }
+            }
+          }
+        }
+      }
+      const retry = async () => {
+        await start();
+        if (stage === "images") {
+          // Canceling an image-host submission requires explicit reconciliation before replay.
+          const reconcile = page.getByRole("button", {
+            name: "Confirmed not completed; allow a fresh exact attempt",
+            exact: true,
+          });
+          await expect(reconcile).toBeVisible();
+          const reconciled = waitForAppMethod(page, "ReconcileActiveInput");
+          await reconcile.click();
+          expect((await reconciled).ok()).toBe(true);
+          await expect(reconcile).toHaveCount(0);
+          await start();
+        }
+      };
+      const before = await snapshot();
+      const visits = workspace.fake.workflowStageVisits.length;
+      gate = workspace.fake.holdWorkflowStage(stage);
+      await start();
+      await gate.entered;
+      const active = await snapshot();
+      expect(active.current?.operation?.status).toBe("running");
+      if (stage !== "preparation") expect(active.inputId).toBe(before.inputId);
+      const cancellationRequest = waitForAppMethod(page, "CancelReleaseWorkflowOperation");
+      await page.getByRole("button", { name: "Cancel active work", exact: true }).click();
+      expect((await cancellationRequest).ok()).toBe(true);
+      await expect.poll(async () => (await snapshot()).current?.operation?.status).toBe("canceled");
+      await expect(page.getByRole("button", { name: "Cancelling…", exact: true })).toHaveCount(0);
+      await expect(page.getByText(/Work canceled\. Selected input/)).toBeVisible();
+      const canceled = await snapshot();
+      expect(canceled.state).toBe("active");
+      expect(canceled.inputId).toBe(active.inputId);
+      expect(canceled.sourceVersion).toBe(active.sourceVersion);
+      expect(canceled.current?.operation?.id).toBe(active.current?.operation?.id);
+      expect(workspace.fake.workflowStageVisits.slice(visits)).toEqual([stage]);
+      expect(workspace.fake.counters.trackerUploads).toBe(0);
+      expect(workspace.fake.counters.clientInjections).toBe(0);
+      gate.release();
+      gate = workspace.fake.holdWorkflowStage(stage);
+      await retry();
+      await expect(page.getByText(/Work canceled\. Selected input/)).toHaveCount(0);
+      await gate.entered;
+      const rerun = await snapshot();
+      expect(rerun.current?.operation?.id).not.toBe(canceled.current?.operation?.id);
+      const repeatCancellation = waitForAppMethod(page, "CancelReleaseWorkflowOperation");
+      await page.getByRole("button", { name: "Cancel active work", exact: true }).click();
+      expect((await repeatCancellation).ok()).toBe(true);
+      gate.release();
+      await expect.poll(async () => (await snapshot()).current?.operation?.status).toBe("canceled");
+      await expect(page.getByText(/Work canceled\. Selected input/)).toBeVisible();
+      const canceledAgain = await snapshot();
+      await retry();
+      await expect(page.getByText(/Work canceled\. Selected input/)).toHaveCount(0);
+      // Re-admission may change the slot while a snapshot is being assembled.
+      await expect(async () => {
+        expect((await snapshot()).current?.operation?.status).toBe("completed");
+      }).toPass({ timeout: 10_000 });
+      expect((await snapshot()).inputId).toBe(active.inputId);
+      await expect(
+        page.getByRole("button", { name: "Cancel active work", exact: true }),
+      ).toBeDisabled();
+      await page.route(
+        "**/api/app/GetActiveInput",
+        (route) => route.fulfill({ json: canceledAgain }),
+        {
+          times: 1,
+        },
+      );
+      const staleResponse = waitForAppMethod(page, "GetActiveInput");
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      expect((await staleResponse).ok()).toBe(true);
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+          ),
+      );
+      await expect(page.getByText(/Work canceled\. Selected input/)).toHaveCount(0);
+    } finally {
+      gate?.release();
+      await app?.stop();
+      await workspace.cleanup();
+    }
+  });
+}
+
+test("embedded web cancels source verification before worker acceptance and confirms rollback", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  workspace.env.UPBRR_E2E_CANCELLATION_STAGE = "verification";
+  const gate = workspace.fake.holdWorkflowStage("verification");
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(app.url);
+    await page.getByLabel("Source path", { exact: true }).fill(workspace.sourcePath);
+    await page.getByLabel("Source path", { exact: true }).press("Escape");
+    await page.getByRole("button", { name: "Fetch metadata", exact: true }).click();
+    await gate.entered;
+    const confirmed = waitForAppMethod(page, "CancelActiveInputOpen");
+    const cancel = page.getByRole("button", { name: "Cancel active work", exact: true });
+    await cancel.focus();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    await page.keyboard.press("Enter");
+    const response = await confirmed;
+    expect(response.ok()).toBe(true);
+    const cancelled = (await response.json()) as ActiveInputSnapshot;
+    expect(cancelled.state).toBe("empty");
+    expect(cancelled.revision).toBe(2);
+    expect(cancelled.current).toBeUndefined();
+    await expect(page.getByText(/Work canceled\. Selected input/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Cancelling…", exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Source path", { exact: true })).toHaveValue(workspace.sourcePath);
+    expect(workspace.fake.workflowStageVisits).toEqual(["verification"]);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+    expect(workspace.fake.counters.clientInjections).toBe(0);
+    gate.release();
+    await page.getByRole("button", { name: "Fetch metadata", exact: true }).click();
+    const retried = await waitForMetadataReady(page, app.url);
+    expect(retried.state).toBe("active");
+    expect(retried.current?.operation?.status).toBe("completed");
+  } finally {
+    gate.release();
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("embedded web replaces an unanswered tracker and reconciles retained duplicate evidence", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace({ preparedMediaInfo: true });
+  let app: AppServer | undefined;
+  try {
+    const config = await readFile(workspace.configPath, "utf8");
+    await writeFile(
+      workspace.configPath,
+      config.replace('default_trackers: ["BTN"]', 'default_trackers: ["AITHER"]'),
+    );
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+    const initial = await runDuplicateCheck(page);
+    const original = initial.dupes!.results[0]!;
+    const selectedCurrent = (tracker: string, checked: boolean) =>
+      page.waitForResponse(async (response) => {
+        if (
+          !response.ok() ||
+          (!response.url().endsWith("/api/app/ContinueReleaseWorkflow") &&
+            !response.url().endsWith("/api/app/GetReleaseWorkflow"))
+        )
+          return false;
+        const current = (await response.json()) as ReleaseWorkflowCurrent;
+        return (
+          current.projections?.projections.length === 1 &&
+          current.projections.projections[0]?.trackerId === tracker &&
+          (checked
+            ? current.dupes?.results[0]?.trackerId === tracker
+            : !current.dupes && current.continuation?.duplicateReusePending === true)
+        );
+      });
+    const blockedResponse = selectedCurrent("ANT", false);
+    await page.getByRole("checkbox", { name: "AITHER", exact: true }).uncheck();
+    await page.getByRole("checkbox", { name: "ANT", exact: true }).check();
+    const blocked = (await (await blockedResponse).json()) as ReleaseWorkflowCurrent;
+    expect(
+      blocked.workflow.requiredActions.some(
+        (action) =>
+          action.kind === "answer_questionnaire" &&
+          action.trackerId === "ANT" &&
+          action.status === "pending",
+      ),
+    ).toBe(true);
+    await expect(antQuestionPanel(page).locator("summary")).toContainText("Required");
+    const goals = new Map<string, string>();
+    page.on("request", (request) => {
+      if (!request.url().endsWith("/api/app/ContinueReleaseWorkflow")) return;
+      const body = request.postDataJSON() as {
+        goal: string;
+        idempotencyKey: string;
+        intent: { trackerIds?: string[] };
+      };
+      if (body.intent.trackerIds?.length === 1 && body.intent.trackerIds[0] === "AITHER")
+        goals.set(body.idempotencyKey, body.goal);
+    });
+    const restoredResponse = selectedCurrent("AITHER", true);
+    await page.getByRole("checkbox", { name: "ANT", exact: true }).uncheck();
+    await page.getByRole("checkbox", { name: "AITHER", exact: true }).check();
+    const restored = (await (await restoredResponse).json()) as ReleaseWorkflowCurrent;
+    expect(restored.dupes!.results[0]).toEqual({
+      ...original,
+      projectionFingerprint: expect.any(String),
+    });
+    expect(restored.dupes!.expiresAt).toBe(initial.dupes!.expiresAt);
+    await expect(page.getByText("No dupes", { exact: true })).toBeVisible();
+    await expect(antQuestionPanel(page)).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Run dupe check" })).toBeEnabled();
+    expect([...goals.values()]).toEqual(["trackers_projected", "duplicates_decided"]);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("embedded web retains duplicate evidence when adding and removing trackers", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace({ preparedMediaInfo: true, mediaKind: "tv" });
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath, "E2E.Show.2026.S01E01.1080p.WEB-DL");
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+    const initial = await runDuplicateCheck(page);
+    const original = initial.dupes!.results.find((lane) => lane.trackerId === "BTN")!;
+    const selectedDuplicates = (trackers: string[]) =>
+      page.waitForResponse(async (response) => {
+        if (
+          !response.url().endsWith("/api/app/ContinueReleaseWorkflow") &&
+          !response.url().endsWith("/api/app/GetReleaseWorkflow")
+        )
+          return false;
+        if (!response.ok()) return false;
+        const current = (await response.json()) as ReleaseWorkflowCurrent;
+        return (
+          current.dupes?.results.length === trackers.length &&
+          trackers.every((tracker) =>
+            current.dupes?.results.some((lane) => lane.trackerId === tracker),
+          ) &&
+          current.dupes?.projectionSet.id === current.projections?.id
+        );
+      });
+    const addedResponse = selectedDuplicates(["AITHER", "BTN"]);
+    await page.getByRole("checkbox", { name: "AITHER", exact: true }).check();
+    const added = (await (await addedResponse).json()) as ReleaseWorkflowCurrent;
+    const retained = added.dupes!.results.find((lane) => lane.trackerId === "BTN")!;
+    expect(retained).toEqual({ ...original, projectionFingerprint: expect.any(String) });
+    expect(added.dupes!.expiresAt).toBe(initial.dupes!.expiresAt);
+    const duplicate = added.dupes!.results.find((lane) => lane.trackerId === "AITHER")!;
+    expect(duplicate.decision).toBe("skipped");
+    expect(duplicate.failures?.length).toBeGreaterThan(0);
+    const removedResponse = selectedDuplicates(["BTN"]);
+    await page.getByRole("checkbox", { name: "AITHER", exact: true }).uncheck();
+    const removed = (await (await removedResponse).json()) as ReleaseWorkflowCurrent;
+    expect(removed.dupes!.results).toEqual([
+      { ...original, projectionFingerprint: expect.any(String) },
+    ]);
+    expect(removed.dupes!.expiresAt).toBe(initial.dupes!.expiresAt);
+    expect(removed.dupes!.status).toBe("completed");
+    await expect(page.getByText("No dupes", { exact: true })).toBeVisible();
+    const readdedResponse = selectedDuplicates(["AITHER", "BTN"]);
+    await page.getByRole("checkbox", { name: "AITHER", exact: true }).check();
+    const readded = (await (await readdedResponse).json()) as ReleaseWorkflowCurrent;
+    expect(readded.dupes!.results.find((lane) => lane.trackerId === "BTN")!.checkedAt).toBe(
+      original.checkedAt,
+    );
+    expect(readded.dupes!.results.find((lane) => lane.trackerId === "AITHER")!.checkedAt).not.toBe(
+      duplicate.checkedAt,
+    );
+    await expect(page.getByRole("button", { name: "Run dupe check" })).toBeEnabled();
+    const reconciliations = new Set<string>();
+    page.on("request", (request) => {
+      if (!request.url().endsWith("/api/app/ContinueReleaseWorkflow")) return;
+      const body = request.postDataJSON() as { goal: string; idempotencyKey: string };
+      if (body.goal === "duplicates_decided") reconciliations.add(body.idempotencyKey);
+    });
+    const restoredResponse = waitForAppMethod(page, "GetActiveInput");
+    await page.reload();
+    const restored = await activeCurrentFromResponse(await restoredResponse);
+    expect(restored.dupes?.expiresAt).toBe(readded.dupes!.expiresAt);
+    expect(
+      restored.dupes?.results.map((lane) => ({
+        tracker: lane.trackerId,
+        decision: lane.decision,
+        checkedAt: lane.checkedAt,
+        freshUntil: lane.freshUntil,
+      })),
+    ).toEqual(
+      readded.dupes!.results.map((lane) => ({
+        tracker: lane.trackerId,
+        decision: lane.decision,
+        checkedAt: lane.checkedAt,
+        freshUntil: lane.freshUntil,
+      })),
+    );
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+    await expect(page.getByRole("checkbox", { name: "AITHER", exact: true })).toBeChecked();
+    await expect(page.getByRole("button", { name: "Run dupe check" })).toBeEnabled();
+    await expect(page.getByText("No dupes", { exact: true })).toBeVisible();
+    const blocked = page
+      .getByRole("article")
+      .filter({ has: page.getByRole("heading", { name: "AITHER", exact: true }) });
+    await expect(blocked.getByText("Blocked", { exact: true })).toBeVisible();
+    await expect(
+      blocked.getByText(duplicate.failures![0]!.failure.Message, { exact: true }),
+    ).toBeVisible();
+    expect(reconciliations.size).toBe(0);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});

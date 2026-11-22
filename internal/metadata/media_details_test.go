@@ -989,6 +989,72 @@ func TestEditionFromMetaExtractsRepackFromSourcePath(t *testing.T) {
 	}
 }
 
+func TestEditionRuntimeRequiresOneVideoPresentation(t *testing.T) {
+	for _, tc := range []struct {
+		name, extra string
+		want        float64
+	}{
+		{"one track", "", 6000},
+		{"multiple tracks", `,{"@type":"Video","Duration":"6150.000"}`, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"6000.000"},{"@type":"Video"}` + tc.extra + `]}}`)
+			if got, fps, original := editionRuntime(preparationstate.State{FileList: []string{"Example.mkv"}}, doc, nil); got != tc.want || fps != 0 || original != 0 {
+				t.Fatalf("runtime = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEditionRuntimeUsesSelectedDVDTitleNotIndividualVOB(t *testing.T) {
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"8269.760"},{"@type":"Video"}]}}`)
+	state := preparationstate.State{
+		DiscType:            "DVD",
+		DVDVOBSet:           "01",
+		DVDVOBMediaInfoJSON: `{"media":{"track":[{"@type":"General","Duration":"120.000"},{"@type":"Video","FrameRate":"25.000"}]}}`,
+	}
+	if got, fps, original := editionRuntime(state, doc, nil); got != 8269.760 || fps != 25 || original != 0 {
+		t.Fatalf("title duration = %v, fps = %v, original = %v", got, fps, original)
+	}
+	for _, rate := range []string{"29.970", "23.976"} {
+		ntsc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"7920.000"},{"@type":"Video","Standard":"NTSC","FrameRate":"` +
+			rate + `","FrameRate_Original":"23.976"}]}}`)
+		if got, fps, original := editionRuntime(state, ntsc, nil); got != 7920 || fps != editionFrameRateText(rate) || original != 24000.0/1001 {
+			t.Fatalf("NTSC playback duration at %s = %v, fps = %v, original = %v", rate, got, fps, original)
+		}
+	}
+	state.Discs = make([]preparationstate.DiscResource, 2)
+	if got, fps, original := editionRuntime(state, doc, nil); got != 0 || fps != 0 || original != 0 {
+		t.Fatalf("DVD collection incorrectly has one edition runtime: %v, fps = %v, original = %v", got, fps, original)
+	}
+	state.Discs = nil
+	state.DVDVOBSet = ""
+	if got, fps, original := editionRuntime(state, doc, nil); got != 0 || fps != 0 || original != 0 {
+		t.Fatalf("DVD without selected title incorrectly has an edition runtime: %v, fps = %v, original = %v", got, fps, original)
+	}
+}
+
+func TestEditionRuntimeCollectsFrameRatesBeyondDVD(t *testing.T) {
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"6000.000"},
+        {"@type":"Video","FrameRate_Num":"24000","FrameRate_Den":"1001","FrameRate_Original":"24.000"}]}}`)
+	if duration, fps, original := editionRuntime(preparationstate.State{}, doc, nil); duration != 6000 || fps != 24000.0/1001 || original != 24 {
+		t.Fatalf("file runtime = %v, fps = %v, original = %v", duration, fps, original)
+	}
+	variable := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"6000.000"},
+        {"@type":"Video","FrameRate_Mode":"VFR","FrameRate":"25.000"}]}}`)
+	if duration, fps, original := editionRuntime(preparationstate.State{}, variable, nil); duration != 6000 || fps != 0 || original != 0 {
+		t.Fatalf("variable-rate file runtime = %v, fps = %v, original = %v", duration, fps, original)
+	}
+	bd := preparationstate.State{
+		DiscType:              "BDMV",
+		SelectedBDMVPlaylists: []api.PlaylistInfo{{Duration: 6000}},
+	}
+	report := &discparse.BDInfo{Video: []discparse.BDVideo{{FPS: "25.000 fps"}}}
+	if duration, fps, original := editionRuntime(bd, mediaInfoDoc{}, report); duration != 6000 || fps != 25 || original != 0 {
+		t.Fatalf("playlist runtime = %v, fps = %v, original = %v", duration, fps, original)
+	}
+}
+
 func TestMediaDurationSecondsParsesMediaInfoDurationFormats(t *testing.T) {
 	tests := []struct {
 		name string
@@ -3209,6 +3275,35 @@ func TestDeriveMediaFactsResolutionHeightFloor(t *testing.T) {
 			}
 			if tc.discType == "" && !strings.Contains(meta.ReleaseName, tc.resolution) {
 				t.Fatalf("release name %q lacks %q", meta.ReleaseName, tc.resolution)
+			}
+		})
+	}
+}
+
+func TestSpokenLanguageAudioMarkersRespectSoundtrackOrigins(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		tracks     []api.MediaTrackFacts
+		want       string
+		incomplete bool
+	}{
+		{"English original despite scalar Japanese", []api.MediaTrackFacts{{Languages: []string{"English"}, AudioOrigin: api.TrackAudioOriginal}}, "DD 5.1", false},
+		{"listed English remains a confirmed dub", []api.MediaTrackFacts{{Languages: []string{"French"}, AudioOrigin: api.TrackAudioOriginal}, {Languages: []string{"English"}, AudioOrigin: api.TrackAudioDubbed}}, "Dual-Audio DD 5.1", false},
+		{"listed English dub alone", []api.MediaTrackFacts{{Languages: []string{"English"}, AudioOrigin: api.TrackAudioDubbed}}, "Dubbed DD 5.1", false},
+		{"non-English original and confirmed dub", []api.MediaTrackFacts{{Languages: []string{"French"}, AudioOrigin: api.TrackAudioOriginal}, {Languages: []string{"German"}, AudioOrigin: api.TrackAudioDubbed}}, "Dual-Audio DD 5.1", false},
+		{"English dub with unresolved companion", []api.MediaTrackFacts{{Languages: []string{"French"}, AudioOrigin: api.TrackAudioUnresolved}, {Languages: []string{"English"}, AudioOrigin: api.TrackAudioDubbed}}, "DD 5.1", false},
+		{"English dub with incomplete coverage", []api.MediaTrackFacts{{Languages: []string{"English"}, AudioOrigin: api.TrackAudioDubbed}}, "DD 5.1", true},
+		{"positive original survives incomplete coverage", []api.MediaTrackFacts{{Languages: []string{"French"}, AudioOrigin: api.TrackAudioOriginal}, {Languages: []string{"English"}, AudioOrigin: api.TrackAudioDubbed}}, "Dual-Audio DD 5.1", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			meta := preparationstate.State{ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: "ja", SpokenLanguages: []string{"en", "fr"}}}, TrackCoverageComplete: !tc.incomplete}
+			for _, track := range tc.tracks {
+				track.Kind, track.Role = api.MediaTrackAudio, api.AudioRoleProgramme
+				meta.MediaTracks = append(meta.MediaTracks, track)
+				meta.AudioLanguages = append(meta.AudioLanguages, track.Languages...)
+			}
+			if got := applyAudioLanguagePrefix("Dual-Audio DD 5.1", meta); got != tc.want {
+				t.Fatalf("audio marker = %q, want %q", got, tc.want)
 			}
 		})
 	}

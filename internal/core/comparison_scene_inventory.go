@@ -1,0 +1,898 @@
+// Copyright (c) 2025-2026, Audionut and the autobrr contributors.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+package core
+
+import (
+	"bufio"
+	"cmp"
+	"compress/gzip"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"maps"
+	"math"
+	"os"
+	"path/filepath"
+	"slices"
+	"time"
+
+	"github.com/autobrr/upbrr/internal/comparisons"
+	"github.com/autobrr/upbrr/internal/pathing"
+	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/screenshots"
+	"github.com/autobrr/upbrr/pkg/api"
+)
+
+const comparisonInventoryLimit int64 = 128 << 20
+const comparisonQuickWindows = 96
+
+// comparisonSceneInventory is an immutable private reference. Clones cloned only
+// this small manifest; selected-only witness pruning never touches the file.
+type comparisonSceneInventory struct {
+	segments                    []*comparisonSceneInventory
+	Enclosed                    map[string]screenshots.ComparisonFileInterval `json:",omitempty"`
+	Path, SHA256, SourceProfile string
+	Bytes                       int64
+	Compressed                  bool
+	QuickWindows                int
+	Covered                     []api.ComparisonTimeInterval
+	Eligible                    []api.ComparisonTimeInterval
+	NativeFrames                int64
+	Summary                     api.ComparisonAnalysisSummary
+	Blocks                      []comparisonInventoryBlock `json:",omitempty"`
+	IndexSHA256                 string                     `json:",omitempty"`
+}
+
+func cloneComparisonInventory(value *comparisonSceneInventory) *comparisonSceneInventory {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	cloned.Enclosed = maps.Clone(value.Enclosed)
+	cloned.Blocks = slices.Clone(value.Blocks)
+	cloned.Covered = slices.Clone(value.Covered)
+	cloned.Eligible = slices.Clone(value.Eligible)
+	cloned.Summary.Excluded = append([]api.ComparisonTimeInterval(nil), value.Summary.Excluded...)
+	cloned.Summary.Reasons = append([]string(nil), value.Summary.Reasons...)
+	return &cloned
+}
+
+func comparisonInventoryForSelection(
+	value *comparisonSceneInventory,
+	window api.ComparisonTimeInterval,
+	excluded []api.ComparisonTimeInterval,
+) *comparisonSceneInventory {
+	selected := cloneComparisonInventory(value)
+	if selected.Summary.Complete && selected.Summary.RankingComplete {
+		// Complete discovery has no failure reasons. Older attempts could have
+		// attached matching diagnostics through the shared public summary.
+		selected.Summary.Reasons = nil
+	}
+	selected.Summary.Selection = window
+	selected.Summary.Excluded = slices.Clone(excluded)
+	selected.Summary.EligibleSeconds = comparisonEligibleCoverage(selected.Eligible, window, excluded)
+	return selected
+}
+
+func (b workflowMediaBuilder) comparisonInventoryOwner(retained workflowMediaPrivateArtifacts, plan api.ComparisonPlan) (string, error) {
+	root, err := db.Subdir(b.config.MainSettings.DBPath, "tmp")
+	if err != nil {
+		return "", fmt.Errorf("comparison scene inventory: %w", err)
+	}
+	sourcePath := retained.screenshotSubject.SourcePath
+	if sourcePath == "" {
+		sourcePath = retained.ComparisonSources[plan.MainSourceID].Path
+		if sourcePath == "" {
+			sourcePath = retained.ComparisonSources[plan.MainSourceID].Source.Path
+		}
+	}
+	return comparisonScratchDir(root, sourcePath, plan.MainSourceID)
+}
+
+func (b workflowMediaBuilder) comparisonSceneProfile(retained workflowMediaPrivateArtifacts, plan api.ComparisonPlan) (string, error) {
+	source := retained.ComparisonSources[plan.MainSourceID]
+	normalization, err := screenshots.ComparisonAnalysisPolicy(source.Source)
+	if err != nil {
+		return "", fmt.Errorf("comparison inventory normalization: %w", err)
+	}
+	profile, err := api.CanonicalWorkflowFingerprint(struct {
+		Version, Mode, Source, Main, Executable string
+		Facts                                   screenshots.ComparisonSource
+		MatchAspect                             float64
+		Policy                                  string
+		Normalization                           screenshots.ComparisonAnalysisRenderer
+	}{comparisons.SceneProfile, plan.Preferences.ScanMode, source.Fingerprint, plan.MainSourceID, retained.ComparisonAnalysisExecutable, comparisonMatchFacts(source.Source), comparisonMatchAspect(retained, plan), screenshots.ComparisonAnalysisPolicyVersion, normalization})
+	return string(profile), err
+}
+
+func comparisonMatchFacts(source screenshots.ComparisonSource) screenshots.ComparisonSource {
+	source.ScreenshotWidth, source.ScreenshotHeight = 0, 0
+	source.ScreenshotMatrix = false
+	return source
+}
+
+func comparisonMatchAspect(retained workflowMediaPrivateArtifacts, plan api.ComparisonPlan) float64 {
+	aspect := 0.0
+	for _, source := range plan.Sources {
+		width, height := retained.ComparisonSources[source.ID].Source.MatchingDisplaySize()
+		if width > 0 && height > 0 {
+			aspect = max(aspect, float64(width)/float64(height))
+		}
+	}
+	return aspect
+}
+
+func readComparisonInventory(ctx context.Context, ref *comparisonSceneInventory, owner string, visit func(screenshots.ComparisonSample) bool) error {
+	return readComparisonInventoryRange(ctx, ref, owner, nil, visit)
+}
+
+// Resolve the exact selected Quick anchor while reading its indexed native
+// neighborhood. Archive admission/publication still own whole-file validation.
+func comparisonInventoryAnchorWindow(
+	ctx context.Context,
+	ref *comparisonSceneInventory,
+	owner, id string,
+	center float64,
+) (screenshots.ComparisonSample, []screenshots.ComparisonSample, error) {
+	var anchor screenshots.ComparisonSample
+	var frames []screenshots.ComparisonSample
+	anchors := 0
+	err := readComparisonInventoryRange(
+		ctx,
+		ref,
+		owner,
+		&api.ComparisonTimeInterval{Start: center - 2, End: center + 2},
+		func(frame screenshots.ComparisonSample) bool {
+			if comparisonObservationID(frame.ComparisonFrameObservation) == id {
+				anchor = frame
+				anchors++
+			}
+			frames = append(frames, frame)
+			return true
+		},
+	)
+	if err != nil {
+		return anchor, nil, err
+	}
+	if anchors != 1 || anchor.Replay == nil {
+		return anchor, nil, errors.New("selected comparison anchor lost its unique original replay")
+	}
+	frames, err = orderedComparisonSamples(frames)
+	if err != nil {
+		return anchor, nil, err
+	}
+	at := slices.IndexFunc(frames, func(f screenshots.ComparisonSample) bool { return f.FrameID == id })
+	if at < 0 {
+		return anchor, nil, comparisonWitnessConflict()
+	}
+	left, right := at, at+1
+	for left > 0 && comparisonFileJoin(frames[left-1].ComparisonFrameObservation, frames[left].ComparisonFrameObservation) {
+		left--
+	}
+	for right < len(frames) && comparisonFileJoin(frames[right-1].ComparisonFrameObservation, frames[right].ComparisonFrameObservation) {
+		right++
+	}
+	return anchor, frames[left:right], nil
+}
+
+// Indexed window reads verify only the compressed batches they need. Full reads
+// retain whole-file validation for discovery reuse, ranking and publication.
+func readComparisonInventoryRange(
+	ctx context.Context,
+	ref *comparisonSceneInventory,
+	owner string,
+	window *api.ComparisonTimeInterval,
+	visit func(screenshots.ComparisonSample) bool,
+) error {
+	if ref == nil || len(ref.Enclosed) == 0 {
+		return walkComparisonInventoryRange(ctx, ref, owner, window, visit)
+	}
+	var conflict error
+	err := walkComparisonInventoryRange(ctx, ref, owner, window, func(frame screenshots.ComparisonSample) bool {
+		if interval, found := ref.Enclosed[frame.FrameID]; found && frame.Replay.MissingBoundary() {
+			updated := *frame.Replay
+			updated.File = &interval
+			if interval.Unenclosed || !frame.Replay.SamePicture(&updated) {
+				conflict = comparisonWitnessConflict()
+				return false
+			}
+			frame.Replay = &updated
+		}
+		return visit(frame)
+	})
+	return errors.Join(err, conflict)
+}
+
+func walkComparisonInventoryRange(
+	ctx context.Context,
+	ref *comparisonSceneInventory,
+	owner string,
+	window *api.ComparisonTimeInterval,
+	visit func(screenshots.ComparisonSample) bool,
+) error {
+	if ref != nil && len(ref.segments) != 0 {
+		active := true
+		for _, part := range ref.segments {
+			if err := walkComparisonInventoryRange(ctx, part, owner, window, func(f screenshots.ComparisonSample) bool {
+				if active {
+					active = visit(f)
+				}
+				return active
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if ref == nil || ref.Bytes < 0 || ref.Bytes > comparisonInventoryLimit || !pathing.IsWithinRoot(owner, ref.Path) {
+		return errors.New("comparison inventory is unavailable")
+	}
+	if err := validateComparisonInventoryIndex(ref); err != nil {
+		return err
+	}
+	file, err := os.Open(ref.Path)
+	if err != nil {
+		return fmt.Errorf("comparison scene inventory: %w", err)
+	}
+	defer file.Close()
+	stat, err := file.Stat()
+	if err != nil || stat.Size() != ref.Bytes {
+		return errors.New("comparison inventory size changed")
+	}
+	if window != nil && len(ref.Blocks) > 0 {
+		return readIndexedComparisonInventory(ctx, file, ref, *window, visit)
+	}
+	hash := sha256.New()
+	input := io.TeeReader(io.LimitReader(file, comparisonInventoryLimit+1), hash)
+	if ref.Compressed && ref.Bytes > 0 {
+		compressed, err := gzip.NewReader(input)
+		if err != nil {
+			return fmt.Errorf("open compressed comparison inventory: %w", err)
+		}
+		defer compressed.Close()
+		input = compressed
+	}
+	scanner := bufio.NewScanner(io.LimitReader(input, comparisonInventoryExpandedLimit+1))
+	scanner.Buffer(make([]byte, 64<<10), 2<<20)
+	active := true
+	decodedBytes := int64(0)
+	for scanner.Scan() {
+		decodedBytes += int64(len(scanner.Bytes()) + 1)
+		if decodedBytes > comparisonInventoryExpandedLimit {
+			return errors.New("comparison inventory expanded size exceeds its limit")
+		}
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("comparison scene inventory: %w", err)
+		}
+		if window != nil {
+			var header struct{ RelativeTimestampSeconds float64 }
+			if err := json.Unmarshal(scanner.Bytes(), &header); err != nil {
+				return errors.New("comparison inventory is corrupt")
+			}
+			if header.RelativeTimestampSeconds < window.Start || header.RelativeTimestampSeconds >= window.End {
+				continue
+			}
+		}
+		frame, err := decodeComparisonInventoryFrame(scanner.Bytes())
+		if err != nil {
+			return err
+		}
+		if active {
+			active = visit(frame)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("comparison scene inventory: %w", err)
+	}
+	if hex.EncodeToString(hash.Sum(nil)) != ref.SHA256 {
+		return errors.New("comparison inventory content changed")
+	}
+	return nil
+}
+
+func decodeComparisonInventoryFrame(data []byte) (screenshots.ComparisonSample, error) {
+	var frame screenshots.ComparisonSample
+	if err := json.Unmarshal(data, &frame); err != nil {
+		return frame, errors.New("comparison inventory is corrupt")
+	}
+	if frame.Evidence == nil || frame.Evidence.Profile != comparisons.SceneProfile || frame.Identity == nil || frame.Replay == nil ||
+		frame.Replay.Identity != *frame.Identity || frame.FrameID == "" {
+		return frame, errors.New("comparison inventory witness is incomplete")
+	}
+	return frame, nil
+}
+
+type comparisonSceneRankCategory struct {
+	State                 string
+	Score, SupportSeconds float64
+}
+
+// Ranking does not need native replay, full analysis regions or support ranges.
+// Keep just the facts consumed by SelectScene; the chosen native section supplies
+// its complete evidence again before matching or publication.
+type comparisonSceneCandidate struct {
+	FrameID, Occurrence                                                  string
+	TimestampSeconds                                                     float64
+	Luma                                                                 []byte
+	Eligible, Unenclosed                                                 bool
+	Motion, Dark, Flat                                                   comparisonSceneRankCategory
+	MovingSupport, ReliableSupport, Mean, BlurredContrast, FlatDeviation float64
+}
+
+func (c comparisonSceneCandidate) sample() comparisons.FrameSample {
+	category := func(rank comparisonSceneRankCategory) api.ComparisonSceneCategory {
+		return api.ComparisonSceneCategory{
+			State:          rank.State,
+			Score:          rank.Score,
+			SupportSeconds: rank.SupportSeconds,
+		}
+	}
+	return comparisons.FrameSample{
+		FrameID:          c.FrameID,
+		Occurrence:       c.Occurrence,
+		TimestampSeconds: c.TimestampSeconds,
+		Luma:             c.Luma,
+		Evidence: &api.ComparisonSceneEvidence{
+			Profile:         comparisons.SceneProfile,
+			Eligible:        c.Eligible && !c.Unenclosed,
+			Motion:          category(c.Motion),
+			Dark:            category(c.Dark),
+			Flat:            category(c.Flat),
+			MovingSupport:   c.MovingSupport,
+			ReliableSupport: c.ReliableSupport,
+			Mean:            c.Mean,
+			BlurredContrast: c.BlurredContrast,
+			FlatDeviation:   c.FlatDeviation,
+		},
+	}
+}
+
+func comparisonRankCandidate(frame screenshots.ComparisonSample) comparisonSceneCandidate {
+	pixels := frame.Pixels
+	if !frame.AnalysisAnchor {
+		pixels = nil
+	}
+	evidence := frame.Evidence
+	category := func(value api.ComparisonSceneCategory) comparisonSceneRankCategory {
+		return comparisonSceneRankCategory{
+			State:          value.State,
+			Score:          value.Score,
+			SupportSeconds: value.SupportSeconds,
+		}
+	}
+	return comparisonSceneCandidate{
+		FrameID:          frame.FrameID,
+		Occurrence:       frame.Identity.Occurrence,
+		TimestampSeconds: frame.RelativeTimestampSeconds,
+		Luma:             pixels,
+		Eligible:         evidence.Eligible,
+		Unenclosed:       frame.Replay.MissingBoundary(),
+		Motion:           category(evidence.Motion),
+		Dark:             category(evidence.Dark),
+		Flat:             category(evidence.Flat),
+		MovingSupport:    evidence.MovingSupport,
+		ReliableSupport:  evidence.ReliableSupport,
+		Mean:             evidence.Mean,
+		BlurredContrast:  evidence.BlurredContrast,
+		FlatDeviation:    evidence.FlatDeviation,
+	}
+}
+
+// Cache ranking facts once, without retaining every frame's replay or regions.
+// Larger titles keep the streaming selector rather than growing this index.
+func comparisonInventoryCandidates(ctx context.Context, ref *comparisonSceneInventory, owner string, limit int64) ([]comparisonSceneCandidate, int64, error) {
+	var candidates []comparisonSceneCandidate
+	var size int64
+	full := false
+	err := readComparisonInventory(ctx, ref, owner, func(frame screenshots.ComparisonSample) bool {
+		candidate := comparisonRankCandidate(frame)
+		// Covers the fixed record, slice capacity growth and allocation padding,
+		// plus its owned strings and the sparse native correspondence rasters.
+		size += int64(320 + len(candidate.FrameID) + len(candidate.Occurrence) + len(candidate.Luma) +
+			len(candidate.Motion.State) + len(candidate.Dark.State) + len(candidate.Flat.State))
+		if size > limit {
+			full = true
+			candidates = nil
+			return false
+		}
+		candidates = append(candidates, candidate)
+		return true
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	if full {
+		return nil, 0, nil
+	}
+	slices.SortFunc(candidates, compareSceneCandidates)
+	return candidates, size, nil
+}
+
+func compareSceneCandidates(a, b comparisonSceneCandidate) int {
+	if a.TimestampSeconds != b.TimestampSeconds {
+		return cmp.Compare(a.TimestampSeconds, b.TimestampSeconds)
+	}
+	return cmp.Compare(a.FrameID, b.FrameID)
+}
+
+func (b workflowMediaBuilder) discoverComparisonScenes(
+	ctx context.Context,
+	retained *workflowMediaPrivateArtifacts,
+	plan api.ComparisonPlan,
+	window api.ComparisonTimeInterval,
+	excluded []api.ComparisonTimeInterval,
+	decode func(context.Context, float64, float64, bool) ([]screenshots.ComparisonSample, error),
+	progress *comparisonProgress,
+	quick ...*comparisonQuickSearch,
+) (*comparisonSceneInventory, error) {
+	profile, err := b.comparisonSceneProfile(*retained, plan)
+	if err != nil {
+		return nil, err
+	}
+	owner, err := b.comparisonInventoryOwner(*retained, plan)
+	if err != nil {
+		return nil, err
+	}
+	if old := retained.ComparisonInventory; old != nil && old.SourceProfile == profile && old.Summary.Complete && old.Summary.RankingComplete &&
+		plan.Preferences.ScanMode == "deep" {
+		reused := comparisonInventoryForSelection(old, window, excluded)
+		if err := ensureComparisonInventoryIndex(ctx, reused, owner); err == nil {
+			progress.begin("main_discovery", 0)
+			progress.complete()
+			retained.ComparisonInventory = reused
+			progress.logger.Infof("comparisons: phase=main_discovery decision=reused mode=deep covered_seconds=%.3f", old.Summary.CoveredSeconds)
+			return reused, nil
+		} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+	}
+	if err := os.MkdirAll(owner, 0o700); err != nil {
+		return nil, fmt.Errorf("comparison scene inventory: %w", err)
+	}
+	file, err := os.CreateTemp(owner, "scene-inventory-*.jsonl")
+	if err != nil {
+		return nil, fmt.Errorf("comparison scene inventory: %w", err)
+	}
+	keep := false
+	defer func() {
+		_ = file.Close()
+		if !keep {
+			_ = os.Remove(file.Name())
+		}
+	}()
+	writer := bufio.NewWriterSize(file, 64<<10)
+	hash := sha256.New()
+	sink := io.MultiWriter(writer, hash)
+	duration := retained.ComparisonSources[plan.MainSourceID].Source.VideoDurationSeconds
+	if duration <= 0 {
+		duration = retained.ComparisonSources[plan.MainSourceID].Source.DurationSeconds
+	}
+	deep := plan.Preferences.ScanMode == "deep"
+	ref := &comparisonSceneInventory{
+		Path:          file.Name(),
+		Compressed:    true,
+		SourceProfile: profile,
+		Summary: api.ComparisonAnalysisSummary{
+			Version:         1,
+			Profile:         comparisons.SceneProfile,
+			ScanMode:        plan.Preferences.ScanMode,
+			DurationSeconds: duration,
+			Selection:       window,
+			Excluded:        excluded,
+		},
+	}
+	encoder := comparisonInventoryEncoder{destination: sink, ref: ref}
+	type interval struct{ start, end, payloadStart, payloadEnd float64 }
+	var intervals []interval
+	if deep {
+		if duration/8 > float64(math.MaxInt-1) {
+			return nil, comparisonSelectionFailure(
+				api.OperationFailureInvalidSource,
+				"duration_limit",
+				"The main timeline exceeds bounded comparison indexing.",
+			)
+		}
+	} else {
+		// The second distributed pass expands discovery within the same shared
+		// main allowance. It never expands protected selection bounds.
+		for _, fraction := range []float64{.5, .25, .75, .125, .375, .625, .875, .0625} {
+			for i := range 12 {
+				center := window.Start + (window.End-window.Start)*(float64(i)+fraction)/12
+				start, end := max(window.Start, center-2), min(window.End, center+2)
+				intervals = append(intervals, interval{start, end, start, end})
+			}
+		}
+	}
+	expanding := len(quick) != 0 && quick[0].base != nil && !deep
+	old := retained.ComparisonInventory
+	if expanding {
+		if old == nil || old.SourceProfile != profile || old.QuickWindows < 12 || old.QuickWindows >= len(intervals) || !old.Summary.RankingComplete {
+			return nil, screenshots.ErrComparisonFastInconclusive
+		}
+		intervals = intervals[old.QuickWindows : old.QuickWindows+1]
+		ref.QuickWindows = old.QuickWindows
+		ref.Summary = old.Summary
+		ref.Summary.Reasons = nil
+		ref.Summary.CoveredSeconds, ref.Summary.EligibleSeconds = 0, 0
+	}
+	if !deep && !expanding {
+		intervals = intervals[:24]
+	}
+	total := len(intervals)
+	if deep {
+		total = int(math.Ceil(duration / 8))
+	}
+	progress.begin("main_discovery", total)
+	var covered []api.ComparisonTimeInterval
+	var eligible []api.ComparisonTimeInterval
+	tick, lastDuration := 1e-9, 0.0
+	var seen map[string]comparisonKnownPicture
+	if !deep {
+		seen = map[string]comparisonKnownPicture{}
+	}
+	if expanding {
+		covered = slices.Clone(old.Covered)
+		eligible = slices.Clone(old.Eligible)
+		ref.NativeFrames = old.NativeFrames
+	}
+	var visitedCandidates []comparisons.FrameSample
+	payloadStart, payloadSeconds := 0.0, 8.0
+	for index := 0; !deep && index < total || deep && payloadStart < duration; index++ {
+		var region interval
+		if deep {
+			start := payloadStart
+			end := min(duration, start+payloadSeconds)
+			region = interval{max(0, start-1), min(duration, end+1), start, end}
+		} else {
+			region = intervals[index]
+		}
+		if err := ctx.Err(); err != nil {
+			ref.Summary.Reasons = append(ref.Summary.Reasons, "discovery_deadline")
+			break
+		}
+		seconds := region.end - region.start
+		ref.Summary.RequestedSeconds += seconds
+		started := time.Now()
+		workCtx := api.WithWorkflowProgressReporter(ctx, func(update api.WorkflowProgressUpdate) {
+			if expanding {
+				return
+			}
+			fraction := float64(update.Completed) / float64(max(1, update.Total))
+			if deep {
+				progress.update(int(1000*(region.payloadStart+fraction*(region.payloadEnd-region.payloadStart))/duration), 1000)
+			} else {
+				progress.update(1000*index+int(1000*fraction), 1000*total)
+			}
+		})
+		frames, err := decode(workCtx, region.start, seconds, deep)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, screenshots.ErrComparisonFastInconclusive) ||
+				errors.Is(err, screenshots.ErrComparisonNormalizationUnavailable) {
+				ref.Summary.Reasons = append(ref.Summary.Reasons, "discovery_incomplete")
+				break
+			}
+			return nil, err
+		}
+		if len(frames) == 0 {
+			ref.Summary.Reasons = append(ref.Summary.Reasons, "missing_main_interval")
+			break
+		}
+		if !deep {
+			keys := len(seen)
+			if expanding {
+				keys += len(quick[0].seen)
+			}
+			if int64(keys+len(frames))*comparisonQuickKeyBytes > 16<<20 {
+				for _, frame := range frames {
+					id := comparisonObservationID(frame.ComparisonFrameObservation)
+					_, present := seen[id]
+					if !present && expanding {
+						_, present = quick[0].seen[id]
+					}
+					if !present {
+						keys++
+					}
+				}
+				if int64(keys)*comparisonQuickKeyBytes > 16<<20 {
+					ref.Summary.Reasons = append(ref.Summary.Reasons, "inventory_limit")
+					break
+				}
+			}
+		}
+		for _, frame := range frames {
+			t := frame.RelativeTimestampSeconds
+			var previous comparisonKnownPicture
+			var found bool
+			id := comparisonObservationID(frame.ComparisonFrameObservation)
+			if !deep {
+				previous, found = seen[id]
+				if !found && expanding {
+					previous, found = quick[0].seen[id]
+				}
+				if found && !previous.matches(frame.ComparisonFrameObservation) {
+					return nil, comparisonWitnessConflict()
+				}
+			}
+			if t < region.payloadStart || t >= region.payloadEnd || frame.Evidence == nil {
+				continue
+			}
+			if !deep {
+				if found {
+					if previous.replay.MissingBoundary() && frame.Replay != nil && !frame.Replay.MissingBoundary() {
+						if ref.Enclosed == nil {
+							ref.Enclosed = map[string]screenshots.ComparisonFileInterval{}
+						}
+						ref.Enclosed[id] = *frame.Replay.File
+						seen[id] = comparisonRecord(frame.ComparisonFrameObservation)
+						for i := range visitedCandidates {
+							if visitedCandidates[i].FrameID == id {
+								visitedCandidates[i].Unselectable = false
+								break
+							}
+						}
+					}
+					continue
+				}
+				if frame.Replay == nil {
+					return nil, errors.New("new inventory record lacks a native address")
+				}
+				address := *frame.Replay
+				address.Window.Spans = nil
+				seen[id] = comparisonKnownPicture{timing: comparisonTimingOf(frame.ComparisonFrameObservation), replay: &address}
+			}
+			if err := encoder.write(frame); errors.Is(err, errComparisonInventoryFull) {
+				ref.Summary.Reasons = append(ref.Summary.Reasons, "inventory_limit")
+				break
+			} else if err != nil {
+				return nil, fmt.Errorf("comparison scene inventory: %w", err)
+			}
+			if !deep {
+				visitedCandidates = append(visitedCandidates, comparisonSamples([]screenshots.ComparisonSample{frame})[0])
+			}
+		}
+		for _, frame := range frames {
+			t := frame.RelativeTimestampSeconds
+			if frame.TimeBaseNumerator <= 0 || frame.TimeBaseDenominator <= 0 || frame.DurationTicks <= 0 {
+				if !slices.Contains(ref.Summary.Reasons, "missing_native_duration") {
+					ref.Summary.Reasons = append(ref.Summary.Reasons, "missing_native_duration")
+				}
+				continue
+			}
+			quantum := float64(frame.TimeBaseNumerator) / float64(frame.TimeBaseDenominator)
+			tick = max(tick, quantum)
+			span := api.ComparisonTimeInterval{Start: max(region.payloadStart, t), End: min(region.payloadEnd, t+float64(frame.DurationTicks)*quantum)}
+			if span.End <= span.Start {
+				continue
+			}
+			covered = appendComparisonCoverage(covered, span, quantum)
+			if frame.Evidence != nil && frame.Evidence.Eligible {
+				eligible = appendComparisonCoverage(eligible, span, quantum)
+			}
+			if t >= region.payloadStart && t < region.payloadEnd {
+				ref.NativeFrames++
+				lastDuration = float64(frame.DurationTicks) * quantum
+			}
+		}
+		if !deep {
+			ref.QuickWindows++
+		}
+		if deep {
+			payloadStart = region.payloadEnd
+			payloadSeconds = comparisonSampleChunkSeconds(payloadSeconds, region.payloadEnd-region.payloadStart, time.Since(started))
+			progress.update(int(1000*payloadStart/duration), 1000)
+		} else if !expanding {
+			progress.update(index+1, total)
+		}
+		if len(ref.Summary.Reasons) > 0 {
+			break
+		}
+		if !deep && index == 11 {
+			dark, motion, _ := comparisons.SceneCounts(plan.Preferences, plan.Preferences.Count)
+			targets := [3]int{motion, dark, plan.Preferences.FlatCount}
+			achieved := [3]int{}
+			used := map[string]bool{}
+			var selected []comparisons.MatchedRow
+			for range plan.Preferences.Count {
+				frame, _, ok := comparisons.SelectScene(
+					slices.Values(visitedCandidates),
+					used,
+					selected,
+					targets,
+					achieved,
+					targets,
+					(window.End-window.Start)/float64(max(1, plan.Preferences.Count*3)),
+				)
+				if !ok {
+					break
+				}
+				used[frame.FrameID] = true
+				selected = append(selected, comparisons.MatchedRow{MainSeconds: frame.TimestampSeconds, Complete: true})
+				for category := range 3 {
+					if comparisons.SceneQualified(frame.Evidence, category) {
+						achieved[category]++
+					}
+				}
+			}
+			spread := 0.0
+			if len(selected) > 1 {
+				lo, hi := selected[0].MainSeconds, selected[0].MainSeconds
+				for _, row := range selected {
+					lo = min(lo, row.MainSeconds)
+					hi = max(hi, row.MainSeconds)
+				}
+				spread = hi - lo
+			}
+			if len(selected) == plan.Preferences.Count && achieved[0] >= targets[0] && achieved[1] >= targets[1] && achieved[2] >= targets[2] &&
+				(len(selected) == 1 || spread >= (window.End-window.Start)*.5) {
+				break
+			}
+		}
+	}
+	if expanding {
+		// Extra Quick discovery is part of row matching's work allowance.
+		progress.finishPhase()
+	} else {
+		progress.complete()
+	}
+	// Requested work counts overlaps; coverage counts each visited interval once.
+	if err := encoder.flush(); errors.Is(err, errComparisonInventoryFull) {
+		ref.Summary.Reasons = append(ref.Summary.Reasons, "inventory_limit")
+	} else if err != nil {
+		return nil, err
+	}
+	unique := mergeComparisonCoverage(covered, tick)
+	ref.Covered = slices.Clone(unique)
+	ref.Eligible = mergeComparisonCoverage(eligible, tick)
+	for _, interval := range unique {
+		ref.Summary.CoveredSeconds += interval.End - interval.Start
+	}
+	ref.Summary.EligibleSeconds = comparisonEligibleCoverage(ref.Eligible, window, excluded)
+	metadataFrames := retained.ComparisonSources[plan.MainSourceID].Source.FrameCount
+	endTolerance := tick
+	if metadataFrames > 0 && metadataFrames == ref.NativeFrames {
+		// Metadata duration can round beyond the final observed display end.
+		// Equal native frame counts admit that final rounding, never an interior gap.
+		endTolerance = max(tick, lastDuration)
+	}
+	ref.Summary.Complete = deep && len(ref.Summary.Reasons) == 0 && len(unique) == 1 && unique[0].Start <= tick &&
+		unique[0].End >= duration-endTolerance && (metadataFrames == 0 || metadataFrames == ref.NativeFrames)
+	if deep && !ref.Summary.Complete && len(ref.Summary.Reasons) == 0 {
+		ref.Summary.Reasons = append(ref.Summary.Reasons, "missing_main_interval")
+	}
+	ref.Summary.RankingComplete = len(ref.Summary.Reasons) == 0
+	if !deep {
+		ref.Summary.Reasons = append(ref.Summary.Reasons, "bounded_discovery")
+	}
+	if err := writer.Flush(); err != nil {
+		return nil, fmt.Errorf("comparison scene inventory: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		return nil, fmt.Errorf("comparison scene inventory: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return nil, fmt.Errorf("comparison scene inventory: %w", err)
+	}
+	ref.SHA256 = hex.EncodeToString(hash.Sum(nil))
+	sealComparisonInventoryIndex(ref)
+	encoded := 0
+	for _, block := range ref.Blocks {
+		encoded += block.Frames
+	}
+	progress.logger.Debugf("comparisons: phase=inventory_segment encoded_records=%d compressed_bytes=%d expanded_window=%t", encoded, ref.Bytes, expanding)
+	if expanding {
+		search := quick[0]
+		if !ref.Summary.RankingComplete || !search.admits(ref, len(seen)) {
+			stopped := cloneComparisonInventory(old)
+			stopped.Summary.RankingComplete = false
+			stopped.Summary.Reasons = ref.Summary.Reasons
+			if ref.Summary.RankingComplete {
+				stopped.Summary.Reasons = append(stopped.Summary.Reasons, "inventory_limit")
+			}
+			stopped.Summary.RequestedSeconds = ref.Summary.RequestedSeconds
+			retained.ComparisonInventory = stopped
+			return stopped, nil
+		}
+		if err := readComparisonInventory(ctx, ref, owner, func(screenshots.ComparisonSample) bool { return true }); err != nil {
+			return nil, err
+		}
+		maps.Copy(search.seen, seen)
+		part := *ref
+		part.Summary = api.ComparisonAnalysisSummary{}
+		part.Covered, part.Eligible = nil, nil
+		search.parts = append(search.parts, &part)
+		keep = true
+		logical := *ref
+		if len(old.Enclosed) > 0 {
+			logical.Enclosed = maps.Clone(old.Enclosed)
+			maps.Copy(logical.Enclosed, ref.Enclosed)
+		}
+		logical.segments = slices.Clone(search.parts)
+		retained.ComparisonInventory = &logical
+		return &logical, nil
+	}
+	// The sealed prefix is resumable even when discovery was interrupted.
+	publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	if err := publishComparisonInventory(publishCtx, ref, owner); err != nil {
+		return nil, err
+	}
+	keep = true
+	if len(quick) != 0 && !deep {
+		quick[0].base, quick[0].parts, quick[0].seen = ref, []*comparisonSceneInventory{ref}, seen
+	}
+	retained.ComparisonInventory = ref
+	return ref, nil
+}
+
+func publishComparisonInventory(ctx context.Context, ref *comparisonSceneInventory, owner string) error {
+	destination := filepath.Join(owner, "scene-inventory-"+ref.SHA256+".jsonl.gz")
+	if _, err := os.Stat(destination); err == nil {
+		existing := *ref
+		existing.Path = destination
+		if err := readComparisonInventory(ctx, &existing, owner, func(screenshots.ComparisonSample) bool { return true }); err != nil {
+			return err
+		}
+		if err := os.Remove(ref.Path); err != nil {
+			return fmt.Errorf("discard duplicate inventory: %w", err)
+		}
+	} else {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("publish comparison inventory: %w", err)
+		}
+		if err := os.Rename(ref.Path, destination); err != nil {
+			return fmt.Errorf("publish comparison inventory: %w", err)
+		}
+	}
+	ref.Path = destination
+	return nil
+}
+
+func appendComparisonCoverage(intervals []api.ComparisonTimeInterval, span api.ComparisonTimeInterval, tick float64) []api.ComparisonTimeInterval {
+	if len(intervals) > 0 && span.Start >= intervals[len(intervals)-1].Start && span.Start <= intervals[len(intervals)-1].End+tick+1e-9 {
+		intervals[len(intervals)-1].End = max(intervals[len(intervals)-1].End, span.End)
+		return intervals
+	}
+	return append(intervals, span)
+}
+
+func mergeComparisonCoverage(intervals []api.ComparisonTimeInterval, tick float64) []api.ComparisonTimeInterval {
+	slices.SortFunc(intervals, func(a, b api.ComparisonTimeInterval) int {
+		if a.Start < b.Start {
+			return -1
+		}
+		if a.Start > b.Start {
+			return 1
+		}
+		return 0
+	})
+	var merged []api.ComparisonTimeInterval
+	for _, span := range intervals {
+		merged = appendComparisonCoverage(merged, span, tick)
+	}
+	return merged
+}
+
+func comparisonEligibleCoverage(intervals []api.ComparisonTimeInterval, window api.ComparisonTimeInterval, excluded []api.ComparisonTimeInterval) float64 {
+	total := 0.0
+	for _, span := range intervals {
+		start, end := max(window.Start, span.Start), min(window.End, span.End)
+		if end <= start {
+			continue
+		}
+		seconds := end - start
+		for _, skip := range excluded {
+			seconds -= max(0, min(end, skip.End)-max(start, skip.Start))
+		}
+		total += max(0, seconds)
+	}
+	return total
+}
+
+func comparisonDiscoveryAllowance(duration float64) time.Duration {
+	return time.Duration(min(28800.0, max(1800.0, 4*duration)) * float64(time.Second))
+}

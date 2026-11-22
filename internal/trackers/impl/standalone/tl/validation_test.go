@@ -115,7 +115,7 @@ func TestRestoredOldTLProjectionCannotPrepareSubmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := trackers.NewServiceWithRegistry(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "upbrr.db")}, Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"TL": {Passkey: "synthetic", APIUpload: true}}}}, api.NopLogger{}, nil, currentRegistry)
-	retained, err := service.PrepareRetainedUploadPlan(t.Context(), meta, []api.TrackerReleaseProjection{restored})
+	retained, err := service.PrepareRetainedUploadPlan(t.Context(), meta, []api.TrackerReleaseProjection{restored}, api.WorkflowExecutionModeNormal)
 	if err != nil {
 		t.Fatal(err)
 	}

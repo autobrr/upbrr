@@ -28,4 +28,4 @@ Legacy Emby paths are retained for configuration compatibility and are not expos
 
 ## Verify the change
 
-There is no connection-test button in this section. Save, prepare a source already known to the configured Arr service, then inspect its metadata and sanitized logs. A failed or empty Arr lookup does not block preparation; upbrr continues with other evidence.
+Use **Test connection** beside each instance to check its current draft URL and API key without saving. The read-only check does not establish that a source path will match. See [connection-test behavior](./index.md#test-a-connection). Save, then prepare a source already known to the configured Arr service, then inspect its metadata and sanitized logs. A failed or empty Arr lookup does not block preparation; upbrr continues with other evidence.

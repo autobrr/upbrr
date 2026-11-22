@@ -1162,6 +1162,17 @@
           "Resolution"
         ]
       },
+      "CancelActiveInputOpenRequest": {
+        "type": "object",
+        "properties": {
+          "idempotencyKey": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "idempotencyKey"
+        ]
+      },
       "CancelReleaseWorkflowRequest": {
         "type": "object",
         "properties": {
@@ -1283,12 +1294,915 @@
               }
             ]
           },
+          "InfoHash": {
+            "type": "string"
+          },
           "Skip": {
             "type": "boolean"
           }
         },
         "required": [
           "Skip"
+        ]
+      },
+      "ComparisonAnalysisSummary": {
+        "type": "object",
+        "properties": {
+          "complete": {
+            "type": "boolean"
+          },
+          "coveredSeconds": {
+            "type": "number"
+          },
+          "durationSeconds": {
+            "type": "number"
+          },
+          "eligibleSeconds": {
+            "type": "number"
+          },
+          "excluded": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonTimeInterval"
+            }
+          },
+          "profile": {
+            "type": "string"
+          },
+          "rankingComplete": {
+            "type": "boolean"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "requestedSeconds": {
+            "type": "number"
+          },
+          "scanMode": {
+            "type": "string"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/ComparisonTimeInterval"
+          },
+          "version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "complete",
+          "coveredSeconds",
+          "durationSeconds",
+          "eligibleSeconds",
+          "profile",
+          "rankingComplete",
+          "requestedSeconds",
+          "scanMode",
+          "selection",
+          "version"
+        ]
+      },
+      "ComparisonAnchor": {
+        "type": "object",
+        "properties": {
+          "mainSeconds": {
+            "type": "number"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "sourceSeconds": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "mainSeconds",
+          "sourceId",
+          "sourceSeconds"
+        ]
+      },
+      "ComparisonCell": {
+        "type": "object",
+        "properties": {
+          "artifactId": {
+            "$ref": "#/components/schemas/PublicResourceID"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "contentSha256": {
+            "type": "string"
+          },
+          "frameNumber": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observedIdentity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComparisonFrameIdentity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observedPts": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pictureType": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "timeBaseDenominator": {
+            "type": "integer"
+          },
+          "timeBaseNumerator": {
+            "type": "integer"
+          },
+          "timestampSeconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "warning": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId"
+        ]
+      },
+      "ComparisonFrameIdentity": {
+        "type": "object",
+        "properties": {
+          "inputFingerprint": {
+            "type": "string"
+          },
+          "occurrence": {
+            "type": "string"
+          },
+          "pts": {
+            "type": "integer"
+          },
+          "streamId": {
+            "type": "string"
+          },
+          "timeBaseDenominator": {
+            "type": "integer"
+          },
+          "timeBaseNumerator": {
+            "type": "integer"
+          },
+          "version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "inputFingerprint",
+          "occurrence",
+          "pts",
+          "streamId",
+          "timeBaseDenominator",
+          "timeBaseNumerator",
+          "version"
+        ]
+      },
+      "ComparisonFrameSelection": {
+        "type": "object",
+        "properties": {
+          "previewId": {
+            "$ref": "#/components/schemas/PublicResourceID"
+          },
+          "rowId": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "previewId",
+          "rowId",
+          "sourceId"
+        ]
+      },
+      "ComparisonInstructions": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MediaAttachment"
+            }
+          },
+          "captureAfterMatch": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expectedFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "frameSelections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonFrameSelection"
+            }
+          },
+          "plan": {
+            "$ref": "#/components/schemas/ComparisonPlan"
+          },
+          "videoSources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonVideoSelection"
+            }
+          }
+        },
+        "required": [
+          "action",
+          "plan"
+        ]
+      },
+      "ComparisonPlan": {
+        "type": "object",
+        "properties": {
+          "analysis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComparisonAnalysisSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "anchors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonAnchor"
+            }
+          },
+          "approvedFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "fingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "imported": {
+            "type": "boolean"
+          },
+          "mainSourceId": {
+            "type": "string"
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/ComparisonPreferences"
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonProblem"
+            }
+          },
+          "renderPolicyVersion": {
+            "type": "integer"
+          },
+          "resizeLargerOnly": {
+            "type": "boolean"
+          },
+          "resizeSmaller": {
+            "type": "boolean"
+          },
+          "reuseMainScreenshots": {
+            "type": "boolean"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonRow"
+            }
+          },
+          "sceneMix": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComparisonSceneMix"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "screenshotSizing": {
+            "type": "string"
+          },
+          "sizeReferenceSourceId": {
+            "type": "string"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonSource"
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "fingerprint",
+          "imported",
+          "mainSourceId",
+          "preferences",
+          "reuseMainScreenshots",
+          "rows",
+          "sources"
+        ]
+      },
+      "ComparisonPreferences": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "darkCount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "darkPercent": {
+            "type": "integer"
+          },
+          "flatCount": {
+            "type": "integer"
+          },
+          "motionCount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "motionPercent": {
+            "type": "integer"
+          },
+          "scanMode": {
+            "type": "string"
+          },
+          "selectionWindow": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComparisonSelectionWindow"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "count",
+          "darkPercent",
+          "motionPercent"
+        ]
+      },
+      "ComparisonProblem": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "rowId": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ]
+      },
+      "ComparisonProgrammeCandidate": {
+        "type": "object",
+        "properties": {
+          "discId": {
+            "type": "string"
+          },
+          "discName": {
+            "type": "string"
+          },
+          "durationSeconds": {
+            "type": "number"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "limitation": {
+            "type": "string"
+          },
+          "rank": {
+            "type": "integer"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "supported": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "discId",
+          "discName",
+          "durationSeconds",
+          "id",
+          "kind",
+          "label",
+          "rank",
+          "supported"
+        ]
+      },
+      "ComparisonProgrammeSelection": {
+        "type": "object",
+        "properties": {
+          "angle": {
+            "type": "integer"
+          },
+          "candidateId": {
+            "type": "string"
+          },
+          "discId": {
+            "type": "string"
+          },
+          "discoveryFingerprint": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidateId",
+          "discId",
+          "discoveryFingerprint",
+          "kind"
+        ]
+      },
+      "ComparisonRow": {
+        "type": "object",
+        "properties": {
+          "cells": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonCell"
+            }
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComparisonSceneEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "excluded": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "scene": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "cells",
+          "excluded",
+          "id"
+        ]
+      },
+      "ComparisonSceneCategory": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string"
+          },
+          "score": {
+            "type": "number"
+          },
+          "state": {
+            "type": "string"
+          },
+          "supportEndSeconds": {
+            "type": "number"
+          },
+          "supportSeconds": {
+            "type": "number"
+          },
+          "supportStartSeconds": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "score",
+          "state",
+          "supportEndSeconds",
+          "supportSeconds",
+          "supportStartSeconds"
+        ]
+      },
+      "ComparisonSceneEvidence": {
+        "type": "object",
+        "properties": {
+          "active": {
+            "$ref": "#/components/schemas/ComparisonSceneRegion"
+          },
+          "blurredContrast": {
+            "type": "number"
+          },
+          "dark": {
+            "$ref": "#/components/schemas/ComparisonSceneCategory"
+          },
+          "darkFraction": {
+            "type": "number"
+          },
+          "eligible": {
+            "type": "boolean"
+          },
+          "flat": {
+            "$ref": "#/components/schemas/ComparisonSceneCategory"
+          },
+          "flatArea": {
+            "type": "integer"
+          },
+          "flatDeviation": {
+            "type": "number"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "mean": {
+            "type": "number"
+          },
+          "motion": {
+            "$ref": "#/components/schemas/ComparisonSceneCategory"
+          },
+          "movingSupport": {
+            "type": "number"
+          },
+          "nearBlackFraction": {
+            "type": "number"
+          },
+          "originalContrast": {
+            "type": "number"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "regions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonSceneRegion"
+            }
+          },
+          "reliableSupport": {
+            "type": "number"
+          },
+          "renderer": {
+            "type": "string"
+          },
+          "width": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "active",
+          "blurredContrast",
+          "dark",
+          "darkFraction",
+          "eligible",
+          "flat",
+          "flatArea",
+          "flatDeviation",
+          "height",
+          "mean",
+          "motion",
+          "movingSupport",
+          "nearBlackFraction",
+          "originalContrast",
+          "profile",
+          "reliableSupport",
+          "renderer",
+          "width"
+        ]
+      },
+      "ComparisonSceneMix": {
+        "type": "object",
+        "properties": {
+          "achievedDark": {
+            "type": "integer"
+          },
+          "achievedFlat": {
+            "type": "integer"
+          },
+          "achievedMotion": {
+            "type": "integer"
+          },
+          "requestedDark": {
+            "type": "integer"
+          },
+          "requestedFlat": {
+            "type": "integer"
+          },
+          "requestedMotion": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "achievedDark",
+          "achievedMotion",
+          "requestedDark",
+          "requestedMotion"
+        ]
+      },
+      "ComparisonSceneRegion": {
+        "type": "object",
+        "properties": {
+          "area": {
+            "type": "integer"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "width": {
+            "type": "integer"
+          },
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "area",
+          "height",
+          "width",
+          "x",
+          "y"
+        ]
+      },
+      "ComparisonSelectionWindow": {
+        "type": "object",
+        "properties": {
+          "end": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "excluded": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonTimeInterval"
+            }
+          },
+          "start": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ComparisonSource": {
+        "type": "object",
+        "properties": {
+          "allowedFrameTypes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComparisonSourceCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "durationSeconds": {
+            "type": "number"
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "frameRate": {
+            "type": "number"
+          },
+          "frameRateDenominator": {
+            "type": "integer"
+          },
+          "frameRateNumerator": {
+            "type": "integer"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "imported": {
+            "type": "boolean"
+          },
+          "label": {
+            "type": "string"
+          },
+          "overlay": {
+            "type": "boolean"
+          },
+          "preferBFrames": {
+            "type": "boolean"
+          },
+          "programme": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComparisonProgrammeCandidate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "toneMap": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "width": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "imported",
+          "label",
+          "overlay"
+        ]
+      },
+      "ComparisonSourceCapabilities": {
+        "type": "object",
+        "properties": {
+          "programmeSelectionRequired": {
+            "type": "boolean"
+          },
+          "toneMappingAvailable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "programmeSelectionRequired",
+          "toneMappingAvailable"
+        ]
+      },
+      "ComparisonSourceDiscovery": {
+        "type": "object",
+        "properties": {
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonProgrammeCandidate"
+            }
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidates",
+          "fingerprint",
+          "sourceId"
+        ]
+      },
+      "ComparisonTimeInterval": {
+        "type": "object",
+        "properties": {
+          "end": {
+            "type": "number"
+          },
+          "start": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "end",
+          "start"
+        ]
+      },
+      "ComparisonVideoSelection": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "programme": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComparisonProgrammeSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "path"
         ]
       },
       "ContentBinding": {
@@ -1844,6 +2758,43 @@
           "Summary"
         ]
       },
+      "DiscoverReleaseWorkflowComparisonSourceRequest": {
+        "type": "object",
+        "properties": {
+          "expectedRevision": {
+            "$ref": "#/components/schemas/WorkflowRevision"
+          },
+          "idempotencyKey": {
+            "type": "string"
+          },
+          "media": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MediaArtifactSetRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "workflowId": {
+            "$ref": "#/components/schemas/WorkflowID"
+          }
+        },
+        "required": [
+          "expectedRevision",
+          "idempotencyKey",
+          "path",
+          "sourceId",
+          "workflowId"
+        ]
+      },
       "DupeAssessment": {
         "type": "object",
         "properties": {
@@ -1892,6 +2843,9 @@
           },
           "selection": {
             "$ref": "#/components/schemas/TrackerSelectionRef"
+          },
+          "skipRemote": {
+            "type": "boolean"
           },
           "status": {
             "$ref": "#/components/schemas/StageStatus"
@@ -2159,6 +3113,39 @@
           "pages"
         ]
       },
+      "EditReleaseWorkflowComparisonsRequest": {
+        "type": "object",
+        "properties": {
+          "expectedRevision": {
+            "$ref": "#/components/schemas/WorkflowRevision"
+          },
+          "idempotencyKey": {
+            "type": "string"
+          },
+          "instructions": {
+            "$ref": "#/components/schemas/ComparisonInstructions"
+          },
+          "media": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MediaArtifactSetRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "workflowId": {
+            "$ref": "#/components/schemas/WorkflowID"
+          }
+        },
+        "required": [
+          "expectedRevision",
+          "idempotencyKey",
+          "instructions",
+          "workflowId"
+        ]
+      },
       "EditionDisplayPart": {
         "type": "object",
         "properties": {
@@ -2175,6 +3162,36 @@
       },
       "EncodeSettingsStatus": {
         "type": "string"
+      },
+      "EpisodeCoverage": {
+        "type": "object",
+        "properties": {
+          "CompleteSeason": {
+            "type": "boolean"
+          },
+          "Episodes": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "Part": {
+            "type": "string"
+          },
+          "SeasonKnown": {
+            "type": "boolean"
+          },
+          "Status": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          }
+        },
+        "required": [
+          "CompleteSeason",
+          "Episodes",
+          "Part",
+          "SeasonKnown",
+          "Status"
+        ]
       },
       "EpisodeFacts": {
         "type": "object",
@@ -2196,6 +3213,9 @@
           },
           "AiredDate": {
             "type": "string"
+          },
+          "Coverage": {
+            "$ref": "#/components/schemas/EpisodeCoverage"
           },
           "DailyDate": {
             "type": "string"
@@ -2237,6 +3257,7 @@
           "AirTimezone",
           "AirTimezoneSource",
           "AiredDate",
+          "Coverage",
           "DailyDate",
           "DateMatched",
           "Episode",
@@ -2475,6 +3496,16 @@
           "Similarity": {
             "type": "number"
           },
+          "TentativeConfidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "Title": {
             "type": "string"
           },
@@ -2525,6 +3556,9 @@
       "FramePreview": {
         "type": "object",
         "properties": {
+          "comparisonSourceId": {
+            "type": "string"
+          },
           "contentUrl": {
             "type": "string"
           },
@@ -2540,6 +3574,39 @@
           "id": {
             "$ref": "#/components/schemas/PublicResourceID"
           },
+          "media": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MediaArtifactSetRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observedIdentity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComparisonFrameIdentity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observedPts": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pictureType": {
+            "type": "string"
+          },
           "processing": {
             "anyOf": [
               {
@@ -2552,6 +3619,12 @@
           },
           "release": {
             "$ref": "#/components/schemas/ReleaseSnapshotRef"
+          },
+          "timeBaseDenominator": {
+            "type": "integer"
+          },
+          "timeBaseNumerator": {
+            "type": "integer"
           },
           "timestampSeconds": {
             "type": "number"
@@ -3764,6 +4837,12 @@
               "$ref": "#/components/schemas/IMDBEditionDetail"
             }
           },
+          "EditionRuntimes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IMDBEditionDetail"
+            }
+          },
           "Editions": {
             "type": "array",
             "items": {
@@ -3819,6 +4898,12 @@
             }
           },
           "SoundMixes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "SpokenLanguages": {
             "type": "array",
             "items": {
               "type": "string"
@@ -4294,6 +5379,29 @@
           "revision"
         ]
       },
+      "InputReviewContext": {
+        "type": "object",
+        "properties": {
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InputReadinessFieldOutcome"
+            }
+          },
+          "release": {
+            "$ref": "#/components/schemas/PreparedRelease"
+          },
+          "selectedTrackerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerID"
+            }
+          }
+        },
+        "required": [
+          "release"
+        ]
+      },
       "InteractionMode": {
         "type": "string"
       },
@@ -4342,6 +5450,9 @@
               "type": "string"
             }
           },
+          "OriginalLanguageDefinitive": {
+            "type": "boolean"
+          },
           "OriginalLanguages": {
             "type": "array",
             "items": {
@@ -4386,6 +5497,7 @@
           "AudioAbsent",
           "AudioStatus",
           "FullSubtitleLanguages",
+          "OriginalLanguageDefinitive",
           "OriginalLanguages",
           "OriginalLanguagesKnown",
           "PrimaryAudioTrackID",
@@ -4483,6 +5595,16 @@
           },
           "captureFingerprint": {
             "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "comparisons": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComparisonPlan"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "createdAt": {
             "type": "string"
@@ -4766,6 +5888,15 @@
               "$ref": "#/components/schemas/EditionDisplayPart"
             }
           },
+          "EditionFrameRate": {
+            "type": "number"
+          },
+          "EditionOriginalFrameRate": {
+            "type": "number"
+          },
+          "EditionRuntimeSeconds": {
+            "type": "number"
+          },
           "EditionSet": {
             "type": "string"
           },
@@ -4855,6 +5986,12 @@
           },
           "ThreeD": {
             "type": "string"
+          },
+          "TitleLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "TrackAudioLanguages": {
             "type": "array",
@@ -5749,6 +6886,9 @@
           },
           "request": {
             "$ref": "#/components/schemas/ContinueReleaseWorkflowRequest"
+          },
+          "reuseVerifiedSource": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -5859,6 +6999,9 @@
           },
           "Code": {
             "$ref": "#/components/schemas/OperationFailureCode"
+          },
+          "ComparisonReason": {
+            "type": "string"
           },
           "HDRAnalysisCode": {
             "$ref": "#/components/schemas/HDRAnalysisFailureCode"
@@ -6231,6 +7374,16 @@
               "$ref": "#/components/schemas/TrackerPreview"
             }
           },
+          "comparisonSourceCapabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComparisonSourceCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "hdrTargets": {
             "type": "array",
             "items": {
@@ -6247,6 +7400,12 @@
       "PreviewReleaseWorkflowFrameRequest": {
         "type": "object",
         "properties": {
+          "comparisonSourceId": {
+            "type": "string"
+          },
+          "comparisonStepDirection": {
+            "type": "integer"
+          },
           "discId": {
             "type": "string"
           },
@@ -7720,6 +8879,16 @@
               }
             ]
           },
+          "inputReview": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InputReviewContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "media": {
             "anyOf": [
               {
@@ -7984,6 +9153,21 @@
             ]
           }
         }
+      },
+      "ReleaseWorkflowUploadComparisonApproval": {
+        "type": "object",
+        "properties": {
+          "confirmed": {
+            "type": "boolean"
+          },
+          "expectedFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          }
+        },
+        "required": [
+          "confirmed",
+          "expectedFingerprint"
+        ]
       },
       "ReleaseWorkflowUploadConfirmation": {
         "type": "object",
@@ -8299,6 +9483,7 @@
           "trackerPreparation",
           "duplicateReview",
           "trackerApproval",
+          "comparisonApproval",
           "uploadApproval",
           "reprepare",
           "reconciliation"
@@ -8307,6 +9492,16 @@
       "ReleaseWorkflowUploadFeedbackResponse": {
         "type": "object",
         "properties": {
+          "comparisonApproval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadComparisonApproval"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "duplicateReview": {
             "anyOf": [
               {
@@ -9045,6 +10240,9 @@
                 "type": "null"
               }
             ]
+          },
+          "comparisonReuseMain": {
+            "type": "boolean"
           },
           "count": {
             "anyOf": [
@@ -10098,6 +11296,12 @@
               }
             ]
           },
+          "IdentityCandidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExternalIdentityCandidate"
+            }
+          },
           "ImportedScreenshotEvidence": {
             "anyOf": [
               {
@@ -10456,7 +11660,13 @@
           "Logo": {
             "type": "string"
           },
+          "LogoLanguagePreference": {
+            "type": "string"
+          },
           "LogoLookupAttempted": {
+            "type": "boolean"
+          },
+          "LogoLookupPending": {
             "type": "boolean"
           },
           "MALID": {
@@ -10509,6 +11719,12 @@
           },
           "Runtime": {
             "type": "integer"
+          },
+          "SpokenLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "TMDBID": {
             "type": "integer"
@@ -11726,6 +12942,9 @@
           "container": {
             "type": "string"
           },
+          "coverage": {
+            "$ref": "#/components/schemas/EpisodeCoverage"
+          },
           "date": {
             "type": "string"
           },
@@ -11806,6 +13025,7 @@
           }
         },
         "required": [
+          "coverage",
           "evidence",
           "hdr",
           "pack"
@@ -12421,6 +13641,9 @@
           },
           "descriptionGroup": {
             "type": "string"
+          },
+          "diagnosticReady": {
+            "type": "boolean"
           },
           "displayName": {
             "type": "string"
@@ -13400,8 +14623,14 @@
               "$ref": "#/components/schemas/GoalAvailability"
             }
           },
+          "comparisonRestorePending": {
+            "type": "boolean"
+          },
           "disposition": {
             "$ref": "#/components/schemas/WorkflowDisposition"
+          },
+          "duplicateReusePending": {
+            "type": "boolean"
           },
           "events": {
             "type": "array",
@@ -15901,6 +17130,239 @@
         ]
       }
     },
+    "/workflows/{workflowId}/media/comparisons": {
+      "post": {
+        "description": "Retains ordered source columns and complete comparison rows. Upload requires explicit approval of the exact retained image and settings fingerprint.",
+        "operationId": "editWorkflowComparisons",
+        "parameters": [
+          {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
+            "in": "path",
+            "name": "workflowId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optimistic workflow revision authority. Send the current ETag value returned by a workflow response.",
+            "example": "\"1\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "One stable key per logical mutation. Reuse it only when retrying that same logical request.",
+            "example": "example-command-001",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "instructions": {
+                    "$ref": "#/components/schemas/ComparisonInstructions"
+                  },
+                  "media": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/MediaArtifactSetRef"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "instructions"
+                ]
+              }
+            }
+          },
+          "description": "Top-level workflowId, expectedRevision, and idempotencyKey are supplied by the route and headers. Route-bound nested IDs are server supplied; compatibility values remain accepted but are ignored.",
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseWorkflowCurrent"
+                }
+              }
+            },
+            "description": "Workflow state with the comparison operation attached.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "summary": "Configure, match, capture or approve comparisons",
+        "tags": [
+          "Media"
+        ]
+      }
+    },
+    "/workflows/{workflowId}/media/comparisons/sources/discover": {
+      "post": {
+        "description": "Reads programme choices without changing workflow or media revisions.",
+        "operationId": "discoverWorkflowComparisonSource",
+        "parameters": [
+          {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
+            "in": "path",
+            "name": "workflowId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optimistic workflow revision authority. Send the current ETag value returned by a workflow response.",
+            "example": "\"1\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "One stable key per logical mutation. Reuse it only when retrying that same logical request.",
+            "example": "example-command-001",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "media": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/MediaArtifactSetRef"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "sourceId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path",
+                  "sourceId"
+                ]
+              }
+            }
+          },
+          "description": "Top-level workflowId, expectedRevision, and idempotencyKey are supplied by the route and headers. Route-bound nested IDs are server supplied; compatibility values remain accepted but are ignored.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComparisonSourceDiscovery"
+                }
+              }
+            },
+            "description": "Discovered comparison programmes."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "summary": "Discover comparison programmes",
+        "tags": [
+          "Media"
+        ]
+      }
+    },
     "/workflows/{workflowId}/media/plan": {
       "get": {
         "description": "Returns the safe media capture and artifact plan for the workflow.",
@@ -15984,6 +17446,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "The current comparison preview to step from. A retained comparison cell can also identify the starting picture.",
+            "in": "query",
+            "name": "previewId",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -15992,6 +17463,12 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "comparisonSourceId": {
+                    "type": "string"
+                  },
+                  "comparisonStepDirection": {
+                    "type": "integer"
+                  },
                   "discId": {
                     "type": "string"
                   },

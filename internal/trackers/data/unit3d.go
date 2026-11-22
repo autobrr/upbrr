@@ -1031,6 +1031,7 @@ func buildUnit3DSearchEntries(items []unit3dSearchItem, filterTMDBID int, isDisc
 		canonicalType := CanonicalUnit3DType(rawType)
 		hdr = unit3DTitleHDRFallback(item.Attributes.Name, canonicalType, item.Attributes.Resolution, hdr)
 		englishSubtitles, subtitlesKnown := mediafacts.EnglishSubtitleEvidenceFromMediaInfoText(item.Attributes.MediaInfo)
+		internal := (*bool)(item.Attributes.Internal)
 		entry := api.DupeEntry{
 			Name:                  strings.TrimSpace(item.Attributes.Name),
 			Trumpable:             item.Attributes.Trumpable,
@@ -1042,8 +1043,8 @@ func buildUnit3DSearchEntries(items []unit3dSearchItem, filterTMDBID int, isDisc
 			Res:                   strings.TrimSpace(item.Attributes.Resolution),
 			Codec:                 mediafacts.VideoCodecFromMediaInfoText(item.Attributes.MediaInfo),
 			Provider:              strings.TrimSpace(item.Attributes.Provider),
-			Internal:              item.Attributes.Internal != nil && *item.Attributes.Internal,
-			Evidence:              unit3DDupeInternalEvidence(item.Attributes.Internal),
+			Internal:              internal != nil && *internal,
+			Evidence:              unit3DDupeInternalEvidence(internal),
 			EnglishSubtitles:      englishSubtitles,
 			EnglishSubtitlesKnown: subtitlesKnown,
 			MediaInfo:             strings.TrimSpace(item.Attributes.MediaInfo),
@@ -1613,13 +1614,28 @@ type unit3dSearchAttrs struct {
 	DownloadLink string       `json:"download_link"`
 	Type         string       `json:"type"`
 	Resolution   string       `json:"resolution"`
-	Internal     *bool        `json:"internal"`
+	Internal     *unit3dBool  `json:"internal"`
 	BDInfo       string       `json:"bd_info"`
 	MediaInfo    string       `json:"media_info"`
 	Description  string       `json:"description"`
 	TMDBID       int          `json:"tmdb_id"`
 	HDRDV        *string      `json:"hdr_dv"`
 	Provider     string       `json:"provider"`
+}
+
+// Some Unit3D filter responses encode the internal flag as an integer.
+type unit3dBool bool
+
+func (flag *unit3dBool) UnmarshalJSON(raw []byte) error {
+	switch string(raw) {
+	case "true", "1":
+		*flag = true
+	case "false", "0":
+		*flag = false
+	default:
+		return errors.New("unit3d: invalid internal flag in filter response")
+	}
+	return nil
 }
 
 type unit3dPendingSearchResponse struct {

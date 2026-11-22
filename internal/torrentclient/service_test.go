@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -3108,7 +3109,7 @@ func TestInjectWatchFolderCopiesFileWhenURLAlsoPresent(t *testing.T) {
 	}
 }
 
-func TestInjectURLFallbackSkipsWatchBeforeDelay(t *testing.T) {
+func TestInjectURLFallbackDoesNotDelayDiscardedWatchClient(t *testing.T) {
 	t.Parallel()
 
 	watchRoot := t.TempDir()
@@ -3121,6 +3122,18 @@ func TestInjectURLFallbackSkipsWatchBeforeDelay(t *testing.T) {
 	addCalled := false
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	// PutIdleConn runs after the add response has been consumed. A handler
+	// flush alone does not establish that the client accepted the response.
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		PutIdleConn: func(err error) {
+			mu.Lock()
+			added := addCalled
+			mu.Unlock()
+			if err == nil && added {
+				cancel()
+			}
+		},
+	})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v2/auth/login":
@@ -3134,13 +3147,6 @@ func TestInjectURLFallbackSkipsWatchBeforeDelay(t *testing.T) {
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("Ok."))
-			if flusher, ok := w.(http.Flusher); ok {
-				flusher.Flush()
-			}
-			go func() {
-				time.Sleep(100 * time.Millisecond)
-				cancel()
-			}()
 			return
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -3165,11 +3171,21 @@ func TestInjectURLFallbackSkipsWatchBeforeDelay(t *testing.T) {
 		},
 	}, nil)
 
-	err := svc.Inject(ctx, api.ClientSubject{SourcePath: "video.mkv"}, api.TorrentResult{URL: "https://aither.cc/torrent/download/374352.382"})
+	err := svc.Inject(ctx, api.ClientSubject{SourcePath: "video.mkv"}, api.TorrentResult{URL: "https://tracker.invalid/torrent/registered"})
 	if err != nil {
 		t.Fatalf("inject: %v", err)
 	}
 
+	if !errors.Is(ctx.Err(), context.Canceled) {
+		t.Fatal("expected cancellation after the completed qbit URL add")
+	}
+	entries, err := os.ReadDir(watch)
+	if err != nil {
+		t.Fatalf("read watch folder: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected watch folder untouched for URL injection, got %d entries", len(entries))
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if !addCalled {

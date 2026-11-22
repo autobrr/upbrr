@@ -8,8 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -60,10 +58,6 @@ func TestCreateTaskPreservesLateNonSuccessHTMLFailure(t *testing.T) {
 
 	const detail = "AZ task rejected after form validation"
 	server := lateHTMLFailureServer(t, http.StatusUnprocessableEntity, detail)
-	torrentPath := filepath.Join(t.TempDir(), "release.torrent")
-	if err := os.WriteFile(torrentPath, []byte("torrent"), 0o600); err != nil {
-		t.Fatalf("write torrent: %v", err)
-	}
 
 	_, err := createTask(
 		t.Context(),
@@ -72,7 +66,7 @@ func TestCreateTaskPreservesLateNonSuccessHTMLFailure(t *testing.T) {
 		trackers.PreparationInput{Meta: api.UploadSubject{Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie}}},
 		"1",
 		"media info",
-		torrentPath,
+		preparedUploadTorrent{path: "release.torrent", data: []byte("torrent")},
 	)
 	if err == nil || !strings.Contains(err.Error(), detail) {
 		t.Fatalf("expected late task HTML error detail, got %v", err)

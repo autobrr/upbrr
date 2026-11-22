@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"io"
 	"math"
 	"os"
 	"os/exec"
@@ -34,15 +35,21 @@ type Runner interface {
 // CommandResult preserves command output and the observed process exit code
 // for fallback decisions and bounded diagnostics.
 type CommandResult struct {
-	Stdout   []byte
-	Stderr   []byte
-	ExitCode int
+	bounds *comparisonSequenceBounds
+	Stdout []byte
+	Stderr []byte
+	// SparseOutput supplies secondary comparison rasters from injected runners;
+	// native execution streams this output separately from stdout.
+	SparseOutput []byte
+	ExitCode     int
+
+	comparisonBackend string
 }
 
 type commandRunner struct{}
 
 func (commandRunner) Run(ctx context.Context, name string, args []string, dir string) (CommandResult, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, name, args...) // #nosec G702 -- Resolved media executable and structured arguments; no shell.
 	if strings.TrimSpace(dir) != "" {
 		cmd.Dir = dir
 	}
@@ -50,6 +57,9 @@ func (commandRunner) Run(ctx context.Context, name string, args []string, dir st
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	if progress, ok := ctx.Value(comparisonSampleProgressKey{}).(*comparisonSampleProgress); ok {
+		cmd.Stderr = io.MultiWriter(&stderr, progress)
+	}
 	err := cmd.Run()
 	result := CommandResult{
 		Stdout:   stdout.Bytes(),
@@ -127,27 +137,32 @@ func osFolder() string {
 }
 
 type captureRequest struct {
-	HDRFacts       api.HDRFacts
-	TimelineOffset float64
-	InspectFrame   bool
-	Playlist       string
-	InputPath      string
-	OutputPath     string
-	Timestamp      float64
-	FrameRate      float64
-	Resolution     string
-	UseLibplacebo  bool
-	ToneMap        bool
-	Algorithm      string
-	Desat          float64
-	Compression    int
-	FrameOverlay   bool
-	OverlaySize    int
-	FrameInfo      frameInfoResult
-	SourceWidth    int
-	SourceHeight   int
-	WidthScale     float64
-	HeightScale    float64
+	HDRFacts         api.HDRFacts
+	TimelineOffset   float64
+	InspectFrame     bool
+	Playlist         string
+	DVDVOB           bool
+	InputPath        string
+	OutputPath       string
+	Timestamp        float64
+	FrameRate        float64
+	Resolution       string
+	UseLibplacebo    bool
+	ToneMap          bool
+	Algorithm        string
+	Desat            float64
+	Compression      int
+	FrameOverlay     bool
+	OverlaySize      int
+	FrameInfo        frameInfoResult
+	SourceWidth      int
+	SourceHeight     int
+	WidthScale       float64
+	HeightScale      float64
+	OutputWidth      int
+	OutputHeight     int
+	ResizeOnly       bool
+	ScreenshotSizing string
 }
 
 type frameInfoResult struct {
@@ -176,7 +191,6 @@ var (
 
 var ffmpegFrameCorruptionIndicators = []string{
 	"error while decoding",
-	"invalid data found when processing input",
 	"non-existing pps",
 	"incomplete frame",
 	"corrupt decoded frame",
@@ -278,19 +292,15 @@ func captureFrameBytes(ctx context.Context, runner Runner, cmdPath string, req c
 // The bundled distribution does not include ffprobe, so FFmpeg performs the
 // equivalent header probe with a zero-length null output. It returns seconds
 // and rejects missing, malformed, or non-positive duration metadata.
-func probeVideoDuration(ctx context.Context, runner Runner, cmdPath, inputPath string) (float64, error) {
+func probeVideoDuration(ctx context.Context, runner Runner, cmdPath, inputPath string, dvdVOB bool) (float64, error) {
 	if strings.TrimSpace(inputPath) == "" {
 		return 0, errors.New("screenshots: duration probe input path required")
 	}
-	args := []string{
-		"-hide_banner",
-		"-loglevel", "info",
-		"-i", inputPath,
-		"-map", "0:v:0",
-		"-t", "0",
-		"-f", "null",
-		"-",
-	}
+	args := slices.Concat(
+		[]string{"-hide_banner", "-loglevel", "info"},
+		screenshotInputArgs(inputPath, "", dvdVOB),
+		[]string{"-map", "0:v:0", "-t", "0", "-f", "null", "-"},
+	)
 	result, err := runner.Run(ctx, cmdPath, args, "")
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return 0, fmt.Errorf("screenshots: ffmpeg duration probe canceled: %w", ctxErr)
@@ -379,6 +389,11 @@ func ffmpegFrameCorruptionError(stderr []byte) error {
 			return fmt.Errorf("screenshots: %w: ffmpeg reported %q", internalerrors.ErrFrameCorruption, indicator)
 		}
 	}
+	// The generic invalid-data text also occurs before FFmpeg opens a demuxer.
+	const invalidData = "invalid data found when processing input"
+	if strings.Contains(diagnostics, invalidData) && !strings.Contains(diagnostics, "error opening input") {
+		return fmt.Errorf("screenshots: %w: ffmpeg reported %q", internalerrors.ErrFrameCorruption, invalidData)
+	}
 	return nil
 }
 
@@ -393,7 +408,7 @@ func buildFFmpegArgs(req captureRequest, useLibplacebo bool) []string {
 	// Software decoding preserves decoded Dolby Vision metadata and avoids making
 	// optional CUDA/X11 decoding a prerequisite for either entrypoint.
 	args = append(args, "-ss", fmt.Sprintf("%.3f", req.Timestamp))
-	args = append(args, screenshotInputArgs(req.InputPath, req.Playlist)...)
+	args = append(args, screenshotInputArgs(req.InputPath, req.Playlist, req.DVDVOB)...)
 	if req.Playlist == "" {
 		// Prefer actual video; keep automatic selection for cover-only inputs.
 		args = append(args, "-map", "0:V:0?")
@@ -416,39 +431,71 @@ func buildFilterChain(req captureRequest, useLibplacebo bool) string {
 		filters = append(filters, "showinfo")
 	}
 
-	if scale := buildPARScaleFilter(req); scale != "" {
-		filters = append(filters, scale)
-	}
-
-	if req.ToneMap {
-		if useLibplacebo {
-			// Keep decoded software frames (and Dolby Vision side data) intact;
-			// libplacebo owns GPU transfer and returns the explicit PNG/drawtext format.
-			filters = append(
-				filters,
-				"libplacebo=apply_dolbyvision=1:tonemapping=hable:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:format=rgb24",
-			)
-		} else {
-			algo := strings.TrimSpace(req.Algorithm)
-			if algo == "" {
-				algo = "mobius"
-			}
-			filters = append(filters,
-				"zscale=transfer=linear",
-				"format=gbrpf32le",
-				fmt.Sprintf("tonemap=tonemap=%s:desat=%.2f", algo, req.Desat),
-				"zscale=primaries=bt709:transfer=bt709:matrix=bt709:range=tv",
-			)
+	if req.ScreenshotSizing == "" {
+		if scale := buildPARScaleFilter(req); scale != "" {
+			filters = append(filters, scale)
 		}
 	}
 
+	filters = append(filters, toneMappingFilters(req, useLibplacebo)...)
+
 	filters = append(filters, "format=rgb24")
+	if req.ScreenshotSizing != "" {
+		// FFmpeg has already applied the display matrix. Normalize the decoded
+		// raster using its current pixel aspect ratio before fitting or cropping.
+		filters = append(filters, "scale=w='if(gt(sar,1),max(1,round(iw*sar)),iw)':h='if(gt(sar,0)*lt(sar,1),max(1,round(ih/sar)),ih)'", "setsar=1")
+	}
+	if req.OutputWidth > 0 && req.OutputHeight > 0 {
+		switch {
+		case req.ResizeOnly:
+			filters = append(filters, fmt.Sprintf("scale=%d:%d", req.OutputWidth, req.OutputHeight), "setsar=1")
+		case req.ScreenshotSizing == api.ComparisonSizingResize:
+			filters = append(filters, fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease", req.OutputWidth, req.OutputHeight), "setsar=1")
+		case req.ScreenshotSizing == api.ComparisonSizingCrop:
+			filters = append(filters,
+				fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=increase", req.OutputWidth, req.OutputHeight),
+				fmt.Sprintf("crop=%d:%d", req.OutputWidth, req.OutputHeight),
+				"setsar=1",
+			)
+		default:
+			filters = append(filters,
+				fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease", req.OutputWidth, req.OutputHeight),
+				fmt.Sprintf("pad=%d:%d:(ow-iw)/2:(oh-ih)/2", req.OutputWidth, req.OutputHeight),
+				"setsar=1",
+			)
+		}
+	}
 
 	if req.FrameOverlay {
 		filters = append(filters, overlayFilters(req)...)
 	}
 
 	return strings.Join(filters, ",")
+}
+
+// toneMappingFilters shares the colour conversion used by captures and matching
+// samples. Callers retain ownership of frame selection and output geometry.
+func toneMappingFilters(req captureRequest, useLibplacebo bool) []string {
+	if !req.ToneMap {
+		return nil
+	}
+	if useLibplacebo {
+		// Keep decoded software frames (and Dolby Vision side data) intact;
+		// libplacebo owns GPU transfer and returns the explicit PNG/drawtext format.
+		return []string{
+			"libplacebo=apply_dolbyvision=1:tonemapping=hable:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:format=rgb24",
+		}
+	}
+	algo := strings.TrimSpace(req.Algorithm)
+	if algo == "" {
+		algo = "mobius"
+	}
+	return []string{
+		"zscale=transfer=linear",
+		"format=gbrpf32le",
+		fmt.Sprintf("tonemap=tonemap=%s:desat=%.2f", algo, req.Desat),
+		"zscale=primaries=bt709:transfer=bt709:matrix=bt709:range=tv",
+	}
 }
 
 func buildPARScaleFilter(req captureRequest) string {
@@ -483,39 +530,36 @@ func roundToEven(value float64) int {
 }
 
 func overlayFilters(req captureRequest) []string {
-	textSize := req.OverlaySize
-	if textSize <= 0 {
-		textSize = 18
-	}
-	res := digitsOnly(req.Resolution)
-	if res == 0 {
-		res = 1080
-	}
-	fontSize := (textSize * res) / 1080
-	xAll := (10 * res) / 1080
-	lineSpacing := int(float64(fontSize) * 1.1)
-	if lineSpacing <= 0 {
-		lineSpacing = fontSize
-	}
-	yNumber := xAll
-	yType := yNumber + lineSpacing
-	yHDR := yType + lineSpacing
-
 	frameNumber := int((req.Timestamp + req.TimelineOffset) * req.FrameRate)
 	frameType := req.FrameInfo.FrameType
 	if strings.TrimSpace(frameType) == "" {
 		frameType = "Unknown"
 	}
-
-	filters := []string{
-		fmt.Sprintf("drawtext=text='Frame Number\\: %d':fontcolor=white:fontsize=%d:x=%d:y=%d:box=1:boxcolor=black@0.5", frameNumber, fontSize, xAll, yNumber),
-		fmt.Sprintf("drawtext=text='Frame Type\\: %s':fontcolor=white:fontsize=%d:x=%d:y=%d:box=1:boxcolor=black@0.5", frameType, fontSize, xAll, yType),
-	}
+	lines := []string{fmt.Sprintf("Frame Number\\: %d", frameNumber), "Frame Type\\: " + frameType}
 	if req.ToneMap {
+		lines = append(lines, "Source\\: "+hdrOverlaySourceLabel(req.HDRFacts)+" - Tonemapped")
+	}
+	return overlayTextFilters(lines, req.OverlaySize, digitsOnly(req.Resolution))
+}
+
+// overlayTextFilters shares the scaled, stacked screenshot presentation. Callers
+// supply escaped, validated text. Comparison display counters use metadata while
+// actual frame correspondence remains bound to the decoded source clock.
+func overlayTextFilters(lines []string, textSize, resolution int) []string {
+	if textSize <= 0 {
+		textSize = 18
+	}
+	if resolution <= 0 {
+		resolution = 1080
+	}
+	fontSize := textSize * resolution / 1080
+	margin := 10 * resolution / 1080
+	spacing := max(fontSize, int(float64(fontSize)*1.1))
+	filters := make([]string, 0, len(lines))
+	for i, text := range lines {
 		filters = append(
 			filters,
-			fmt.Sprintf("drawtext=text='Source\\: %s - Tonemapped':fontcolor=white:fontsize=%d:x=%d:y=%d:box=1:boxcolor=black@0.5",
-				hdrOverlaySourceLabel(req.HDRFacts), fontSize, xAll, yHDR),
+			fmt.Sprintf("drawtext=text='%s':fontcolor=white:fontsize=%d:x=%d:y=%d:box=1:boxcolor=black@0.5", text, fontSize, margin, margin+i*spacing),
 		)
 	}
 	return filters
@@ -614,11 +658,14 @@ func digitsOnly(value string) int {
 	return int(parseFloat(buf.String()))
 }
 
-// screenshotInputArgs keeps protocol options before -i. An empty playlist
-// preserves ordinary-file and extracted-disc capture behavior.
-func screenshotInputArgs(source, playlist string) []string {
+// screenshotInputArgs keeps demuxer options before -i. The MPEG program
+// stream demuxer avoids format detection for VOBs selected from a DVD.
+func screenshotInputArgs(source, playlist string, dvdVOB bool) []string {
 	if playlist != "" {
 		return []string{"-playlist", playlist, "-i", "bluray:" + source, "-map", "0:v:0"}
+	}
+	if dvdVOB {
+		return []string{"-f", "mpeg", "-i", source}
 	}
 	return []string{"-i", source}
 }

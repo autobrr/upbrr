@@ -17,7 +17,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/aither/v13", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/aither/v14", trackers.StructuredNamePolicy{
 		Defaults: applyAitherNameDefaults,
 	})
 }
@@ -299,7 +299,8 @@ func multilingualProgrammeTrack(subject api.TrackerValidationSubject) (api.Media
 			programme = append(programme, track)
 		}
 	}
-	if len(programme) != 1 || len(programme[0].Languages) < 2 || languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English") {
+	if len(programme) != 1 || languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English") ||
+		len(programme[0].Languages) < 2 && !languageutil.ContainsLanguage(programme[0].Languages, "mul") {
 		return api.MediaTrackFacts{}, false
 	}
 	return programme[0], true
@@ -310,7 +311,11 @@ func multilingualMarker(subject api.TrackerValidationSubject, track api.MediaTra
 	if answer == "evenly_split" {
 		return "MULTIPLE LANGUAGES"
 	}
-	if language, ok := strings.CutPrefix(answer, "predominant:"); ok && languageutil.ContainsLanguage(track.Languages, language) {
+	if language, ok := strings.CutPrefix(
+		answer,
+		"predominant:",
+	); ok && languageutil.IsIdentifiedLanguage(language) &&
+		languageutil.ContainsLanguage(track.Languages, language) {
 		return aitherLanguageComponent(language)
 	}
 	return ""

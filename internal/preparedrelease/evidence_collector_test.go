@@ -5,6 +5,7 @@ package preparedrelease
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"testing"
@@ -259,6 +260,22 @@ func TestMapCollectedFactsProjectsDetachedMetadataAndTrackFacts(t *testing.T) {
 	facts.Media.Tracks[0].Languages[0] = "Changed"
 	if meta.MediaTracks[0].Languages[0] != "French" {
 		t.Fatalf("track languages aliased source state: %#v", meta.MediaTracks)
+	}
+}
+
+func TestMapCollectedFactsSerializesUnknownEpisodeMembershipAsArray(t *testing.T) {
+	t.Parallel()
+	facts := mapCollectedFacts(preparationstate.State{TVPack: true, EpisodeCoverage: api.EpisodeCoverage{Part: "Part.1", Status: api.MetadataEvidenceStatusUnavailable}})
+	encoded, err := json.Marshal(facts.Episode.Coverage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct{ Episodes json.RawMessage }
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if string(wire.Episodes) != "[]" {
+		t.Fatalf("unknown membership violates array contract: %s", encoded)
 	}
 }
 

@@ -4,6 +4,7 @@
 package lst
 
 import (
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -72,12 +73,67 @@ func TestLSTResourceLanguageScope(t *testing.T) {
 	if !reflect.DeepEqual(before, subject.LanguageFacts) || key != trackers.LanguageQuestionKey(subject, "test") {
 		t.Fatal("canonical evidence mutated")
 	}
+	subject.LanguageFacts = mediafacts.ResolveLanguages(api.MediaFacts{
+		OriginalLanguage:      "ja",
+		TitleLanguages:        []string{"ja", "en"},
+		Tracks:                subject.LanguageFacts.Tracks,
+		TrackCoverageComplete: true,
+	})
+	resource := resourceLanguageFacts(subject, "A", subject.LanguageFacts.Tracks[:2])
+	if !resource.HasEnglishDub() || resource.HasOriginalAudio() {
+		t.Fatalf("resource projection lost definitive Japanese original: %#v", resource)
+	}
 	subject.LanguageFacts.Tracks[2].Languages = nil
 	failures = languageAssessment(subject)
 	if !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
 		return f.Rule == "language_evidence" && strings.Contains(f.Reason, "resource B:") && f.Disposition == api.RuleDispositionStrict
 	}) {
 		t.Fatalf("unknown resource downgraded: %#v", failures)
+	}
+}
+
+func TestLSTSingleVideoAggregateFactsDoNotCreateAnotherResource(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "Example.mkv")
+	rule := api.RuleSubject{
+		SourcePath: path,
+		VideoPath:  path,
+		FileList:   []string{path},
+		Type:       "ENCODE",
+		Container:  "mkv",
+		Source:     "BluRay",
+		LanguageFacts: api.LanguageFacts{
+			OriginalLanguages:      []string{"English"},
+			OriginalLanguagesKnown: true,
+			ProgrammeLanguages:     []string{"English"},
+			ProgrammeStatus:        api.MetadataEvidenceStatusComplete,
+			SubtitleStatus:         api.MetadataEvidenceStatusComplete,
+			TrackCoverageComplete:  true,
+			Tracks: []api.MediaTrackFacts{{
+				ID:           "audio",
+				ResourceID:   "video",
+				Kind:         api.MediaTrackAudio,
+				Role:         api.AudioRoleProgramme,
+				Languages:    []string{"English"},
+				Default:      true,
+				DefaultKnown: true,
+			}},
+		},
+		AudioLanguages: []string{"English"},
+	}
+	subject := api.NewTrackerValidationSubjectFromRuleSubject(rule, "LST")
+	failures := languageAssessment(subject)
+	if slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
+		return strings.HasPrefix(f.Reason, "resource :")
+	}) {
+		t.Errorf("aggregate facts created an extra resource: %+v", failures)
+	}
+	failures = sourceValidationFailures(subject)
+	if !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
+		return f.Rule == "guidance_lst_resource_encode_rate_control" &&
+			f.Disposition == api.RuleDispositionAdvisory && strings.HasPrefix(f.Reason, "Primary video: ")
+	}) {
+		t.Errorf("primary video rate-control advice has no useful label: %+v", failures)
 	}
 }
 

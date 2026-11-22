@@ -60,11 +60,10 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		)
 	}
 	animated := subject.Anime || slices.ContainsFunc(subject.EffectiveMetadata.Genres, func(genre string) bool { return strings.EqualFold(genre, "Animation") })
-	if animated && facts.OriginalLanguagesKnown && !languageutil.ContainsLanguage(facts.OriginalLanguages, "English") &&
-		!languageutil.ContainsLanguage(facts.OriginalLanguages, "ZXX") &&
+	if animated && trackers.ForeignLanguageContent(facts) &&
 		facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete &&
 		facts.HasOriginalAudio() &&
-		!facts.HasEnglishDub() {
+		!facts.HasEnglishDub() && !facts.HasEnglishOriginalAudio() {
 		failures = append(failures, trackers.LanguageRuleFailure(
 			subject,
 			"animated_dual_audio",

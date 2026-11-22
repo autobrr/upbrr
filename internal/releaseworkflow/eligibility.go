@@ -45,9 +45,8 @@ func (s downstreamTrackerSet) TrackerApproval() *api.TrackerApprovalSnapshotRef 
 }
 
 // ProjectionDownstreamEligibility reports the retained projection and duplicate
-// decision for one tracker, with the structured cause of a skip. It is the
-// single source for both the downstream tracker set and the lane projection
-// adapters render.
+// decision for one tracker, with the structured cause of a live-upload skip.
+// Diagnostic preparation does not change this retained policy outcome.
 func ProjectionDownstreamEligibility(
 	projection api.TrackerReleaseProjection,
 	dupe api.TrackerDupeAssessment,
@@ -72,7 +71,7 @@ func ProjectionDownstreamEligibility(
 }
 
 // ProjectionEligibleForDownstream reports whether retained projection and
-// duplicate state permit media, description, and upload-plan work.
+// duplicate state permit normal live-upload preparation.
 func ProjectionEligibleForDownstream(
 	projection api.TrackerReleaseProjection,
 	dupe api.TrackerDupeAssessment,
@@ -80,6 +79,35 @@ func ProjectionEligibleForDownstream(
 ) bool {
 	eligibility, _ := ProjectionDownstreamEligibility(projection, dupe, hasDupe)
 	return eligibility == api.UploadEligibilityEligible
+}
+
+// projectionReadyForChecks separates diagnostic constructibility from live eligibility.
+func projectionReadyForChecks(projection api.TrackerReleaseProjection, mode api.WorkflowExecutionMode) bool {
+	return projection.Readiness == api.ReadinessStatusReady && projection.DupeReady ||
+		mode == api.WorkflowExecutionModeDebug && projection.DiagnosticReady
+}
+
+func diagnosticProjectionsReady(projections api.TrackerReleaseProjectionSet) bool {
+	return projections.ExecutionMode == api.WorkflowExecutionModeDebug &&
+		slices.ContainsFunc(projections.Projections, func(projection api.TrackerReleaseProjection) bool {
+			return projectionReadyForChecks(projection, projections.ExecutionMode)
+		})
+}
+
+// ProjectionEligibleForPreparation permits diagnostic payload construction without
+// granting upload authority or changing the retained policy and duplicate outcomes.
+func ProjectionEligibleForPreparation(
+	projection api.TrackerReleaseProjection,
+	dupe api.TrackerDupeAssessment,
+	hasDupe bool,
+	mode api.WorkflowExecutionMode,
+) bool {
+	if mode != api.WorkflowExecutionModeDebug {
+		return ProjectionEligibleForDownstream(projection, dupe, hasDupe)
+	}
+	return (projection.DiagnosticReady || projection.Readiness == api.ReadinessStatusReady && projection.UploadReady) &&
+		hasDupe &&
+		(dupe.Decision != api.DupeDecisionPending || dupe.Status == api.StageStatusFailed)
 }
 
 // DescriptionResultsByTracker reduces retained description evidence to one
@@ -182,7 +210,7 @@ func DownstreamEligibleProjections(
 	eligible.Projections = make([]api.TrackerReleaseProjection, 0, len(projections.Projections))
 	for _, projection := range projections.Projections {
 		dupe, exists := dupeByTracker[projection.TrackerID]
-		if ProjectionEligibleForDownstream(projection, dupe, exists) {
+		if ProjectionEligibleForPreparation(projection, dupe, exists, projections.ExecutionMode) {
 			eligible.Projections = append(eligible.Projections, projection)
 		}
 	}
@@ -209,7 +237,7 @@ func currentDownstreamEvidence(state *State, now time.Time) (api.TrackerReleaseP
 		dupes.ProjectionSet != *workflow.TrackerProjections ||
 		dupes.Selection != *workflow.Selection ||
 		!preflight.ExpiresAt.After(now) || !dupes.ExpiresAt.After(now) ||
-		preflight.Status != api.StageStatusReady || !dupesAllowContinuation(&projections, &dupes) {
+		(preflight.Status != api.StageStatusReady && !diagnosticProjectionsReady(projections)) || !dupesAllowContinuation(&projections, &dupes) {
 		return api.TrackerReleaseProjectionSet{}, api.DupeAssessment{}, fmt.Errorf(
 			"%w: downstream tracker evidence is stale or unresolved",
 			ErrInvalidTransition,
@@ -231,11 +259,13 @@ func trackerApprovalCandidates(
 		dupeByTracker[result.TrackerID] = result
 	}
 	for _, projection := range projections.Projections {
-		if !projection.UploadReady || projection.Readiness != api.ReadinessStatusReady {
+		if (!projection.UploadReady || projection.Readiness != api.ReadinessStatusReady) &&
+			(projections.ExecutionMode != api.WorkflowExecutionModeDebug || !projection.DiagnosticReady) {
 			continue
 		}
 		dupe, exists := dupeByTracker[projection.TrackerID]
-		if !exists || dupe.Decision == api.DupeDecisionPending {
+		if !exists || (dupe.Decision == api.DupeDecisionPending &&
+			(projections.ExecutionMode != api.WorkflowExecutionModeDebug || dupe.Status != api.StageStatusFailed)) {
 			return api.TrackerReleaseProjectionSet{}, dupes, nil, nil
 		}
 	}
@@ -321,13 +351,17 @@ func projectedTrackerApprovalAction(state *State, now time.Time) (*api.RequiredA
 		}
 		options[index] = api.RequiredActionOption{Value: string(projection.TrackerID), Label: label}
 	}
+	prompt := "Select trackers to continue through preparation and upload."
+	if eligible.ExecutionMode == api.WorkflowExecutionModeDebug {
+		prompt = "Select trackers to prepare and inspect. Debug mode never submits tracker uploads."
+	}
 	expiresAt := dupes.ExpiresAt
 	return &api.RequiredAction{
 		ID:               api.RequiredActionID("approve-trackers-" + string(fingerprint[:16])),
 		Kind:             api.RequiredActionApproveTrackers,
 		Status:           api.RequiredActionStatusPending,
 		WorkflowRevision: state.Workflow.Revision,
-		Prompt:           "Select trackers to continue through preparation and upload.",
+		Prompt:           prompt,
 		Options:          options,
 		CreatedAt:        dupes.CreatedAt,
 		ExpiresAt:        &expiresAt,
@@ -534,4 +568,12 @@ func DownstreamEligibleProjectionsAfterMedia(
 		return failed
 	})
 	return eligible
+}
+
+func workflowDebugMode(state *State) bool {
+	if state.Workflow.TrackerProjections == nil {
+		return false
+	}
+	projections, ok := state.Projections[state.Workflow.TrackerProjections.ID]
+	return ok && projections.ExecutionMode == api.WorkflowExecutionModeDebug
 }

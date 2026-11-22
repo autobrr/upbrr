@@ -3,18 +3,25 @@
 
 import { FieldHelp } from "../../components/ui/field-help";
 import { pageStyle } from "../../components/ui/pageStyle";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { Button } from "../../components/ui/button";
-import { Checkbox, PillCheckbox } from "../../components/ui/checkbox";
+import {
+  ProgrammeCandidates,
+  groupProgrammes,
+} from "../../features/programmes/ProgrammeCandidates";
+import { PillCheckbox } from "../../components/ui/checkbox";
 import { TrackerIconImage } from "../../components/ui/tracker-icon";
 import RenderedDescription from "../../components/RenderedDescription";
 import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
 import { trackerIconFor } from "../../hooks/useTrackerIcons";
 import type { InputFacet } from "../../releaseSession/types";
-import { InputCorrectionEditor, SavedCorrectionReview } from "./InputCorrectionEditor";
+import {
+  InputCorrectionEditor,
+  InputCorrectionWarnings,
+  SavedCorrectionReview,
+} from "./InputCorrectionEditor";
 import { ProviderCandidates } from "./ProviderCandidates";
-import { missingRequiredFacts } from "../../releaseSession/requiredFacts";
 import type {
   DetailBlock,
   DetailItem,
@@ -452,6 +459,7 @@ const buildPreviewDetails = (
       { label: "End year", value: formatNumber(imdb?.EndYear ?? 0) },
       { label: "TV year", value: formatNumber(imdb?.TVYear ?? 0) },
       { label: "Original language", value: imdb?.OriginalLanguage ?? "" },
+      { label: "Spoken languages", value: formatCommaList(imdb.SpokenLanguages) },
       { label: "Country", value: imdb.Country || preview.Summary.Country },
       { label: "Country list", value: imdb?.CountryList ?? "" },
       {
@@ -529,6 +537,7 @@ const buildPreviewDetails = (
         label: "Original language",
         value: tmdb.OriginalLanguage || preview.Summary.OriginalLanguage,
       },
+      { label: "Spoken languages", value: formatCommaList(tmdb.SpokenLanguages) },
       { label: "Anime", value: tmdb ? formatBoolean(tmdb.Anime) : "" },
       { label: "MAL ID", value: formatNumber(tmdb?.MALID ?? 0), mono: true },
       { label: "Demographic", value: tmdb?.Demographic ?? "" },
@@ -828,7 +837,6 @@ export default function InputPage(props: Props) {
   } = props;
 
   const { view } = facet;
-  const requiredFactsMissing = missingRequiredFacts(view.release).length > 0;
   const path = view.sourceDraft;
   const sourceLookupURL = view.intent.sourceLookupURL;
   const loading = view.status === "running";
@@ -927,7 +935,9 @@ export default function InputPage(props: Props) {
   const providerDisplays = preview.Display.Providers;
   const hasPreview = preview.ReleaseName || externalIDInfo.length > 0;
   const showReleaseDetails = Boolean(
-    hasPreview || (path.trim() && (view.status === "ready" || view.status === "error")),
+    view.retainedReview ||
+    hasPreview ||
+    (path.trim() && (view.status === "ready" || view.status === "error")),
   );
   const hasResolvedPrimaryExternalID =
     (identityDraft.TMDBID > 0 || preview.Identity.Overrides.TMDB === "clear") &&
@@ -1058,22 +1068,7 @@ export default function InputPage(props: Props) {
   const playlistSource = view.selectedSource || view.sourceDraft;
   const captureHDRMetadata =
     hdrCaptureDraft.sourcePath === playlistSource && hdrCaptureDraft.enabled;
-  const playlistGroups = playlist.candidates.reduce<
-    Array<{ discID: string; discName: string; candidates: typeof playlist.candidates }>
-  >((groups, candidate) => {
-    const discID = candidate.discId || "single-disc";
-    const existing = groups.find((group) => group.discID === discID);
-    if (existing) {
-      existing.candidates = [...existing.candidates, candidate];
-    } else {
-      groups.push({
-        discID,
-        discName: candidate.discName || "Blu-ray disc",
-        candidates: [candidate],
-      });
-    }
-    return groups;
-  }, []);
+  const playlistGroups = groupProgrammes(playlist.candidates);
   const selectedPlaylistIDs = new Set(playlist.selected);
   const playlistSelectionComplete =
     playlistGroups.length > 0 &&
@@ -1127,44 +1122,17 @@ export default function InputPage(props: Props) {
           </div>
           {playlist.error ? <p className={pageStyle.error}>{playlist.error}</p> : null}
           {playlist.candidates.length ? (
-            <div className="overflow-hidden rounded-md border border-border">
-              {playlistGroups.map((group) => (
-                <section key={group.discID} aria-label={group.discName}>
-                  <h3 className="border-b border-border bg-muted px-3 py-2 text-sm font-semibold text-foreground">
-                    {group.discName}
-                  </h3>
-                  {group.candidates.map((candidate) => {
-                    const totalSize = (candidate.items || []).reduce(
-                      (sum, item) => sum + item.size,
-                      0,
-                    );
-                    const checkboxID = `playlist-${encodeURIComponent(candidate.id)}`;
-                    return (
-                      <div
-                        key={candidate.id}
-                        className="grid gap-1 border-b border-border px-3 py-2 last:border-b-0 hover:bg-muted"
-                      >
-                        <div className="flex select-none items-center gap-2">
-                          <Checkbox
-                            id={checkboxID}
-                            checked={playlist.selected.includes(candidate.id)}
-                            onCheckedChange={() => togglePlaylist(candidate.id)}
-                          />
-                          <label className="cursor-pointer font-semibold" htmlFor={checkboxID}>
-                            {candidate.file}
-                          </label>
-                        </div>
-                        <span className="ml-6 text-xs text-muted-foreground">
-                          {formatPlaylistDuration(candidate.duration)} •{" "}
-                          {candidate.items?.length || 0} files • {formatPlaylistBytes(totalSize)} •
-                          Score: {candidate.score.toFixed(2)}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </section>
-              ))}
-            </div>
+            <ProgrammeCandidates
+              name="playlist"
+              multiple
+              selected={playlist.selected}
+              onChoose={togglePlaylist}
+              candidates={playlist.candidates.map((candidate) => ({
+                ...candidate,
+                label: candidate.file,
+                description: `${formatPlaylistDuration(candidate.duration)} • ${candidate.items?.length || 0} files • ${formatPlaylistBytes((candidate.items || []).reduce((sum, item) => sum + item.size, 0))} • Score: ${candidate.score.toFixed(2)}`,
+              }))}
+            />
           ) : null}
           {playlist.candidates.length > 1 ? (
             <div className="flex flex-wrap gap-2">
@@ -1405,7 +1373,29 @@ export default function InputPage(props: Props) {
               key={`${diagnostic.Code}-${diagnostic.Message}`}
               className="whitespace-pre-line break-words text-muted-foreground"
             >
-              {diagnostic.Message}
+              {diagnostic.Code === "imdb_edition_mismatch"
+                ? diagnostic.Message.split("\n").map((line, index) => {
+                    const link =
+                      /^https:\/\/www\.imdb\.com\/title\/tt[0-9]+\/(technical|alternateversions)\/$/.exec(
+                        line,
+                      );
+                    return link ? (
+                      <a
+                        key={line}
+                        className="block underline"
+                        href={line}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {link[1] === "technical"
+                          ? "IMDb technical specifications"
+                          : "IMDb alternate versions"}
+                      </a>
+                    ) : (
+                      <Fragment key={index}>{line}</Fragment>
+                    );
+                  })
+                : diagnostic.Message}
             </p>
           ))}
       </section>
@@ -1421,6 +1411,25 @@ export default function InputPage(props: Props) {
               <p className={pageStyle.label}>Release name</p>
               <p className={pageStyle.value}>{preview.ReleaseName || "No release name yet"}</p>
             </div>
+          </div>
+        ) : null}
+        {view.release?.Episode?.Pack && view.release.Episode.Coverage ? (
+          <div className="rounded-2xl border border-foreground/10 bg-card/80 p-4">
+            <p className={pageStyle.label}>Pack coverage</p>
+            <p className={pageStyle.value}>{view.release.Episode.Coverage.Part || "Season pack"}</p>
+            <p className="text-muted-foreground">
+              {view.release.Episode.Coverage.Episodes?.length
+                ? `Known episodes: ${view.release.Episode.Coverage.Episodes.join(", ")}. `
+                : "Episode membership unknown. "}
+              {view.release.Episode.Coverage.Status === "contradictory"
+                ? "Conflicting source evidence needs review. "
+                : view.release.Episode.Coverage.Status === "partial"
+                  ? "Some included episodes may remain unidentified. "
+                  : ""}
+              {view.release.Episode.Coverage.CompleteSeason
+                ? "Source is marked as a complete season."
+                : "Season completeness is unverified."}
+            </p>
           </div>
         ) : null}
 
@@ -1516,24 +1525,10 @@ export default function InputPage(props: Props) {
             </details>
           ) : null}
           {showReleaseDetails ? (
-            requiredFactsMissing ? (
-              <div
-                className="grid gap-2 rounded-md border border-destructive bg-destructive/10 p-4 text-destructive-text"
-                role="alert"
-              >
-                <p className="font-semibold">
-                  Required facts missing, please edit release details.
-                </p>
-                <p>
-                  Correct the highlighted fields under Edit Release Details, then Refresh metadata
-                  to enable Dupe Check.
-                </p>
-              </div>
-            ) : (
-              <p className="helper max-w-[720px]" role="status">
-                Review release facts, source options, and selected tracker input.
-              </p>
-            )
+            <InputCorrectionWarnings
+              view={view}
+              refreshLabel={hasPreview ? "Refresh metadata" : "Retry metadata"}
+            />
           ) : null}
           {showReleaseDetails && view.correctionDirty ? (
             <p className="text-sm font-medium text-primary" role="status">

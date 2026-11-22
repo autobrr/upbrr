@@ -33,17 +33,91 @@ const continuation = (requiredActions: readonly RequiredAction[]): WorkflowConti
 });
 
 describe("WorkflowRequiredActions", () => {
-  it("routes tracker questions to Dupe Checking", () => {
+  it.each([
+    { kind: "answer_questionnaire", label: "Answer tracker questions", route: "duplicates" },
+    { kind: "review_comparisons", label: "Review comparison images", route: "screenshots" },
+  ])("routes $kind to its owner without approving it", ({ kind, label, route }) => {
     const navigate = vi.fn();
+    const confirm = vi.fn();
     render(
       <WorkflowRequiredActions
-        continuation={continuation([action({ kind: "answer_questionnaire" })])}
-        onConfirm={vi.fn()}
+        continuation={continuation([action({ kind })])}
+        onConfirm={confirm}
         onNavigate={navigate}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Answer tracker questions" }));
-    expect(navigate).toHaveBeenCalledWith("duplicates");
+    fireEvent.click(screen.getByRole("button", { name: label }));
+    expect(navigate).toHaveBeenCalledWith(route);
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it("shows comparison review on its page without a redundant link and keeps other actions", () => {
+    render(
+      <WorkflowRequiredActions
+        continuation={continuation([
+          action({ kind: "review_comparisons" }),
+          action({ id: "action-2", kind: "answer_questionnaire" }),
+        ])}
+        onScreenshotsPage
+        onConfirm={vi.fn()}
+        onNavigate={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "Review required before upload" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Review comparison images" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Answer tracker questions" })).toBeVisible();
+  });
+
+  it("defers media preparation on Dupe Check and still shows tracker questions and hosting reconciliation", () => {
+    const images = action({
+      id: "images",
+      kind: "provide_tracker_input",
+      trackerId: undefined,
+      prompt: "Capture more release screenshots.",
+    });
+    const review = action({
+      id: "review",
+      kind: "review_comparisons",
+      trackerId: undefined,
+      prompt: "Review the comparisons before upload.",
+    });
+    const reconciliation = action({
+      id: "reconcile",
+      kind: "reconcile_submission",
+      trackerId: undefined,
+      prompt: "Verify the outcome of the image upload.",
+    });
+    const trackerInput = action({
+      id: "tracker-input",
+      kind: "provide_tracker_input",
+      trackerId: undefined,
+      prompt: "Provide the missing release facts.",
+    });
+    const props = {
+      continuation: continuation([
+        images,
+        review,
+        reconciliation,
+        trackerInput,
+        action({ kind: "answer_questionnaire" }),
+      ]),
+      onConfirm: vi.fn(),
+      onNavigate: vi.fn(),
+    };
+    const { rerender } = render(
+      <WorkflowRequiredActions
+        {...props}
+        deferredMediaActions={[images, review, reconciliation]}
+      />,
+    );
+    expect(screen.queryByText(images.prompt)).not.toBeInTheDocument();
+    expect(screen.queryByText(review.prompt)).not.toBeInTheDocument();
+    expect(screen.getByText(reconciliation.prompt)).toBeVisible();
+    expect(screen.getByText(trackerInput.prompt)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Answer tracker questions" })).toBeVisible();
+    rerender(<WorkflowRequiredActions {...props} />);
+    expect(screen.getByText(images.prompt)).toBeVisible();
+    expect(screen.getByText(review.prompt)).toBeVisible();
   });
 
   it("keeps source evidence visible while showing Blu-ray playlist progress", () => {

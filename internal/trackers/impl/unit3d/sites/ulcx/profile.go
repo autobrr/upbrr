@@ -4,6 +4,7 @@
 package ulcx
 
 import (
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -17,13 +18,16 @@ func profileWithTaxonomy(site unit3d.SiteProfile) unit3d.Profile {
 	site.ProjectionQuestionnaire = languageQuestionnaire
 	site.AllowSeasonZeroEpisodes = true
 	return unit3d.Profile{
-		NameProviders:     &unit3d.NameProviders{Title: api.IdentityProviderIMDB, MovieYear: api.IdentityProviderIMDB},
-		Name:              "ULCX",
-		BaseURL:           "https://upload.cx",
-		Rules:             Rules(),
-		ValidationPolicy:  validationPolicy(site.RegionID),
-		Site:              site,
-		BannedGroups:      BannedGroups(),
+		NameProviders:    &unit3d.NameProviders{Title: api.IdentityProviderIMDB, MovieYear: api.IdentityProviderIMDB},
+		Name:             "ULCX",
+		BaseURL:          "https://upload.cx",
+		Rules:            Rules(),
+		ValidationPolicy: validationPolicy(site.RegionID),
+		Site:             site,
+		BannedPolicy: &trackers.BannedGroupPolicy{
+			EndpointPath:  "/api/blocked-groups",
+			RequireAPIKey: true,
+		},
 		ReleaseNamePolicy: namePolicy(),
 		DupePolicy:        duplicatePolicy(),
 	}

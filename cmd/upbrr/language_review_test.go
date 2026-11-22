@@ -121,10 +121,9 @@ func TestCLILanguageReviewUsesBackendDecisions(t *testing.T) {
 			wantReady: true,
 		},
 		{
-			name:      "debug bypass",
-			outcome:   trackers.LanguageProhibited,
-			mode:      api.WorkflowExecutionModeDebug,
-			wantReady: true,
+			name:    "debug retains prohibited outcome",
+			outcome: trackers.LanguageProhibited,
+			mode:    api.WorkflowExecutionModeDebug,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -183,8 +182,9 @@ func TestCLILanguageReviewUsesBackendDecisions(t *testing.T) {
 			} else if strings.Contains(printed, "language_") {
 				t.Fatalf("full-disc language review appeared: %s", printed)
 			}
-			if test.mode == api.WorkflowExecutionModeDebug && !strings.Contains(printed, "decision=bypassed blocking=false") {
-				t.Fatalf("debug bypass hidden: %s", printed)
+			if test.mode == api.WorkflowExecutionModeDebug &&
+				(!projection.DiagnosticReady || !strings.Contains(printed, "decision=ineligible blocking=true")) {
+				t.Fatalf("debug changed policy outcome or lost diagnostic eligibility: %s", printed)
 			}
 			for _, interaction := range []api.InteractionMode{api.InteractionModeUnattended, api.InteractionModeUnattendedConfirm} {
 				var output bytes.Buffer

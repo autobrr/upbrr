@@ -11,7 +11,7 @@ import (
 func TestRetainedPreparationRejectsNilService(t *testing.T) {
 	t.Parallel()
 	var service *Service
-	if _, err := service.PrepareRetainedUploadPlan(t.Context(), api.UploadSubject{SourcePath: "Example.Release.2026"}, nil); err == nil {
+	if _, err := service.PrepareRetainedUploadPlan(t.Context(), api.UploadSubject{SourcePath: "Example.Release.2026"}, nil, api.WorkflowExecutionModeNormal); err == nil {
 		t.Fatal("nil service did not return an error")
 	}
 }

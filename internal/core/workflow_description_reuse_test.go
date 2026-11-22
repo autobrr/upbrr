@@ -588,7 +588,19 @@ func reusableDescriptionPrivateMedia(t *testing.T, root, prefix string) workflow
 }
 
 func TestWorkflowDescriptionReuseRefreshesLegacyRendererAndKeepsFinalEdits(t *testing.T) {
-	for _, renderer := range []string{"", "description-renderer-v1", "description-renderer-v2", "description-renderer-v4"} {
+	for _, renderer := range []string{
+		"",
+		"description-renderer-v1",
+		"description-renderer-v2",
+		"description-renderer-v4",
+		"description-renderer-v5",
+		"description-renderer-v6-bhd-primary-bdinfo",
+		"description-renderer-v7-comparison-urls",
+		"description-renderer-v8-bhd-primary-bdinfo",
+		"description-renderer-v9-comparison-previews",
+		"description-renderer-v10-comparison-previews",
+		"description-renderer-v11-comparison-previews",
+	} {
 		for _, mode := range []string{"generated", "mixed", "final"} {
 			t.Run(renderer+"/"+mode, func(t *testing.T) {
 				f := newWorkflowDescriptionReuseFixture(t)
@@ -918,6 +930,77 @@ func TestWorkflowDescriptionReuseMigratesExactLegacyFormatFingerprint(t *testing
 				fixture.projections, fixture.currentMedia, fixture.currentPrivate, instructions, restored)
 			if err != nil || record == nil || record.Description.CompatibilityFingerprint != currentFingerprint {
 				t.Fatalf("legacy record was not migrated to byte-bound compatibility: err=%v", err)
+			}
+		})
+	}
+}
+
+func TestWorkflowDescriptionReuseRefreshesPTPScreenshotSpacingAndKeepsEdits(t *testing.T) {
+	for _, mode := range []string{"generated", "manual draft", "reviewed final"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newWorkflowDescriptionReuseFixture(t)
+			for i, tracker := range []api.TrackerID{"PTP", "AITHER"} {
+				group := strings.ToLower(string(tracker))
+				f.projections.Projections[i].TrackerID = tracker
+				f.projections.Projections[i].DescriptionGroup = group
+				f.snapshot.Descriptions[i].TrackerIDs = []api.TrackerID{tracker}
+				f.snapshot.Descriptions[i].GroupKey = group
+				f.snapshot.TrackerResults[i].TrackerID = tracker
+			}
+			f.instructions.Overrides = []api.DescriptionOverrideInput{{
+				GroupKey:   "aither",
+				TrackerIDs: []api.TrackerID{"AITHER"},
+				Source:     "Final AITHER text",
+				Final:      true,
+			}}
+			const edit = "Manual PTP text"
+			if mode != "generated" {
+				f.instructions.Overrides = append(f.instructions.Overrides, api.DescriptionOverrideInput{
+					GroupKey:   "ptp",
+					TrackerIDs: []api.TrackerID{"PTP"},
+					Source:     edit,
+					Final:      mode == "reviewed final",
+				})
+			}
+			report := filepath.Join(t.TempDir(), "mediainfo.txt")
+			if err := os.WriteFile(report, []byte("Synthetic MediaInfo"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			f.resolver.subject.MediaInfoTextPath = report
+			f.builder.config.Trackers.Trackers = map[string]config.TrackerConfig{"PTP": {}}
+			if err := f.recordReusableDescriptions(t, f.oldRelease, f.oldMedia, f.oldPrivate, f.snapshot); err != nil {
+				t.Fatal(err)
+			}
+			f.builder.config.Trackers.Trackers["PTP"] = config.TrackerConfig{ScreenshotBlankLine: new(false)}
+			f.resolver.subject = reusableDescriptionSubjectForFixture(f.currentRelease, 2)
+			f.resolver.subject.MediaInfoTextPath = report
+			f.resolver.useInputGroups = true
+			f.builder.trackers = trackers.NewServiceWithRegistry(f.builder.config, api.NopLogger{}, nil, trackerimpl.MustNewRegistry())
+			current := f.instructions
+			current.Overrides = nil
+			got, restored, err := f.builder.RestoreCompatibleDescriptions(t.Context(), f.currentRelease, f.projections, f.currentMedia, f.currentPrivate, current)
+			if err != nil || got.Status != api.StageStatusCompleted || !reflect.DeepEqual(restored.Overrides, f.instructions.Overrides) {
+				t.Fatalf("spacing change did not rebuild with saved overrides: result=%+v overrides=%+v error=%v", got, restored.Overrides, err)
+			}
+			sources := map[api.TrackerID]string{}
+			for _, output := range got.Descriptions {
+				for _, tracker := range output.TrackerIDs {
+					sources[tracker] = output.Source
+				}
+			}
+			if sources["AITHER"] != "Final AITHER text" {
+				t.Fatalf("other tracker final changed: %q", sources["AITHER"])
+			}
+			source := sources["PTP"]
+			if mode == "reviewed final" {
+				if source != edit {
+					t.Fatalf("reviewed PTP text changed: %q", source)
+				}
+			} else if !strings.Contains(source, "[mediainfo]Synthetic MediaInfo[/mediainfo]") || strings.Contains(source, "saved beta source") {
+				t.Fatalf("generated PTP description not rebuilt: %q", source)
+			}
+			if mode == "manual draft" && !strings.Contains(source, edit) {
+				t.Fatalf("manual PTP text lost during recomposition: %q", source)
 			}
 		})
 	}

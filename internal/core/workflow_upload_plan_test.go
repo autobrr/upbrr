@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -229,22 +230,26 @@ func TestWorkflowUploadExecutionResolveActionReprojectsResolvedPreparation(t *te
 }
 
 type workflowRetainedUploadServiceFake struct {
-	questionnaires map[api.TrackerID]*api.TrackerQuestionnaire
-	projections    []api.TrackerReleaseProjection
-	failures       map[api.TrackerID]trackers.TrackerFailure
-	actions        map[api.TrackerID][]api.RequiredAction
-	resolved       map[string]trackers.RetainedTrackerPreparation
-	torrentPaths   map[api.TrackerID]string
-	results        []trackers.RetainedTrackerResult
-	subject        api.UploadSubject
+	blockedPreviews map[api.TrackerID]string
+	questionnaires  map[api.TrackerID]*api.TrackerQuestionnaire
+	projections     []api.TrackerReleaseProjection
+	failures        map[api.TrackerID]trackers.TrackerFailure
+	actions         map[api.TrackerID][]api.RequiredAction
+	resolved        map[string]trackers.RetainedTrackerPreparation
+	torrentPaths    map[api.TrackerID]string
+	results         []trackers.RetainedTrackerResult
+	subject         api.UploadSubject
+	mode            api.WorkflowExecutionMode
 }
 
 func (f *workflowRetainedUploadServiceFake) PrepareRetainedUploadPlan(
 	_ context.Context,
 	subject api.UploadSubject,
 	projections []api.TrackerReleaseProjection,
+	mode api.WorkflowExecutionMode,
 ) (workflowRetainedUploadPlan, error) {
 	f.subject = subject
+	f.mode = mode
 	f.projections = append([]api.TrackerReleaseProjection(nil), projections...)
 	preparations := make([]trackers.RetainedTrackerPreparation, 0, len(projections))
 	for _, projection := range projections {
@@ -262,6 +267,9 @@ func (f *workflowRetainedUploadServiceFake) PrepareRetainedUploadPlan(
 					Present: true,
 				}},
 			},
+		}
+		if message := f.blockedPreviews[projection.TrackerID]; message != "" {
+			preparation.Preview.Status, preparation.Preview.Message = "blocked", message
 		}
 		if torrentPath := f.torrentPaths[projection.TrackerID]; torrentPath != "" {
 			preparation.TorrentPath = torrentPath
@@ -281,15 +289,18 @@ func (f *workflowRetainedUploadServiceFake) PrepareRetainedUploadPlan(
 func TestSanitizeWorkflowUploadPreviewPreservesSemanticsWithoutSecretsOrPaths(t *testing.T) {
 	t.Parallel()
 
+	encodedAttachment := base64.StdEncoding.EncodeToString([]byte("https://tracker.example/announce?passkey=private"))
 	endpoint, fields, files := sanitizeWorkflowUploadPreview(api.TrackerDryRunEntry{
 		Endpoint: "https://tracker.example/upload?api_token=private#fragment",
 		Payload: map[string]string{
-			"api_token": "private",
-			"name":      "Example.Release.2026.REVIEWED-GRP",
-			"poster":    "https://images.example/poster.jpg?signature=private",
-			"torrent":   "C:\\private\\Example.Release.2026.torrent",
+			"api_token":   "private",
+			"name":        "Example.Release.2026.REVIEWED-GRP",
+			"poster":      "https://images.example/poster.jpg?signature=private",
+			"torrent":     "C:\\private\\Example.Release.2026.torrent",
+			"file":        encodedAttachment,
+			"source_path": "C:\\private\\Example.Release.2026.mkv",
 		},
-		Files: []api.TrackerDryRunFile{{
+		Files: []api.TrackerDryRunFile{{Field: "file", Present: true}, {
 			Field:   "torrent",
 			Path:    "C:\\private\\Example.Release.2026.torrent",
 			Present: true,
@@ -302,15 +313,15 @@ func TestSanitizeWorkflowUploadPreviewPreservesSemanticsWithoutSecretsOrPaths(t 
 	for _, field := range fields {
 		values[field.Key] = field.Value
 	}
-	if values["api_token"] != "[redacted]" || values["torrent"] != "[private path]" ||
-		values["name"] != "Example.Release.2026.REVIEWED-GRP" || values["poster"] != "https://images.example/poster.jpg" {
+	if values["api_token"] != "[redacted]" || values["torrent"] != "[attachment]" || values["file"] != "[attachment]" ||
+		values["source_path"] != "[private path]" || values["name"] != "Example.Release.2026.REVIEWED-GRP" || values["poster"] != "https://images.example/poster.jpg" {
 		t.Fatalf("sanitized fields = %#v", fields)
 	}
-	if len(files) != 1 || files[0].Field != "torrent" || !files[0].Present {
+	if len(files) != 2 || files[0].Field != "file" || !files[0].Present || files[1].Field != "torrent" || !files[1].Present {
 		t.Fatalf("sanitized files = %#v", files)
 	}
-	for _, value := range []string{endpoint, values["api_token"], values["torrent"], values["poster"]} {
-		if value == "private" || strings.Contains(value, "C:\\private") || strings.Contains(value, "signature=private") {
+	for _, value := range []string{endpoint, values["api_token"], values["torrent"], values["poster"], values["file"], values["source_path"]} {
+		if value == "private" || strings.Contains(value, "C:\\private") || strings.Contains(value, "signature=private") || strings.Contains(value, encodedAttachment) {
 			t.Fatalf("sanitized preview exposed private material: %q", value)
 		}
 	}
@@ -2110,5 +2121,127 @@ func TestWorkflowUploadExecutionPendingRegisteredDraft(t *testing.T) {
 				t.Fatal("injected a different artifact")
 			}
 		})
+	}
+}
+
+func TestWorkflowDebugPlanPreservesDeclinedDuplicateAndNoSeed(t *testing.T) {
+	for _, noSeed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("no-seed=%t", noSeed), func(t *testing.T) {
+			dir := t.TempDir()
+			preparedPath := filepath.Join(dir, "prepared.torrent")
+			writeWorkflowRegisteredTorrent(t, preparedPath, "prepared")
+			service := &workflowRetainedUploadServiceFake{torrentPaths: map[api.TrackerID]string{"ALPHA": preparedPath}}
+			if noSeed {
+				service.blockedPreviews = map[api.TrackerID]string{"ALPHA": "Final description rejected"}
+			}
+			clients := &dryRunClientService{}
+			builder := workflowUploadPlanBuilder{
+				resolver: workflowUploadResolverFixed{subject: api.UploadSubject{
+					SourcePath: filepath.Join(dir, "Example.Release.2026.mkv"),
+					Options:    api.UploadOptions{SkipAutoTorrent: true},
+				}},
+				trackers: service,
+				clients:  clients,
+			}
+			projections := api.TrackerReleaseProjectionSet{
+				ExecutionMode: api.WorkflowExecutionModeDebug,
+				Projections: []api.TrackerReleaseProjection{{
+					TrackerID:       "ALPHA",
+					Readiness:       api.ReadinessStatusIneligible,
+					DiagnosticReady: true,
+				}},
+			}
+			dupes := api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
+				TrackerID: "ALPHA",
+				Decision:  api.DupeDecisionAccepted,
+				Status:    api.StageStatusCompleted,
+			}}}
+			plan, execution, err := builder.Build(t.Context(), projections, dupes, workflowDupePrivateEvidence{},
+				api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, api.DescriptionSet{},
+				api.DescriptionInstructions{}, releaseworkflow.UploadPlanBuildOptions{NoSeed: noSeed}, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = execution.Release() }()
+			if service.mode != api.WorkflowExecutionModeDebug || len(plan.Trackers) != 1 || len(plan.Trackers[0].Files) == 0 {
+				t.Fatalf("diagnostic preparation missing: mode=%s plan=%#v", service.mode, plan)
+			}
+			wantFailures := 1
+			if noSeed {
+				wantFailures++
+			}
+			if len(plan.Trackers[0].Failures) != wantFailures || len(plan.Trackers[0].Warnings) != wantFailures {
+				t.Fatalf("diagnostic outcomes missing: %#v", plan.Trackers[0])
+			}
+			if dupes.Results[0].Decision != api.DupeDecisionAccepted || projections.Projections[0].Readiness != api.ReadinessStatusIneligible {
+				t.Fatal("diagnostic preparation changed live policy outcomes")
+			}
+			wantInjections := 1
+			if noSeed {
+				wantInjections = 0
+			}
+			if len(clients.injections) != wantInjections {
+				t.Fatalf("client injections=%d want=%d", len(clients.injections), wantInjections)
+			}
+		})
+	}
+}
+
+func TestWorkflowDebugResolutionRefreshesValidationButRetainsPolicyFailure(t *testing.T) {
+	torrentPath := filepath.Join(t.TempDir(), "diagnostic.torrent")
+	writeWorkflowRegisteredTorrent(t, torrentPath, "EXAMPLE")
+	retained := &workflowRetainedUploadPlanFake{resolved: map[string]trackers.RetainedTrackerPreparation{
+		"EXAMPLE": {
+			Tracker:     "EXAMPLE",
+			TorrentPath: torrentPath,
+			Preview: api.TrackerDryRunEntry{
+				Status:  "blocked",
+				Message: "Final description rejected",
+				Payload: map[string]string{"name": "Example"},
+			},
+		},
+	}}
+	execution := &workflowUploadExecution{
+		diagnostic: true,
+		plan:       retained,
+		noSeed:     true,
+		projections: map[api.TrackerID]api.TrackerReleaseProjection{
+			"EXAMPLE": {
+				TrackerID:       "EXAMPLE",
+				Readiness:       api.ReadinessStatusIneligible,
+				DiagnosticReady: true,
+			},
+		},
+		dupes: map[api.TrackerID]api.TrackerDupeAssessment{
+			"EXAMPLE": {
+				TrackerID: "EXAMPLE",
+				Decision:  api.DupeDecisionAccepted,
+				Status:    api.StageStatusCompleted,
+			},
+		},
+		trackers: []api.UploadPlanTracker{{TrackerID: "EXAMPLE", Warnings: []string{"stale preparation failure"}}},
+	}
+	for _, blocked := range []bool{true, false} {
+		if !blocked {
+			preparation := retained.resolved["EXAMPLE"]
+			preparation.Preview.Status, preparation.Preview.Message = "ready", ""
+			retained.resolved["EXAMPLE"] = preparation
+		}
+		result, err := execution.ResolveAction(t.Context(), "EXAMPLE", api.RequiredActionResolveTrackerPreparation, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantFailures := 1
+		if blocked {
+			wantFailures++
+		}
+		if !result.Eligible || result.Status != api.StageStatusReady || len(result.Fields) != 1 ||
+			len(result.Failures) != wantFailures || len(result.Warnings) != wantFailures ||
+			result.Failures[0].Failure.Code != api.OperationFailureNoEligibleTrackers {
+			t.Fatalf("resolved diagnostic outcomes: %#v", result)
+		}
+		if blocked && result.Failures[1].Failure.Code != api.OperationFailureInvalidInput {
+			t.Fatalf("validation failure missing: %#v", result.Failures)
+		}
 	}
 }

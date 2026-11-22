@@ -42,7 +42,9 @@ type PrepareInput struct {
 	// MetadataRequirements is the tracker-ID-free union of selected metadata demands.
 	// It affects canonical collection but is not a reusable prepared-release fact.
 	MetadataRequirements MetadataRequirementSet `json:"-"`
-	Force                bool
+	// LogoLanguagePreference binds the server-configured TMDB selection order to reuse.
+	LogoLanguagePreference string `json:"-"`
+	Force                  bool
 	// RequirePrepared rejects collection when no compatible prepared generation exists.
 	RequirePrepared bool
 }
@@ -121,9 +123,13 @@ type PreparationPolicy struct {
 // ClientSearchPolicy contains fact-producing torrent-client search choices.
 // These values participate in preparation compatibility.
 type ClientSearchPolicy struct {
-	// Skip disables torrent-client discovery for this preparation.
+	// InfoHash requests a matching client torrent before ordinary source discovery,
+	// overriding Skip and configured search selectors without changing metadata policy.
+	InfoHash string `json:",omitempty"`
+	// Skip disables torrent-client discovery unless InfoHash is supplied.
 	Skip bool
-	// Client optionally selects one configured client; nil uses normal client selection.
+	// Client optionally selects one named client, including for InfoHash lookup.
+	// Blank selectors behave as unset; none disables search only without InfoHash.
 	Client *string
 }
 

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/metadata/seasonep"
 	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -181,7 +182,7 @@ func exactCandidate(target api.TrackerDuplicateTarget, candidate TrackerCandidat
 		return true
 	}
 	return len(target.FileNames) == 1 &&
-		isVideoFileName(strings.ToLower(strings.TrimSpace(target.FileNames[0]))) &&
+		seasonep.IsVideoFile(strings.ToLower(strings.TrimSpace(target.FileNames[0]))) &&
 		releaseNameMatchesFile(target.FileNames[0], candidate.Name)
 }
 
@@ -190,21 +191,11 @@ func exactCandidate(target api.TrackerDuplicateTarget, candidate TrackerCandidat
 func videoFileSet(files []string) []string {
 	result := make([]string, 0, len(files))
 	for _, file := range normalizedFileSet(files) {
-		if isVideoFileName(file) {
+		if seasonep.IsVideoFile(file) {
 			result = append(result, file)
 		}
 	}
 	return result
-}
-
-func isVideoFileName(name string) bool {
-	switch path.Ext(name) {
-	case ".mkv", ".mp4", ".avi", ".ts", ".m2ts", ".mts", ".vob", ".mov", ".wmv",
-		".flv", ".mpg", ".mpeg", ".m4v", ".webm", ".iso":
-		return true
-	default:
-		return false
-	}
 }
 
 func sameCandidateName(left string, right string) bool {

@@ -274,6 +274,69 @@ func TestPublicationPreservesExistingFilesAndFailures(t *testing.T) {
 	}
 }
 
+func TestPublicationFailureClassification(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		cause error
+		code  api.HDRAnalysisFailureCode
+	}{
+		{
+			name: "output write",
+			cause: &os.PathError{
+				Op:   "write",
+				Path: "synthetic-private-output",
+				Err:  os.ErrPermission,
+			},
+			code: api.HDRAnalysisFailureOutput,
+		},
+		{
+			name: "metadata read",
+			cause: &os.PathError{
+				Op:   "read",
+				Path: "synthetic-private-input",
+				Err:  os.ErrPermission,
+			},
+			code: api.HDRAnalysisFailureRead,
+		},
+		{
+			name:  "limit",
+			cause: extract.ErrResourceLimit,
+			code:  api.HDRAnalysisFailureResourceLimit,
+		},
+		{
+			name: "canceled write",
+			cause: &os.PathError{
+				Op:   "write",
+				Path: "synthetic-private-output",
+				Err:  context.Canceled,
+			},
+			code: api.HDRAnalysisFailureCanceled,
+		},
+		{
+			name: "timed out write",
+			cause: &os.PathError{
+				Op:   "write",
+				Path: "synthetic-private-output",
+				Err:  context.DeadlineExceeded,
+			},
+			code: api.HDRAnalysisFailureInterrupted,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			err := Classify(PublishFile(t.Context(), filepath.Join(root, "summary.json"), func(io.Writer) error { return test.cause }))
+			failure, ok := api.AsHDRAnalysisFailure(err)
+			if !ok || failure.Code != test.code || !errors.Is(err, test.cause) || strings.Contains(failure.Message, "synthetic-private") {
+				t.Fatalf("publication classification: failure=%#v error=%v", failure, err)
+			}
+			entries, readErr := os.ReadDir(root)
+			if readErr != nil || len(entries) != 0 {
+				t.Fatalf("failed publication retained staging files: %v / %v", entries, readErr)
+			}
+		})
+	}
+}
+
 func TestAdmissionCancellationAndErrorClassification(t *testing.T) {
 	admission := NewAdmission()
 	release, err := admission.Acquire(t.Context())

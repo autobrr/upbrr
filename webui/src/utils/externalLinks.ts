@@ -3,7 +3,7 @@
 
 import type { MouseEvent } from "react";
 
-const normalizeExternalHTTPURL = (value: string): string | null => {
+export const normalizeExternalHTTPURL = (value: string): string | null => {
   const href = value.trim();
   if (!href) return null;
 

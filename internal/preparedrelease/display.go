@@ -27,6 +27,12 @@ func (m *Module) ResolveDisplay(ctx context.Context, ref api.ReleaseRef) (api.Pr
 		return api.PreparedReleaseDisplay{}, err
 	}
 	resources := owned.resources
+	for _, disc := range resources.discs {
+		if disc.BluRayISO {
+			display.ComparisonSourceCapabilities.ProgrammeSelectionRequired = false
+			break
+		}
+	}
 	display.CanKeepFolder = canKeepSourceFolder(owned)
 	for _, target := range hdrTargetSubjects(owned) {
 		display.HDRTargets = append(display.HDRTargets, target.Target)
@@ -54,7 +60,13 @@ func ProjectDisplay(release api.PreparedRelease) (api.PreparedReleaseDisplay, er
 		return api.PreparedReleaseDisplay{}, fmt.Errorf("prepared release: clone display source: %w", err)
 	}
 	release = detached
+	hdr := release.Media.HDRFacts
+	inspectedHDR := hdr.Origin == api.HDREvidenceMediaInfo || hdr.Origin == api.HDREvidenceBDInfo
 	display := api.PreparedReleaseDisplay{
+		ComparisonSourceCapabilities: &api.ComparisonSourceCapabilities{
+			ProgrammeSelectionRequired: firstNonEmpty(release.Disc.Type, release.Source.Classification.DiscType) != "",
+			ToneMappingAvailable:       inspectedHDR && hdr.SupportsToneMapping(),
+		},
 		TVDBNamingAvailable: release.Identity.Category == api.CanonicalCategoryTV &&
 			release.ProviderMetadata.TVDBNamingAvailable(release.Source.SourcePath, release.Identity),
 		ReleaseName: release.Naming.ReleaseName,

@@ -6,6 +6,7 @@ package metadata
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -30,6 +31,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/metadata/progress"
+	"github.com/autobrr/upbrr/internal/metadata/seasonep"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -338,6 +340,12 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	// clears win over derived evidence and the final name cannot diverge from
 	// the facts every downstream projection consumes.
 	applyReleaseNameValueOverrides(&meta)
+	meta.EditionRuntimeSeconds, meta.EditionFrameRate, meta.EditionOriginalFrameRate = editionRuntime(meta, miDoc, bdinfo)
+	if meta.TVPack {
+		seasonKnown := meta.SeasonInt > 0 || meta.HasExplicitSeasonZero()
+		meta.EpisodeCoverage = seasonep.Coverage(meta.SeasonInt, seasonKnown, meta.SourcePath, meta.PackageInventory.Files, meta.PackageInventory.Status)
+		meta.EpisodeCoverage.SeasonKnown = seasonKnown
+	}
 	// Scene detection can supply the service (from the NFO), which WEB release
 	// names embed, so rebuild once more to fold in scene-derived metadata and
 	// the effective instruction values.
@@ -346,40 +354,55 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	return meta, nil
 }
 
-// applySceneDetection runs srrdb scene/rename detection and copies the result
-// onto meta. It is best-effort for transient srrdb/network failures (skip scene,
-// never block the upload), but context cancellation/deadline is propagated so the
-// pipeline aborts rather than continuing into tracker rules. Detection is gated
-// by config (scene_detection) via a nil detector.
-func (s *Service) applySceneDetection(ctx context.Context, meta preparationstate.State) (preparationstate.State, error) {
+// detectScene returns best-effort scene evidence and propagates cancellation.
+// An optional NFO failure does not discard an otherwise valid scene match.
+func (s *Service) detectScene(ctx context.Context, meta preparationstate.State) (*SceneResult, error) {
 	logger := logging.FromContext(ctx, s.logger)
 
 	if s.scene == nil {
-		return meta, nil
+		return nil, nil
 	}
 	result, err := s.scene.Detect(ctx, meta)
 	if err != nil {
 		switch {
 		case isContextError(ctx, err):
-			return meta, fmt.Errorf("metadata: scene detect: %w", err)
+			return nil, fmt.Errorf("metadata: scene detect: %w", err)
 		case isSceneNFOError(err):
 			logger.Warnf("metadata: scene nfo side effect failed: %s", redaction.RedactValue(err.Error(), nil))
 			// The primary match may still be present alongside a recoverable NFO
 			// side-effect error; apply it when it carries data.
 			if !sceneResultHasData(result) {
-				return meta, nil
+				return nil, nil
 			}
 		default:
 			// Transient srrdb/network failure: skip scene, never block the upload.
 			logger.Debugf("metadata: scene detect skipped: %s", redaction.RedactValue(err.Error(), nil))
-			return meta, nil
+			return nil, nil
 		}
 	}
-	applySceneResult(&meta, result)
+	return &result, nil
+}
+
+// applySceneDetection applies scene facts after naming fields are initialized.
+// A scene lookup made for tentative identity is reused without a second vote.
+func (s *Service) applySceneDetection(ctx context.Context, meta preparationstate.State) (preparationstate.State, error) {
+	logger := logging.FromContext(ctx, s.logger)
+	result := meta.CollectedScene
+	if result == nil || !sceneResultHasData(*result) && meta.Identity.IMDBID != 0 {
+		var err error
+		result, err = s.detectScene(ctx, meta)
+		if err != nil {
+			return meta, err
+		}
+	}
+	if result == nil {
+		return meta, nil
+	}
+	applySceneResult(&meta, *result)
 	// Backfill scene-discovered IMDb only when resolution found none and no
 	// explicit provider anchor or IMDb clear constrains the identity.
 	effectiveOverrides := effectiveProviderOverrides(meta.ExternalIDOverrides, meta.Identity)
-	if meta.Identity.IMDBID == 0 && result.IMDBID > 0 && !clearedProviderOverride(effectiveOverrides.IMDBID) &&
+	if meta.CollectedScene == nil && meta.Identity.IMDBID == 0 && result.IMDBID > 0 && !clearedProviderOverride(effectiveOverrides.IMDBID) &&
 		!hasPositiveProviderOverride(effectiveOverrides) {
 		meta.Identity.IMDBID = result.IMDBID
 	}
@@ -651,6 +674,37 @@ func audioLanguagePrefix(meta preparationstate.State, tracks []map[string]any) s
 
 func audioLanguagePrefixFromLanguages(meta preparationstate.State, languages []string) string {
 	if len(languages) == 0 {
+		return ""
+	}
+
+	if meta.ProviderMetadata.TMDB != nil && len(meta.ProviderMetadata.TMDB.SpokenLanguages) > 0 {
+		// Preferred dialogue evidence needs soundtrack origins, not aggregate language
+		// count: one multilingual original stream does not establish dual audio.
+		media := api.MediaFacts{
+			OriginalLanguage:         originalAudioLanguage(meta),
+			TitleLanguages:           meta.ProviderMetadata.TMDB.SpokenLanguages,
+			AudioLanguages:           languages,
+			AudioLanguagesProvenance: meta.AudioLanguagesProvenance,
+			Tracks:                   meta.MediaTracks,
+			TrackCoverageComplete:    meta.TrackCoverageComplete,
+		}
+		if meta.MetadataOverrides.OriginalLanguage != nil {
+			media.OriginalLanguageProvenance = factProvenanceForString(media.OriginalLanguage)
+		}
+		facts := mediafacts.ResolveLanguages(media)
+		if facts.HasOriginalAudio() {
+			separateDub := languageutil.LanguageIdentityCount(facts.ProgrammeLanguages) > 1 &&
+				slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
+					return facts.ProgrammeAudioOrigin(track) == api.TrackAudioDubbed
+				})
+			if facts.HasEnglishDub() || separateDub {
+				return "Dual-Audio"
+			}
+			return ""
+		}
+		if facts.HasEnglishDub() && facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && !facts.HasUnresolvedProgrammeAudioOrigin() {
+			return "Dubbed"
+		}
 		return ""
 	}
 
@@ -2195,6 +2249,90 @@ func resolveIMDbEditionFromMediaDuration(meta preparationstate.State, doc mediaI
 		return releaseEditionParts{}
 	}
 	return matches[0].parts
+}
+
+// editionRuntime measures one identifiable presentation and retains its
+// fixed measured cadence. A DVD VOB supplies cadence, never title duration.
+func editionRuntime(meta preparationstate.State, doc mediaInfoDoc, bdinfo *discparse.BDInfo) (seconds, fps, originalFPS float64) {
+	_, videos, _ := splitMediaInfoTracks(doc)
+	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
+	case "":
+		if len(meta.FileList) <= 1 && len(videos) == 1 {
+			fps, originalFPS = editionVideoFrameRates(videos[0])
+			return mediaDurationSeconds(doc), fps, originalFPS
+		}
+	case "DVD":
+		if len(meta.Discs) > 1 || meta.DVDVOBSet == "" || len(videos) > 1 {
+			break
+		}
+		seconds = mediaDurationSeconds(doc)
+		if seconds <= 0 {
+			break
+		}
+		if len(videos) == 1 {
+			fps, originalFPS = editionVideoFrameRates(videos[0])
+		}
+		if fps == 0 && meta.DVDVOBMediaInfoJSON != "" {
+			if vob, err := loadMediaInfoDocFromJSONPayload(meta.DVDVOBMediaInfoJSON); err == nil {
+				_, vobVideos, _ := splitMediaInfoTracks(vob)
+				if len(vobVideos) == 1 {
+					fps, originalFPS = editionVideoFrameRates(vobVideos[0])
+				}
+			}
+		}
+		return seconds, fps, originalFPS
+	case "BDMV":
+		if len(meta.Discs) <= 1 && len(meta.SelectedBDMVPlaylists) == 1 {
+			if bdinfo != nil && len(bdinfo.Video) == 1 {
+				fps = editionFrameRateText(bdinfo.Video[0].FPS)
+			}
+			return meta.SelectedBDMVPlaylists[0].Duration, fps, 0
+		}
+	}
+	return 0, 0, 0
+}
+
+func editionVideoFrameRates(video map[string]any) (float64, float64) {
+	if strings.EqualFold(trackString(video, "FrameRate_Mode"), "VFR") {
+		return 0, 0
+	}
+	fps := editionFrameRateText(trackString(video, "FrameRate_Num") + "/" + trackString(video, "FrameRate_Den"))
+	if fps == 0 {
+		fps = editionFrameRateText(trackString(video, "FrameRate"))
+	}
+	original := editionFrameRateText(trackString(video, "FrameRate_Original_Num") + "/" + trackString(video, "FrameRate_Original_Den"))
+	if original == 0 {
+		original = editionFrameRateText(trackString(video, "FrameRate_Original"))
+	}
+	return fps, original
+}
+
+func editionFrameRateText(value string) float64 {
+	fields := strings.Fields(value)
+	if len(fields) == 0 {
+		return 0
+	}
+	numerator, denominator, rational := strings.Cut(fields[0], "/")
+	fps, err := strconv.ParseFloat(numerator, 64)
+	if err != nil {
+		return 0
+	}
+	if rational {
+		divisor, err := strconv.ParseFloat(denominator, 64)
+		if err != nil || divisor <= 0 {
+			return 0
+		}
+		fps /= divisor
+	}
+	if fps <= 0 || math.IsNaN(fps) || math.IsInf(fps, 0) {
+		return 0
+	}
+	for _, standard := range []float64{24000.0 / 1001, 30000.0 / 1001, 60000.0 / 1001} {
+		if math.Abs(fps-standard) < 0.001 {
+			return standard
+		}
+	}
+	return fps
 }
 
 func mediaDurationSeconds(doc mediaInfoDoc) float64 {

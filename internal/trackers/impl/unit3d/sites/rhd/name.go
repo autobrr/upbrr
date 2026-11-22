@@ -62,6 +62,7 @@ func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 			parts = append(parts, "iNCOMPLETE")
 		}
 	}
+	parts = append(parts, meta.EpisodeCoverage.Part)
 	namingSubject := meta
 	namingSubject.EditionDisplay = nil
 	if text := api.EditionNamingText(meta.EditionDisplay); text != "" {

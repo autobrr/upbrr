@@ -18,7 +18,7 @@ func maybeApplyE2EServices(context.Context, *api.ServiceSet, config.Config, api.
 	return nil
 }
 
-func e2eReleaseWorkflowOptions() []releaseworkflow.Option {
+func e2eReleaseWorkflowOptions(api.RepositoryOwner) []releaseworkflow.Option {
 	return nil
 }
 

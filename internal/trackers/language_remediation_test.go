@@ -44,6 +44,14 @@ func TestProgrammeDubRemediationPreservesDecisions(t *testing.T) {
 			want:    "separate remux",
 		},
 		{
+			name:    "listed dialogue language still has removable confirmed dub",
+			subject: languageSubject("Japanese", "Japanese", "German"),
+			want:    "separate remux",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.LanguageFacts.OriginalLanguages = []string{"Japanese", "German"}
+			},
+		},
+		{
 			name:    "sole programme audio",
 			subject: languageSubject("Japanese", "German"),
 			want:    "compliant source",

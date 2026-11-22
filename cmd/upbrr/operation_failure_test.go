@@ -21,8 +21,25 @@ func TestFormatCLIErrorUsesStableOperationFailure(t *testing.T) {
 		Recovery:  api.OperationRecoveryConfirm,
 	}, errors.New("private database path and token"))
 
-	if got, want := formatCLIError(err), "Blu-ray playlist changes require confirmation before rescanning. (recovery: confirm)"; got != want {
+	if got, want := formatCLIError(err), "Blu-ray playlist changes require confirmation before rescanning. Next step: rerun interactively or with --unattended_confirm/--uac to review the required confirmation."; got != want {
 		t.Fatalf("formatCLIError() = %q, want %q", got, want)
+	}
+
+	unknown := api.OperationFailure{
+		Code: api.OperationFailureUnknownOutcome,
+ Operation: api.OperationKindImageHosting,
+		Message: "Image hosting may have succeeded before interruption.",
+ Recovery: api.OperationRecoveryConfirm,
+	}
+	unknownErr := exitError(2, api.NewOperationError(unknown, errors.New("private remote cause")))
+	var output strings.Builder
+	printCLIError(&output, unknownErr)
+	if !strings.Contains(output.String(), "Verify the outcome") || !strings.Contains(output.String(), "Do not retry while its outcome is uncertain.") ||
+		strings.Contains(output.String(), "--uac") || strings.Contains(output.String(), "private") || strings.Contains(output.String(), "recovery: confirm") {
+		t.Fatalf("uncertain remote outcome lost its confirmation boundary: %q", output.String())
+	}
+	if failure, ok := api.AsOperationFailure(unknownErr); !ok || failure != unknown {
+		t.Fatal("presentation changed the typed recovery authority")
 	}
 }
 
@@ -57,7 +74,7 @@ func TestPrintCLIErrorPreservesCleanupFailures(t *testing.T) {
 			err := errors.Join(exitError(1, operationErr), cleanupErr)
 			var output strings.Builder
 			printCLIError(&output, err)
-			want := "error: Upload failed. (recovery: retry)\n" + scenario.wantCleanup + "\n"
+			want := "error: Upload failed. Next step: resolve the reported problem before retrying the failed operation.\n" + scenario.wantCleanup + "\n"
 			if got := output.String(); got != want {
 				t.Fatalf("printCLIError() = %q, want %q", got, want)
 			}
@@ -77,7 +94,7 @@ func TestFormatCLIErrorPreservesWrappedJoinedFailures(t *testing.T) {
 		errors.New("first cleanup failed"),
 		errors.Join(operationErr, errors.New("second cleanup failed")),
 	)))
-	want := "first cleanup failed\nUpload failed. (recovery: retry)\nsecond cleanup failed"
+	want := "first cleanup failed\nUpload failed. Next step: resolve the reported problem before retrying the failed operation.\nsecond cleanup failed"
 	if got := formatCLIError(err); got != want {
 		t.Fatalf("formatCLIError() = %q, want %q", got, want)
 	}

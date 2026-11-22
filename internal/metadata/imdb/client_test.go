@@ -8,14 +8,89 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestGetInfoSpokenLanguages(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, spoken string
+		want         []string
+	}{
+		{name: "missing"},
+		{name: "empty", spoken: `,"spokenLanguages":{"spokenLanguages":[]}`},
+		{
+			name: "provider names",
+			spoken: `,"spokenLanguages":{"language":{"id":"en-US","text":"English (United States)"},
+				"spokenLanguages":[{"id":"fr","text":"French"},{"id":"de","text":" German "},{"id":"en","text":""},null]}`,
+			want: []string{"French", "German"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				var payload struct{ Query string }
+				if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+					t.Error(err)
+				}
+				if !strings.Contains(payload.Query, "spokenLanguages { spokenLanguages { text } }") {
+					t.Error("title query does not request spoken language names")
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{"data":{"title":{"id":"tt0555001","titleText":{"text":"Example Movie"}%s}}}`, test.spoken)
+			}))
+			defer server.Close()
+			client := NewClient(server.Client(), nil)
+			client.baseURL = server.URL
+			info, err := client.GetInfo(t.Context(), "tt0555001", "ja", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(info.SpokenLanguages, test.want) || info.OriginalLanguage != "ja" || info.Title != "Example Movie" {
+				t.Fatalf("title languages = %v, manual language = %q, title = %q", info.SpokenLanguages, info.OriginalLanguage, info.Title)
+			}
+		})
+	}
+}
+
+func TestGetInfoEditionEvidenceKeepsSameMinuteRowsOnlyForCompleteResults(t *testing.T) {
+	for _, hasNextPage := range []bool{false, true} {
+		t.Run(strconv.FormatBool(hasNextPage), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{"data":{"title":{"titleText":{"text":"Example Movie"},"runtimes":{
+					"pageInfo":{"hasNextPage":%t},"edges":[
+						{"node":{"seconds":6001,"attributes":[{"text":"Director's Cut"}]}},
+						{"node":{"seconds":6006,"attributes":[{"text":"Theatrical Cut"}]}}]
+				}}}}`, hasNextPage)
+			}))
+			defer server.Close()
+			client := NewClient(server.Client(), nil)
+			client.baseURL = server.URL
+			info, err := client.GetInfo(t.Context(), "tt1234567", "", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if hasNextPage {
+				if len(info.EditionRuntimes) != 0 {
+					t.Fatalf("partial runtimes promoted to evidence: %+v", info.EditionRuntimes)
+				}
+			} else if rows := info.EditionRuntimes; len(rows) != 2 || rows[0].Seconds != 6001 || rows[1].Seconds != 6006 {
+				t.Fatalf("same-minute alternatives were lost: %+v", rows)
+			}
+		})
+	}
+}
 
 func TestPostGraphQLPostsUnseenHashThenGetsKnownHash(t *testing.T) {
 	const query = `query TestOperation($id: ID!) { title(id: $id) { id } }`
@@ -361,7 +436,6 @@ func TestSearchSelectsOnlyRequestedCategory(t *testing.T) {
 	for _, test := range []struct {
 		name, category, seriesType string
 		wantID                     int
-		unattended                 bool
 	}{
 		{
 			name:       "movie",
@@ -381,13 +455,6 @@ func TestSearchSelectsOnlyRequestedCategory(t *testing.T) {
 			seriesType: "TV Mini Series",
 			wantID:     555002,
 		},
-		{
-			name:       "unattended TV",
-			category:   "TV",
-			seriesType: "TV Mini-Series",
-			wantID:     555002,
-			unattended: true,
-		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -402,9 +469,8 @@ func TestSearchSelectsOnlyRequestedCategory(t *testing.T) {
 			client := NewClient(server.Client(), nil)
 			client.baseURL = server.URL
 			result, err := client.Search(t.Context(), SearchInput{
-				Filename:   "Example Title",
-				Category:   test.category,
-				Unattended: test.unattended,
+				Filename: "Example Title",
+				Category: test.category,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -473,6 +539,104 @@ func TestRankCandidates(t *testing.T) {
 	}
 	if candidates[0].IMDbID != 1 {
 		t.Fatalf("expected IMDbID 1, got %d", candidates[0].IMDbID)
+	}
+	for _, test := range []struct {
+		year, requested int
+		want            float64
+	}{
+		{2020, 2020, 1.2},
+		{2019, 2020, 1.05},
+		{0, 2020, 1},
+		{2020, 0, 1},
+		{0, 0, 1},
+	} {
+		getMapFromMap(getMapFromMap(results[0], "node"), "title")["releaseYear"] = map[string]any{"year": test.year}
+		got := rankCandidates(results[:1], "Example Title", test.requested)
+		if len(got) != 1 || math.Abs(got[0].Similarity-test.want) > 1e-10 {
+			t.Fatalf("candidate year %d requested %d: %+v, want %v", test.year, test.requested, got, test.want)
+		}
+	}
+}
+
+func TestSearchRetainsWeakSingleResult(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"data":{"advancedTitleSearch":{"edges":[{"node":{"title":{"id":"tt0555001","titleText":{"text":"Unrelated Film"},"releaseYear":{"year":2026},"titleType":{"text":"Movie"}}}}]}}}`)
+	}))
+	defer server.Close()
+	client := NewClient(server.Client(), nil)
+	client.baseURL = server.URL
+	input := SearchInput{
+		Filename:   "Example Movie",
+		Category:   "MOVIE",
+		SearchYear: 2026,
+	}
+	got, err := client.Search(t.Context(), input)
+	if err != nil || got.IMDbID != 0 || got.AutoSelected || !got.Tentative || len(got.Candidates) != 1 {
+		t.Fatalf("weak unattended single result became authoritative: %+v, %v", got, err)
+	}
+	candidate := got.Candidates[0]
+	if candidate.IMDbID != 555001 || candidate.Confidence >= 0.85 || math.Abs(candidate.Similarity-candidate.Confidence-0.2) > 1e-10 {
+		t.Fatalf("candidate lost separate confidence and ranking: %+v", candidate)
+	}
+}
+
+func TestSearchYearRankingPreservesIdentityConfidence(t *testing.T) {
+	for _, test := range []struct {
+		title    string
+		year     int
+		selected bool
+	}{
+		{"Example Story", 2026, false},
+		{"Example Story", 0, false},
+		{"Example Story", 1960, false},
+		{"Example Story", 2025, false},
+		{"Example Movie", 2026, true},
+		{"Example Movie", 2025, true},
+	} {
+		t.Run(test.title+strconv.Itoa(test.year), func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{"data":{"advancedTitleSearch":{"edges":[
+					{"node":{"title":{"id":"tt0555001","titleText":{"text":%q},"releaseYear":{"year":%d},"titleType":{"text":"Movie"}}}},
+					{"node":{"title":{"id":"tt0555002","titleText":{"text":"Example Film"},"releaseYear":{"year":1960},"titleType":{"text":"Movie"}}}}
+				]}}}`, test.title, test.year)
+			}))
+			defer server.Close()
+			client := NewClient(server.Client(), nil)
+			client.baseURL = server.URL
+			result, err := client.Search(t.Context(), SearchInput{
+				Filename:   "Example Movie",
+				Category:   "MOVIE",
+				SearchYear: 2026,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.selected {
+				if result.IMDbID != 555001 || !result.AutoSelected || result.Tentative {
+					t.Fatalf("confident result was not selected: %+v", result)
+				}
+				return
+			}
+			if result.IMDbID != 0 || result.AutoSelected || !result.Tentative || len(result.Candidates) != 2 {
+				t.Fatalf("ranking must not grant identity confidence: %+v", result)
+			}
+			want := metautil.SimilarityRatio("example movie", "example story")
+			if test.year == 2026 {
+				want += 0.2
+				if result.Candidates[0].IMDbID != 555001 {
+					t.Fatal("matching-year candidate did not outrank the closer title")
+				}
+			}
+			for _, candidate := range result.Candidates {
+				if candidate.IMDbID == 555001 && math.Abs(candidate.Similarity-want) > 1e-10 {
+					t.Fatalf("ranking score = %v, want %v", candidate.Similarity, want)
+				}
+			}
+		})
 	}
 }
 

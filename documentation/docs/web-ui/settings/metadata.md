@@ -7,18 +7,24 @@ description: Control torrent discovery, tracker-data lookup, and Blu-ray metadat
 
 Use **Settings → Metadata** to control how preparation gathers reusable torrent and tracker metadata.
 
-| Field                                             | Default | Effect                                                                                                 |
-| ------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------ |
-| **Skip automatic torrent-client search**          | Off     | Skips automated torrent-client searching during preparation.                                           |
-| **Skip filename-based tracker lookup**            | Off     | Prevents filename-based tracker-data lookup when no tracker ID is already known.                       |
-| **Collect existing tracker images**               | On      | Retains validated tracker images for screenshot reuse and descriptions.                                |
-| **Limit tracker lookup to only metadata ids**     | Off     | Limits supported tracker-data lookups to identity fields.                                              |
-| **Automatically select largest Blu-ray playlist** | Off     | Lets unattended CLI preparation choose the largest Blu-ray playlist instead of requiring confirmation. |
-| **Look up Blu-ray.com releases**                  | Off     | Enables blu-ray.com matching for BDMV or DVD sources with an IMDb ID.                                  |
-| **Blu-ray match threshold**                       | `94.5`  | Sets the normal blu-ray.com candidate score threshold.                                                 |
-| **Single-candidate Blu-ray threshold**            | `89.5`  | Sets the threshold for one candidate when no release country is locked.                                |
+| Field                                                   | Default | Effect                                                                                                                               |
+| ------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **Skip automatic torrent-client search**                | Off     | Skips automated torrent-client searching during preparation.                                                                         |
+| **Skip filename-based tracker lookup**                  | Off     | Prevents filename-based tracker-data lookup when no tracker ID is already known.                                                     |
+| **Collect existing tracker images**                     | On      | Retains validated tracker images for screenshot reuse and descriptions.                                                              |
+| **Limit tracker lookup to only metadata ids**           | Off     | Limits supported tracker-data lookups to identity fields.                                                                            |
+| **Automatically select best Blu-ray playlist per disc** | Off     | Lets CLI preparation choose the highest-scoring playlist for each disc instead of requiring confirmation, including unattended runs. |
+| **Look up Blu-ray.com releases**                        | Off     | Enables blu-ray.com matching for BDMV or DVD sources with an IMDb ID.                                                                |
+| **Blu-ray match threshold**                             | `94.5`  | Sets the normal blu-ray.com candidate score threshold.                                                                               |
+| **Single-candidate Blu-ray threshold**                  | `89.5`  | Sets the threshold for one candidate when no release country is locked.                                                              |
 
 **Collect existing tracker images** and **Limit tracker lookup to only metadata ids** work independently. With both enabled, supported trackers can still supply images while omitting description text. Imported comparison blocks stay in descriptions and are excluded from the ordinary screenshot set. Eligible existing description images are loaded automatically when you open **Screenshots**. Review them in the normal screenshot list, where you can unselect, delete or reorder them. Their capture timestamps and provenance are unknown, including their chronological order relative to new captures.
+
+:::note Compatibility fields
+
+`user_overrides`, `ping_unit3d`, and `check_predb` remain in imported/exported configuration but have no current workflow behavior. They do not enable automatic user corrections, extra tracker pings, or another pre-database check.
+
+:::
 
 ## Blu-ray edition matching
 

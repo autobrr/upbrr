@@ -19,14 +19,21 @@ func ptpRemuxSubject(subject api.TrackerValidationSubject) api.TrackerValidation
 
 func TestPTPAnimeRemuxProgrammeBoundary(t *testing.T) {
 	for _, test := range []struct {
-		name      string
-		languages []string
-		role      api.AudioTrackRole
-		wantIssue bool
+		name                 string
+		languages            []string
+		role                 api.AudioTrackRole
+		wantIssue            bool
+		originalMultilingual bool
 	}{
 		{name: "Japanese and English", languages: []string{"Japanese", "English"}},
 		{name: "Japanese only", languages: []string{"Japanese"}},
 		{name: "English only", languages: []string{"English"}},
+		{
+			name:                 "confirmed original multilingual",
+			languages:            []string{"mul"},
+			wantIssue:            true,
+			originalMultilingual: true,
+		},
 		{
 			name:      "duplicate Japanese",
 			languages: []string{"Japanese", "Japanese", "English"},
@@ -72,6 +79,10 @@ func TestPTPAnimeRemuxProgrammeBoundary(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			subject := ptpLanguageSubject("Japanese", test.languages...)
 			subject.Anime = true
+			if test.originalMultilingual {
+				subject.LanguageFacts.Tracks[0].AudioOrigin = api.TrackAudioOriginal
+				subject.LanguageFacts.Tracks[0].ManifestFingerprint = "manifest"
+			}
 			if test.role != "" {
 				subject.LanguageFacts.Tracks[len(subject.LanguageFacts.Tracks)-1].Role = test.role
 			}
@@ -80,6 +91,11 @@ func TestPTPAnimeRemuxProgrammeBoundary(t *testing.T) {
 			found := slices.ContainsFunc(failures, func(f api.RuleFailure) bool { return f.Rule == "language_anime_remux_programme" })
 			if found != test.wantIssue {
 				t.Fatalf("anime programme issue = %t, want %t: %#v", found, test.wantIssue, failures)
+			}
+			if test.originalMultilingual && !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
+				return f.Rule == "language_anime_remux_programme" && api.IsStrictRuleFailure(f) && len(f.LanguageCorrectionTrackIDs) == 1
+			}) {
+				t.Fatalf("unidentified anime composition lost its strict correction requirement: %+v", failures)
 			}
 			if !test.wantIssue && len(failures) != 0 {
 				t.Fatalf("permitted programme set blocked: %#v", failures)
@@ -245,14 +261,23 @@ func TestPTPRemuxDefaultFlagEvidenceAndWaiver(t *testing.T) {
 		name         string
 		value, known bool
 		outcome      api.RuleDisposition
+		multilingual bool
 	}{
-		{"known yes", true, true, ""},
-		{"known no", false, true, api.RuleDispositionWaivable},
-		{"missing flag", false, false, api.RuleDispositionStrict},
-		{"legacy truthy without recognized flag", true, false, api.RuleDispositionStrict},
+		{"known yes", true, true, "", false},
+		{"known no", false, true, api.RuleDispositionWaivable, false},
+		{"missing flag", false, false, api.RuleDispositionStrict, false},
+		{"legacy truthy without recognized flag", true, false, api.RuleDispositionStrict, false},
+		{"multilingual known yes", true, true, "", true},
+		{"multilingual known no", false, true, api.RuleDispositionWaivable, true},
+		{"multilingual missing flag", false, false, api.RuleDispositionStrict, true},
+		{"multilingual legacy truthy", true, false, api.RuleDispositionStrict, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			subject := ptpLanguageSubject("Japanese", "Japanese", "English")
+			if tc.multilingual {
+				subject = ptpLanguageSubject("Japanese", "mul")
+				subject.LanguageFacts.Tracks[0].AudioOrigin = api.TrackAudioOriginal
+			}
 			subject.LanguageFacts.Tracks[0].Default, subject.LanguageFacts.Tracks[0].DefaultKnown = tc.value, tc.known
 			for i := range subject.LanguageFacts.Tracks {
 				subject.LanguageFacts.Tracks[i].StreamOrder = i + 1
@@ -260,6 +285,9 @@ func TestPTPRemuxDefaultFlagEvidenceAndWaiver(t *testing.T) {
 			}
 			subject = ptpRemuxSubject(subject)
 			failures := ptpRemuxLanguageFailures(subject)
+			if tc.multilingual && ptpPrimaryProgrammeLanguage(subject.LanguageFacts) != "" {
+				t.Fatal("default-track evidence invented a primary language")
+			}
 			if tc.outcome == "" {
 				if len(failures) != 0 {
 					t.Fatalf("known default blocked: %+v", failures)

@@ -410,21 +410,30 @@ func (s *Service) renderWithBinding(ctx context.Context, extraction *extract.Ext
 	return nil
 }
 
+var errArtifactOutput = errors.New("HDR artifact output failed")
+
 // PublishFile uses a fresh private sibling and never replaces an existing target.
 // The caller owns an exclusive attempt directory; other attempts cannot race this target.
+// Filesystem publication failures classify as output failures; encoder causes remain intact.
 func PublishFile(ctx context.Context, target string, encode func(io.Writer) error) error {
 	file, err := os.CreateTemp(filepath.Dir(target), ".hdr-staging-*")
 	if err != nil {
-		return fmt.Errorf("create HDR staging file: %w", err)
+		return fmt.Errorf("create HDR staging file: %w: %w", errArtifactOutput, err)
 	}
 	staging := file.Name()
 	defer func() { _ = os.Remove(staging) }()
 	if err := file.Chmod(0o600); err != nil {
 		_ = file.Close()
-		return fmt.Errorf("protect HDR staging file: %w", err)
+		return fmt.Errorf("protect HDR staging file: %w: %w", errArtifactOutput, err)
 	}
 	writeErr := encode(file)
+	if pathErr, ok := errors.AsType[*os.PathError](writeErr); ok && pathErr.Op == "write" {
+		writeErr = errors.Join(errArtifactOutput, writeErr)
+	}
 	closeErr := file.Close()
+	if closeErr != nil {
+		closeErr = errors.Join(errArtifactOutput, closeErr)
+	}
 	if err := errors.Join(writeErr, closeErr); err != nil {
 		return fmt.Errorf("write HDR artifact: %w", err)
 	}
@@ -435,10 +444,10 @@ func PublishFile(ctx context.Context, target string, encode func(io.Writer) erro
 		if err == nil {
 			err = os.ErrExist
 		}
-		return fmt.Errorf("HDR artifact destination is unavailable: %w", err)
+		return fmt.Errorf("HDR artifact destination is unavailable: %w: %w", errArtifactOutput, err)
 	}
 	if err := os.Rename(staging, target); err != nil {
-		return fmt.Errorf("publish HDR artifact: %w", err)
+		return fmt.Errorf("publish HDR artifact: %w: %w", errArtifactOutput, err)
 	}
 	return nil
 }
@@ -457,6 +466,8 @@ func Classify(err error) error {
 		code, message = api.HDRAnalysisFailureInterrupted, "HDR analysis timed out"
 	case errors.Is(err, context.Canceled):
 		code, message = api.HDRAnalysisFailureCanceled, "HDR analysis was canceled"
+	case errors.Is(err, errArtifactOutput):
+		code, message = api.HDRAnalysisFailureOutput, "HDR output could not be saved. Check the output directory, its write permissions, and available space."
 	case errors.Is(err, extract.ErrNoMetadata):
 		code, message = api.HDRAnalysisFailureAbsent, "the complete source contains no HDR10+ metadata"
 	case errors.Is(err, extract.ErrAmbiguousTrack):

@@ -47,7 +47,7 @@ const workflowPrivateVaultCleanupInterval = time.Hour
 // Core composes the upload, prepared-release, duplicate-check, media,
 // description, and history capabilities over one dependency snapshot. It owns
 // the repository only when construction opened that repository internally.
-// Operation contexts are per call and are not retained by Core.
+// Input verification cancellation is retained only until admission completes.
 type Core struct {
 	liveTest         *api.LiveTestPolicy
 	logger           api.Logger
@@ -62,6 +62,8 @@ type Core struct {
 	workflow                 *releaseworkflow.Module
 	media                    *mediaModule
 	searchProviderCandidates func(context.Context, api.ProviderSearchRequest) (api.ProviderSearchResult, error)
+	inputOpenMu              sync.Mutex
+	inputOpens               map[inputOpenKey]map[*pendingInputOpen]struct{}
 }
 
 func applyMetadataDefaults(input api.PrepareInput, configured config.MetadataConfig) api.PrepareInput {
@@ -419,13 +421,22 @@ func newCoreWithHooks(
 	if err != nil {
 		return nil, fmt.Errorf("core: release workflow repository: %w", err)
 	}
+	logoLanguages, _ := config.ParseLogoLanguages(cfg.Description.LogoLanguage)
+	prepareDefaults := func(input api.PrepareInput) api.PrepareInput {
+		input = applyMetadataDefaults(input, cfg.Metadata)
+		input.LogoLanguagePreference = strings.Join(logoLanguages, ",")
+		return input
+	}
 	workflowPreparer := releaseworkflow.ReleasePreparerFunc{
 		ResolveInputFunc: func(ctx context.Context, input api.PrepareInput, update api.ReleaseCorrectionUpdate) (api.ResolvedPreparationInput, error) {
-			return preparedFacts.ResolveInput(ctx, applyMetadataDefaults(input, cfg.Metadata), update)
+			return preparedFacts.ResolveInput(ctx, prepareDefaults(input), update)
 		},
-		PrepareResolvedFunc: preparedFacts.PrepareResolved,
+		PrepareResolvedFunc: func(ctx context.Context, resolved api.ResolvedPreparationInput) (api.PrepareResult, error) {
+			resolved.Input = prepareDefaults(resolved.Input)
+			return preparedFacts.PrepareResolved(ctx, resolved)
+		},
 		PrepareFunc: func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
-			return preparedFacts.Prepare(ctx, applyMetadataDefaults(input, cfg.Metadata))
+			return preparedFacts.Prepare(ctx, prepareDefaults(input))
 		},
 		DisplayFunc: func(ctx context.Context, ref api.ReleaseRef) (api.PreparedReleaseDisplay, error) {
 			display, displayErr := preparedFacts.ResolveDisplay(ctx, ref)
@@ -492,7 +503,7 @@ func newCoreWithHooks(
 		workflowPrivateResources = vault
 		workflowPrivateVault = vault
 	}
-	e2eOptions := e2eReleaseWorkflowOptions()
+	e2eOptions := e2eReleaseWorkflowOptions(repoOwner)
 	var reusableImageInventory workflowReusableTrackerImageInventory
 	if inventory, ok := services.Screenshots.(workflowReusableTrackerImageInventory); ok {
 		reusableImageInventory = inventory

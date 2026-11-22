@@ -192,6 +192,12 @@ func TestResolveReleaseNamesAppliesFinalizedPresentationToAutomaticSubjectCopy(t
 	t.Parallel()
 
 	base := api.UploadSubject{
+		EpisodeCoverage: api.EpisodeCoverage{
+			SeasonKnown: true,
+			Part:        "E02-E03",
+			Episodes:    []int{2, 3},
+			Status:      api.MetadataEvidenceStatusComplete,
+		},
 		ReleaseName: "Example Show 2026 S02E03 1080p-GRP",
 		Release: api.ReleaseInfo{
 			Year:    2026,
@@ -231,6 +237,7 @@ func TestResolveReleaseNamesAppliesFinalizedPresentationToAutomaticSubjectCopy(t
 		t.Fatalf("resolve automatic name: %v", err)
 	}
 	if observed.Release.Year != 0 || observed.SeasonInt != 0 || observed.EpisodeInt != 0 || observed.SeasonStr != "" || observed.EpisodeStr != "" ||
+		observed.EpisodeCoverage.Part != "" || !observed.EpisodeCoverage.SeasonKnown || base.EpisodeCoverage.Part != "E02-E03" ||
 		observed.DailyEpisodeDate != "2026-02-03" || observed.ProviderMetadata.IMDB.Year != 0 || observed.ProviderMetadata.IMDB.TVYear != 0 ||
 		observed.ProviderMetadata.TMDB.Year != 0 || observed.ProviderMetadata.TVDB.Year != 0 || observed.ProviderMetadata.TVDB.NameDisambiguation.SeriesYear != 0 ||
 		observed.ProviderMetadata.TVDB.NameDisambiguation.IncludeYear {
@@ -251,7 +258,7 @@ func TestResolveReleaseNamesAppliesFinalizedPresentationToAutomaticSubjectCopy(t
 	if _, err := resolveReleaseNames(PreparationInput{Meta: seasonMode}, binding); err != nil {
 		t.Fatalf("resolve season/episode name: %v", err)
 	}
-	if observed.SeasonInt != 2 || observed.EpisodeInt != 3 || observed.DailyEpisodeDate != "" {
+	if observed.SeasonInt != 2 || observed.EpisodeInt != 3 || observed.DailyEpisodeDate != "" || observed.EpisodeCoverage.Part != "E02-E03" {
 		t.Fatalf("season/episode presentation = %#v", observed)
 	}
 
@@ -259,7 +266,7 @@ func TestResolveReleaseNamesAppliesFinalizedPresentationToAutomaticSubjectCopy(t
 	if _, err := resolveReleaseNames(PreparationInput{Meta: base, RequestedUploadName: &requested}, binding); err != nil {
 		t.Fatalf("resolve requested name: %v", err)
 	}
-	if observed.Release.Year != 2026 || observed.SeasonInt != 2 || observed.ProviderMetadata.IMDB.Year != 2026 {
+	if observed.Release.Year != 2026 || observed.SeasonInt != 2 || observed.ProviderMetadata.IMDB.Year != 2026 || observed.EpisodeCoverage.Part != "E02-E03" {
 		t.Fatalf("requested subject was sanitized: %#v", observed)
 	}
 
@@ -515,6 +522,31 @@ func TestReviewedUploadNameRequiresProjection(t *testing.T) {
 
 	if _, err := (PreparationInput{Meta: api.UploadSubject{ReleaseName: "Example.Release.2026-GRP"}}).ReviewedUploadName(); err == nil {
 		t.Fatal("expected missing reviewed projection error")
+	}
+	for _, mode := range []api.WorkflowExecutionMode{api.WorkflowExecutionModeNormal, api.WorkflowExecutionModeDebug} {
+		projection := api.TrackerReleaseProjection{
+			TrackerID:         "EXAMPLE",
+			UploadReleaseName: "Example.Release.2026-GRP",
+			Readiness:         api.ReadinessStatusBlocked,
+			DiagnosticReady:   true,
+		}
+		input := PreparationInput{
+			Tracker:       "EXAMPLE",
+			ExecutionMode: mode,
+			Projection:    &projection,
+		}
+		name, err := input.ReviewedUploadName()
+		if mode == api.WorkflowExecutionModeDebug {
+			if err != nil || name != projection.UploadReleaseName {
+				t.Fatalf("diagnostic payload name=%q err=%v", name, err)
+			}
+			projection.DiagnosticReady = false
+			if _, err := input.ReviewedUploadName(); err == nil {
+				t.Fatal("diagnostics accepted an unconstructible projection")
+			}
+		} else if err == nil {
+			t.Fatal("normal upload accepted diagnostic-only authority")
+		}
 	}
 }
 

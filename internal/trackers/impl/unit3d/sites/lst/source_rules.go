@@ -25,8 +25,7 @@ func audioDefects(subject api.TrackerValidationSubject) []audioDefect {
 				continue
 			}
 			for _, language := range track.Languages {
-				if !languageutil.IsIdentifiedLanguage(language) || languageutil.SameLanguage(language, "English") ||
-					languageutil.ContainsLanguage(facts.OriginalLanguages, language) {
+				if !languageutil.IsIdentifiedLanguage(language) || languageutil.SameLanguage(language, "English") {
 					continue
 				}
 				key, label := "extra_dub", "Redundant Audio Tracks — extra programme dub: "
@@ -113,8 +112,7 @@ func sourceLanguageFailures(subject api.TrackerValidationSubject) []api.RuleFail
 // burned-in English covers only the single resource inspected by production.
 func needsSubtitlePresentation(subject api.TrackerValidationSubject) bool {
 	facts := subject.LanguageFacts
-	if !facts.OriginalLanguagesKnown || languageutil.ContainsLanguage(facts.OriginalLanguages, "English") ||
-		languageutil.ContainsLanguage(facts.OriginalLanguages, "ZXX") ||
+	if !trackers.ForeignLanguageContent(facts) ||
 		!languageutil.ContainsLanguage(facts.SubtitleLanguages, "English") {
 		return false
 	}

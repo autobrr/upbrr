@@ -82,6 +82,34 @@ func SamePath(left string, right string) bool {
 	return leftRealOK && rightRealOK && sameCleanPath(leftReal, rightReal)
 }
 
+// PathMatchKeys contains the separately comparable lexical and resolved forms
+// used by SamePath. Empty forms cannot match. Resolve keys anew for each
+// operation that must observe filesystem changes.
+type PathMatchKeys struct {
+	Lexical  string
+	Resolved string
+}
+
+// ResolvePathMatchKeys resolves one local path for repeated comparisons.
+func ResolvePathMatchKeys(value string) PathMatchKeys {
+	absolute, ok := cleanAbs(value)
+	if !ok {
+		return PathMatchKeys{}
+	}
+	keys := PathMatchKeys{Lexical: normalizeCleanLocalPath(absolute)}
+	if resolved, ok := evalExistingPrefix(absolute); ok {
+		keys.Resolved = normalizeCleanLocalPath(resolved)
+	}
+	return keys
+}
+
+// SameFileVersion compares the identity, size and modification time of two
+// handle-backed snapshots, such as those returned by RegularFileInfo.
+func SameFileVersion(expected, actual os.FileInfo) bool {
+	return expected != nil && actual != nil && os.SameFile(expected, actual) &&
+		expected.Size() == actual.Size() && expected.ModTime().Equal(actual.ModTime())
+}
+
 func sameCleanPath(left string, right string) bool {
 	left = normalizeCleanLocalPath(left)
 	right = normalizeCleanLocalPath(right)

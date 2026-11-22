@@ -637,6 +637,147 @@ const metadataBooleanFields: ReadonlyArray<{
   },
 ];
 
+const trackOrdinal = (
+  tracks: readonly PreparedRelease["Media"]["Tracks"][number][],
+  index: number,
+) =>
+  tracks[index].Ordinal > 0
+    ? tracks[index].Ordinal
+    : tracks.slice(0, index + 1).filter((track) => track.Kind === tracks[index].Kind).length;
+
+/** Summarizes saved correction requirements; drafts and disclosure changes never resolve them. */
+export function InputCorrectionWarnings({
+  view,
+  refreshLabel,
+}: Readonly<{ view: InputFacet["view"]; refreshLabel: string }>) {
+  const release = view.release || view.retainedReview?.release || null;
+  const missingFacts = missingRequiredFacts(view.retainedReview?.release || release);
+  const outcomes = (view.readiness?.fields || view.retainedReview?.fields || []).filter(
+    (field) => field.status !== "ready",
+  );
+  const requested = new Set([
+    ...missingFacts,
+    ...outcomes.filter((field) => !field.trackId).map((field) => field.correctionField),
+  ]);
+  if (requested.has("metadata.hardcoded_subs"))
+    requested.add("metadata.hardcoded_subtitle_languages");
+  // Canonical provider requirements can lack a correction reference, including alternatives.
+  const providerRequirements = new Set(
+    outcomes
+      .filter((field) => !field.correctionField)
+      .flatMap((field) => field.key.replace(/^metadata\./, "").split(".or."))
+      .map((requirement) => requirement.split("_")[0]),
+  );
+  for (const { field } of identityFields) {
+    const provider = field.slice("identity.".length);
+    if (providerRequirements.has(provider)) requested.add(field);
+  }
+  const controls = [
+    ...identityFields,
+    ...releaseStringFields,
+    ...releaseBooleanFields,
+    ...metadataStringFields.filter(({ key }) => key !== "Title" && key !== "OriginalTitle"),
+    ...metadataListFields,
+    ...metadataBooleanFields,
+  ].flatMap(({ field, label }) =>
+    requested.has(field) ? [{ id: `correction-${field}-value`, label }] : [],
+  );
+  const tracks = release?.Media?.Tracks || [];
+  tracks.forEach((track, index) => {
+    const label = `${track.Kind === "audio" ? "Audio" : "Subtitle"} track ${trackOrdinal(tracks, index)}`;
+    for (const [field, suffix] of [
+      ["metadata.track_languages", "languages"],
+      ["metadata.track_audio_origins", "soundtrack origin"],
+    ]) {
+      if (
+        field === "metadata.track_audio_origins" &&
+        (track.Kind !== "audio" || !["programme", "alternate_mix"].includes(track.Role || ""))
+      )
+        continue;
+      if (
+        outcomes.some(
+          (outcome) => outcome.correctionField === field && outcome.trackId === track.ID,
+        )
+      )
+        controls.push({ id: `correction-${field}-${track.ID}`, label: `${label} ${suffix}` });
+    }
+  });
+
+  const reveal = (id: string) => {
+    const control = document.getElementById(id);
+    if (!control) return;
+    // These disclosures are native, uncontrolled elements, including nested track panels.
+    for (
+      let details = control.closest("details");
+      details;
+      details = details.parentElement?.closest("details") || null
+    )
+      details.open = true;
+    control.focus({ preventScroll: true });
+    control.scrollIntoView({ block: "center", behavior: "instant" });
+  };
+
+  const messages = [
+    ...new Set(
+      outcomes.map(
+        (field) => field.message || field.key.replace(/^metadata\./, "").replace(/[_.]+/g, " "),
+      ),
+    ),
+  ];
+
+  return controls.length > 0 || outcomes.length > 0 ? (
+    <div
+      className="grid min-w-0 gap-2 rounded-md border border-destructive bg-destructive/10 p-4 text-destructive-text"
+      role="alert"
+    >
+      <p className="font-semibold">
+        {missingFacts.length > 0
+          ? "Required facts missing, please edit release details."
+          : "Release fields need review or correction."}
+      </p>
+      <p>
+        Review the affected fields, then use {refreshLabel} to prepare Input again. Warnings remain
+        until the saved requirements are resolved; unsaved edits do not clear them.
+      </p>
+      {messages.length > 0 ? (
+        <ul className="list-inside list-disc text-sm">
+          {messages.map((message) => (
+            <li key={message}>{message}</li>
+          ))}
+        </ul>
+      ) : null}
+      {outcomes.some(
+        (field) => field.trackId && !tracks.some((track) => track.ID === field.trackId),
+      ) ? (
+        <p>
+          Previously reported track requirements are awaiting reevaluation. Prepare Input again to
+          refresh inspected tracks.
+        </p>
+      ) : null}
+      {controls.length > 0 ? (
+        <ul className="flex min-w-0 flex-wrap gap-2">
+          {controls.map(({ id, label }) => (
+            <li key={id} className="min-w-0 max-w-full">
+              <Button
+                type="button"
+                className="max-w-full whitespace-normal text-left"
+                aria-controls={id}
+                onClick={() => reveal(id)}
+              >
+                Review {label}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  ) : (
+    <p className="helper max-w-[720px]" role="status">
+      Review release facts, source options, and selected tracker input.
+    </p>
+  );
+}
+
 const optionLabel = (value: string) =>
   value ? `${value.slice(0, 1).toUpperCase()}${value.slice(1)}` : value;
 
@@ -925,8 +1066,9 @@ export function SavedCorrectionReview({ facet }: Readonly<{ facet: InputFacet }>
  */
 export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>) {
   const { view } = facet;
-  const release = view.release;
-  const missingFacts = missingRequiredFacts(release);
+  const release = view.release || view.retainedReview?.release || null;
+  const missingFacts = missingRequiredFacts(view.retainedReview?.release || release);
+  const readinessFields = view.readiness?.fields || view.retainedReview?.fields || [];
   const category = (view.intent.releaseName.Category ?? "").trim().toLowerCase();
   const isTV =
     ["tv", "television", "series", "episode"].includes(category) ||
@@ -1278,7 +1420,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
         className={inputSectionClass}
         data-testid="input-track-coverage"
         open={
-          view.readiness?.fields?.some(
+          readinessFields.some(
             (field) =>
               (field.correctionField === "metadata.track_languages" ||
                 field.correctionField === "metadata.track_audio_origins") &&
@@ -1305,12 +1447,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
               const originCorrection = (view.intent.metadata.TrackAudioOrigins || []).find(
                 (item) => item.trackId === track.ID,
               );
-              const ordinal =
-                track.Ordinal > 0
-                  ? track.Ordinal
-                  : (release?.Media?.Tracks || [])
-                      .slice(0, index + 1)
-                      .filter((candidate) => candidate.Kind === track.Kind).length;
+              const ordinal = trackOrdinal(release?.Media?.Tracks || [], index);
               const label = `${track.Kind === "audio" ? "Audio" : "Subtitle"} track ${ordinal} languages`;
               return (
                 <Fragment key={track.ID}>
@@ -1323,7 +1460,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                     onAuto={() => reset(field, track.ID)}
                     onConfirm={() => confirm(field, track.ID)}
                   >
-                    {(view.readiness?.fields || [])
+                    {readinessFields
                       .filter(
                         (outcome) =>
                           outcome.trackId === track.ID &&
@@ -1389,7 +1526,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                       onAuto={() => reset(originField, track.ID)}
                       onConfirm={() => confirm(originField, track.ID)}
                     >
-                      {(view.readiness?.fields || [])
+                      {readinessFields
                         .filter(
                           (outcome) =>
                             outcome.trackId === track.ID &&

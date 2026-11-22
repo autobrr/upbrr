@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -98,6 +99,75 @@ func TestInputSourcePathPreservesVerifiedCasingAndRejectsDetachedAuthority(t *te
 	}
 }
 
+func TestActiveInputReviewRemainsBoundToVerifiedSourceVersion(t *testing.T) {
+	t.Parallel()
+	repo, err := db.Open(filepath.Join(t.TempDir(), "review.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	persistent, err := NewPersistentRepository(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preparer := testPreparer()
+	prepare := preparer.PrepareFunc
+	preparer.PrepareFunc = func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+		result, prepareErr := prepare(ctx, input)
+		if prepareErr != nil {
+			return result, prepareErr
+		}
+		result.Release.Media.Source = ""
+		return persistActiveInputTestRelease(ctx, repo, result)
+	}
+	version := "source-one"
+	module, err := New(persistent, NewMemoryPrivateResourceStore(), preparer, WithActiveInputs(repo,
+		func(_ context.Context, input api.PrepareInput) (api.InputRecord, error) {
+			return api.InputRecord{
+				CanonicalPath: input.SourcePath,
+				SourceVersion: version,
+				Manifest:      []byte(`{"Identity":{"Digest":"` + version + `"}}`),
+			}, nil
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = module.Shutdown(context.Background()) })
+	input := api.PrepareInput{SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026.mkv")}
+	slot, err := module.OpenInput(t.Context(), testOwnerID, OpenInputRequest{Input: input, IdempotencyKey: "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       slot.WorkflowID,
+		ExpectedRevision: 1,
+		Input:            input,
+	})
+	executeCommand(t, module, EvaluateInputReadinessCommand{WorkflowID: slot.WorkflowID, ExpectedRevision: current.Workflow.Revision})
+	input.Force = true
+	for index, sourceVersion := range []string{"source-one", "source-two"} {
+		version = sourceVersion
+		slot, err = module.OpenInput(t.Context(), testOwnerID, OpenInputRequest{
+			Input:            input,
+			ExpectedRevision: slot.Revision,
+			IdempotencyKey:   sourceVersion,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		current, err = module.Current(t.Context(), testOwnerID, slot.WorkflowID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (current.InputReview != nil) != (index == 0) || current.Release != nil || current.InputReadiness != nil {
+			t.Fatalf("review/authority did not follow verified source %s: %+v", sourceVersion, current)
+		}
+	}
+}
+
 func TestActiveInputOpenRefreshRollbackAndOwnerIsolation(t *testing.T) {
 	t.Parallel()
 	repo, err := db.Open(filepath.Join(t.TempDir(), "input.sqlite"))
@@ -183,6 +253,111 @@ func TestActiveInputOpenRefreshRollbackAndOwnerIsolation(t *testing.T) {
 	}
 	if state.SourcePath != sourcePath {
 		t.Fatalf("released workflow source path = %q, want %q", state.SourcePath, sourcePath)
+	}
+}
+
+func TestMetadataCorrectionsReuseOnlyMatchingActiveSourceInventory(t *testing.T) {
+	t.Parallel()
+	repo, err := db.Open(filepath.Join(t.TempDir(), "input.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	persistent, err := NewPersistentRepository(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifications := 0
+	module, err := New(persistent, NewMemoryPrivateResourceStore(), ReleasePreparerFunc{}, WithActiveInputs(repo,
+		func(ctx context.Context, input api.PrepareInput) (api.InputRecord, error) {
+			verifications++
+			verified, err := preparedrelease.VerifyInputSource(ctx, input)
+			if err != nil {
+				return api.InputRecord{}, fmt.Errorf("verify test source: %w", err)
+			}
+			manifest, err := json.Marshal(verified)
+			if err != nil {
+				return api.InputRecord{}, fmt.Errorf("encode test source: %w", err)
+			}
+			return api.InputRecord{
+				CanonicalPath: preparedrelease.CanonicalSourceKey(verified.Manifest.SourcePath),
+				SourceVersion: verified.Identity.Digest,
+				Manifest:      manifest,
+			}, nil
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = module.Shutdown(context.Background()) })
+
+	source := filepath.Join(t.TempDir(), "Example.mkv")
+	if err := os.WriteFile(source, []byte("synthetic content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := OpenInputRequest{Input: api.PrepareInput{SourcePath: source}, IdempotencyKey: "open"}
+	opened, err := module.OpenInput(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request.ExpectedRevision, request.IdempotencyKey = opened.Revision, "correct"
+	request.CorrectionPatch = &api.ReleaseCorrectionPatch{}
+	request.CorrectionPatch.Values.Metadata.OriginalLanguage = new("fr")
+	request.ReuseVerifiedSource = true
+	var verificationCompleted bool
+	progressCtx := api.WithPreparationProgressReporter(t.Context(), func(update api.PreparationProgressUpdate) {
+		if update.Phase == api.PreparationPhaseSourceInspection {
+			verificationCompleted = update.Status == api.PreparationProgressCompleted
+		}
+	})
+	corrected, err := module.OpenInput(progressCtx, testOwnerID, request)
+	if err != nil || corrected.SourceVersion != opened.SourceVersion || corrected.WorkflowID != opened.WorkflowID || verifications != 1 {
+		t.Fatalf("same source correction: verifications=%d version=%q err=%v", verifications, corrected.SourceVersion, err)
+	}
+	if !verificationCompleted {
+		t.Fatal("reusing verification did not finish source inspection progress")
+	}
+
+	if err := os.WriteFile(source, []byte("different synthetic content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request.ExpectedRevision, request.IdempotencyKey = corrected.Revision, "correct-changed-source"
+	changed, err := module.OpenInput(t.Context(), testOwnerID, request)
+	if err != nil || changed.SourceVersion == corrected.SourceVersion || verifications != 2 {
+		t.Fatalf("changed source correction: verifications=%d version=%q err=%v", verifications, changed.SourceVersion, err)
+	}
+
+	request.ExpectedRevision, request.IdempotencyKey = changed.Revision, "explicit-reopen"
+	request.ReuseVerifiedSource = false
+	reopened, err := module.OpenInput(t.Context(), testOwnerID, request)
+	if err != nil || reopened.SourceVersion != changed.SourceVersion || verifications != 3 {
+		t.Fatalf("explicit reopen with correction: verifications=%d version=%q err=%v", verifications, reopened.SourceVersion, err)
+	}
+
+	request.ExpectedRevision, request.IdempotencyKey = reopened.Revision, "confirm-correction"
+	request.ReuseVerifiedSource = true
+	request.CorrectionPatch = &api.ReleaseCorrectionPatch{
+		ConfirmFields: []api.CorrectionFieldRef{{Field: api.CorrectionFieldMetadataAlternateTitle}},
+	}
+	confirmed, err := module.OpenInput(t.Context(), testOwnerID, request)
+	if err != nil || confirmed.SourceVersion != reopened.SourceVersion || verifications != 4 {
+		t.Fatalf("confirmation with reuse requested: verifications=%d version=%q err=%v", verifications, confirmed.SourceVersion, err)
+	}
+
+	request.ExpectedRevision, request.IdempotencyKey = confirmed.Revision, "invalid-correction"
+	request.CorrectionPatch = &api.ReleaseCorrectionPatch{}
+	request.CorrectionPatch.Values.Metadata.OriginalLanguage = new("it")
+	request.Input.Search.InfoHash = "invalid"
+	if _, err := module.OpenInput(t.Context(), testOwnerID, request); err == nil {
+		t.Fatal("correction with invalid preparation input was accepted")
+	}
+	retained, err := module.ActiveInput(t.Context(), testOwnerID)
+	if err != nil || retained.State != api.ActiveInputActive || retained.SourceVersion != confirmed.SourceVersion ||
+		retained.IdempotencyKey != confirmed.IdempotencyKey {
+		t.Fatalf("invalid request changed the active input: state=%s err=%v", retained.State, err)
 	}
 }
 

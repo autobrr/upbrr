@@ -1008,6 +1008,32 @@ func TestBuildCLIRequestTMDBCompatibilityParsing(t *testing.T) {
 	}
 }
 
+func TestCLIExplicitCategoryOverridesTMDBHint(t *testing.T) {
+	for _, category := range []string{"TV", ""} {
+		for _, flag := range []string{"--category", "-c"} {
+			t.Run(flag+"/"+category, func(t *testing.T) {
+				opts, visited, paths, err := parseCLIOptions([]string{"--tmdb=movie/123", flag + "=" + category, "example.mkv"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				request, err := buildCLIRequest(opts, visited, paths, 4)
+				if err != nil {
+					t.Fatal(err)
+				}
+				values, err := buildCLIInputCorrectionValues(opts, visited)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, value := range []*string{request.ReleaseNameOverrides.Category, values.ReleaseName.Category} {
+					if value == nil || *value != category {
+						t.Fatalf("TMDB hint replaced explicit category %q: %v", category, value)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestCLIProviderIDOverrides(t *testing.T) {
 	t.Parallel()
 	for _, provider := range []string{"tmdb", "imdb", "tvdb", "tvmaze", "mal"} {
@@ -1434,19 +1460,49 @@ func TestParseCLIOptionsRejectsInvalidImageHost(t *testing.T) {
 }
 
 func TestBuildCLIRequestInfoHashOverrides(t *testing.T) {
-	opts, visited, paths, err := parseCLIOptions([]string{
-		"--torrenthash", "ABCDEF0123456789ABCDEF0123456789ABCDEF01",
-		"movie.mkv",
-	})
-	if err != nil {
-		t.Fatalf("parse: %v", err)
+	for _, test := range []struct {
+		name   string
+		flags  []string
+		onlyID bool
+		skip   bool
+		client *string
+	}{
+		{name: "infohash only"},
+		{
+			name:   "explicit independent choices",
+			flags:  []string{"--skip_auto_torrent", "--client", "none", "--onlyID"},
+			onlyID: true,
+			skip:   true,
+			client: new("none"),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			args := append([]string{"--infohash", "ABCDEF0123456789ABCDEF0123456789ABCDEF01"}, test.flags...)
+			opts, visited, paths, err := parseCLIOptions(append(args, "movie.mkv"))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			req, err := buildCLIRequest(opts, visited, paths, 4)
+			if err != nil {
+				t.Fatalf("build request: %v", err)
+			}
+			if req.TorrentOverrides.InfoHash == nil || *req.TorrentOverrides.InfoHash != "abcdef0123456789abcdef0123456789abcdef01" {
+				t.Fatalf("expected normalized infohash override, got %#v", req.TorrentOverrides.InfoHash)
+			}
+			input, err := api.MapPreparationRequest(req, api.PreparationIntentUpload)
+			if err != nil || input.Policy.OnlyID != test.onlyID || input.Policy.KeepImages || input.Search.Skip != test.skip ||
+				input.Search.InfoHash != *req.TorrentOverrides.InfoHash || !reflect.DeepEqual(req.ClientOverrides.Client, test.client) {
+				t.Fatalf("infohash changed independent request choices: input=%+v client=%+v err=%v", input, req.ClientOverrides, err)
+			}
+		})
 	}
-	req, err := buildCLIRequest(opts, visited, paths, 4)
-	if err != nil {
-		t.Fatalf("build request: %v", err)
-	}
-	if req.TorrentOverrides.InfoHash == nil || *req.TorrentOverrides.InfoHash != "abcdef0123456789abcdef0123456789abcdef01" {
-		t.Fatalf("expected normalized infohash override, got %#v", req.TorrentOverrides.InfoHash)
+}
+
+func TestInfoHashHasOneCLIFlag(t *testing.T) {
+	for _, alias := range []string{"--torrenthash", "-th"} {
+		if _, _, _, err := parseCLIOptions([]string{alias, strings.Repeat("a", 40), "Example.Release.2026.mkv"}); err == nil {
+			t.Errorf("obsolete alias %s remains accepted", alias)
+		}
 	}
 }
 
@@ -1497,6 +1553,7 @@ func TestBuildCLIRequestScreenshotOverrides(t *testing.T) {
 		"--manual_frames", "100,250,500",
 		"--comparison", comparisonDir,
 		"--comparison_index", "2",
+		"--comparison-use-main-screenshots",
 		"movie.mkv",
 	})
 	if err != nil {
@@ -1514,6 +1571,9 @@ func TestBuildCLIRequestScreenshotOverrides(t *testing.T) {
 	}
 	if req.ScreenshotOverrides.ComparisonPrimaryIndex == nil || *req.ScreenshotOverrides.ComparisonPrimaryIndex != 2 {
 		t.Fatalf("expected comparison primary index override, got %#v", req.ScreenshotOverrides.ComparisonPrimaryIndex)
+	}
+	if !req.ScreenshotOverrides.ComparisonReuseMain {
+		t.Fatal("comparison main screenshot opt-in was dropped")
 	}
 }
 
@@ -1914,6 +1974,39 @@ func TestPrintMetadataPreviewShowsSourceSeasonEvidence(t *testing.T) {
 	printMetadataPreview(&output, api.MetadataPreview{}, api.PreparedRelease{}, false)
 	if strings.Contains(output.String(), "Multiple seasons") {
 		t.Fatalf("stale source season warning: %s", output.String())
+	}
+}
+
+func TestCLIWorkflowMetadataPreviewReplacesIMDbEditionWarning(t *testing.T) {
+	const title = "https://www.imdb.com/title/tt1234567"
+	const message = "Selected edition Extended differs from IMDb's Director's Cut.\n" + title + "/technical/\n" + title + "/alternateversions/"
+	current := api.ReleaseWorkflowCurrent{Release: &api.ReleaseSnapshot{
+		Release: api.PreparedRelease{
+			Generation: 1,
+			Identity:   api.ExternalIdentity{IMDBID: 1234567},
+		},
+		Diagnostics: []api.PreparationDiagnostic{{
+			Code:     "imdb_edition_mismatch",
+			Severity: api.DiagnosticSeverityWarning,
+			Message:  message,
+		}},
+	}}
+	render := func(state api.ReleaseWorkflowCurrent) string {
+		var output bytes.Buffer
+		printMetadataPreview(&output, cliWorkflowMetadataPreview(state), state.Release.Release, false)
+		return output.String()
+	}
+	if got := render(current); !strings.Contains(got, message) {
+		t.Fatalf("warning or plain-title URLs missing: %s", got)
+	}
+	for _, imdbID := range []int{1234567, 1234568} {
+		refreshed := api.ReleaseWorkflowCurrent{Release: &api.ReleaseSnapshot{Release: api.PreparedRelease{
+			Generation: 2,
+			Identity:   api.ExternalIdentity{IMDBID: imdbID},
+		}}}
+		if got := render(refreshed); strings.Contains(got, "/alternateversions/") || strings.Contains(got, "Selected edition") {
+			t.Fatalf("stale warning remained in the next generation: %s", got)
+		}
 	}
 }
 

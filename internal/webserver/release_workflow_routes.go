@@ -52,6 +52,28 @@ func (s *Server) registerReleaseWorkflowAppRoutes(mux *http.ServeMux) {
 	registerReleaseWorkflowCommand[api.DeleteReleaseWorkflowMediaRequest](s, mux, "DeleteReleaseWorkflowMedia", false)
 	registerReleaseWorkflowCommand[api.ReorderReleaseWorkflowMediaRequest](s, mux, "ReorderReleaseWorkflowMedia", false)
 	registerReleaseWorkflowCommand[api.AttachReleaseWorkflowMediaRequest](s, mux, "AttachReleaseWorkflowMedia", false)
+	registerReleaseWorkflowCommand[api.EditReleaseWorkflowComparisonsRequest](s, mux, "EditReleaseWorkflowComparisons", true)
+	mux.HandleFunc("/api/app/DiscoverReleaseWorkflowComparisonSource", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var request api.DiscoverReleaseWorkflowComparisonSourceRequest
+		if err := decodeJSON(r, &request); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := request.Validate(); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		result, err := s.backend.discoverReleaseWorkflowComparisonSource(r.Context(), current.ID, request)
+		if err != nil {
+			writeAppError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	}))
 	registerReleaseWorkflowCommand[api.UploadReleaseWorkflowImagesRequest](s, mux, "UploadReleaseWorkflowImages", true)
 	registerReleaseWorkflowCommand[api.RetryReleaseWorkflowImageHostRequest](s, mux, "RetryReleaseWorkflowImageHost", true)
 	registerReleaseWorkflowCommand[api.RemoveReleaseWorkflowHostedImagesRequest](s, mux, "RemoveReleaseWorkflowHostedImages", false)
@@ -210,6 +232,8 @@ func (s *Server) registerReleaseWorkflowAppRoutes(mux *http.ServeMux) {
 			request.ExpectedRevision,
 			request.DiscID,
 			request.TimestampSeconds,
+			request.ComparisonSourceID,
+			request.ComparisonStepDirection, api.PublicResourceID(r.URL.Query().Get("previewId")),
 		)
 		if err != nil {
 			writeAppError(w, err)

@@ -23,9 +23,9 @@ func (d *Definition) ValidationPolicy() trackers.ValidationPolicyBinding {
 	version := "constructibility-v2"
 	switch d.site.Name {
 	case "AZ":
-		version = "policy-v9"
+		version = "policy-v11"
 	case "CZ":
-		version = "policy-v8"
+		version = "policy-v10"
 	}
 	binding := trackers.ValidationPolicyBinding{
 		ID:    "azfamily-" + strings.ToLower(d.site.Name) + "-" + version,
@@ -651,7 +651,7 @@ func evaluateAZLanguageRules(site siteDefinition, subject api.TrackerValidationS
 	}
 	failures := trackers.EvaluateLanguagePolicy(subject, policy)
 	facts := subject.LanguageFacts
-	programmeStatus := trackers.ProgrammeLanguageStatus(subject)
+	programmeStatus := trackers.ProgrammeAudioStatus(subject)
 	if site.Name == "AZ" {
 		if !facts.OriginalLanguagesKnown && (programmeStatus == api.MetadataEvidenceStatusContradictory ||
 			!facts.HasOriginalAudio() && !languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English")) &&
@@ -671,12 +671,7 @@ func evaluateAZLanguageRules(site siteDefinition, subject api.TrackerValidationS
 		if facts.OriginalLanguagesKnown && programmeStatus != api.MetadataEvidenceStatusComplete {
 			failures = append(
 				failures,
-				trackers.LanguageRuleFailure(
-					subject,
-					"evidence",
-					"programme language, track role or inspected coverage needs review",
-					trackers.LanguageUnresolved,
-				),
+				trackers.ProgrammeAudioEvidenceFailure(subject, "programme language, track role or inspected coverage needs review"),
 			)
 		}
 		if dialects := azDialectLanguages(subject); len(dialects) > 0 {

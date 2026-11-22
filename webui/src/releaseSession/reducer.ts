@@ -113,6 +113,8 @@ type WorkflowViewState = Readonly<{
 export type SessionState = Readonly<{
   activeInput: ActiveInputState;
   workflowView: WorkflowViewState;
+  /** A retried cancellation must not reappear through an older poll or snapshot. */
+  dismissedCancellation: Readonly<{ workflowID: string; operationID: string }> | null;
   sessionRevision: number;
   commandRevision: number;
   sourceDraft: string;
@@ -185,6 +187,12 @@ export type SessionAction =
       preserveInputDraft?: boolean;
     }>
   | Readonly<{ type: "active_input_loading" }>
+  | Readonly<{ type: "workflow_attempt_started" }>
+  | Readonly<{
+      type: "workflow_attempt_rejected";
+      /** Previous operation when a new command was rejected before accepting any work. */
+      operation: ReleaseWorkflowCurrent["operation"];
+    }>
   | Readonly<{
       type: "workflow_operation_updated";
       workflowID: string;
@@ -292,6 +300,8 @@ export type SessionAction =
       sessionRevision: number;
       revision: number;
       reason?: string;
+      /** Explicit cancellation stays settled until a deliberate retry. */
+      status?: "idle" | "cancelled";
     }>
   | Readonly<{
       type: "screenshots_loaded";
@@ -301,6 +311,11 @@ export type SessionAction =
       changed?: boolean;
       reseedDrafts?: boolean;
       finalSelectionArtifactIDs?: readonly string[];
+    }>
+  | Readonly<{
+      type: "comparison_previewed" | "comparison_discovered";
+      sessionRevision: number;
+      revision: number;
     }>
   | Readonly<{
       type: "screenshot_previewed";
@@ -403,6 +418,7 @@ export const initialSessionState = (): SessionState => ({
     recoveryWorkflowIDs: [],
   },
   workflowView: { status: "idle", current: null, error: "", failure: null },
+  dismissedCancellation: null,
   sessionRevision: 0,
   commandRevision: 0,
   sourceDraft: "",
@@ -510,7 +526,26 @@ const invalidate = <T>(
   error: "",
 });
 
-// Saved-image plan IDs bind exact release/projection authority, unlike reusable media.
+export const sameScreenshotPlanAuthority = (
+  previous: ReleaseWorkflowCurrent | null,
+  current: ReleaseWorkflowCurrent,
+) =>
+  previous?.workflow.id === current.workflow.id &&
+  (
+    [
+      "release",
+      "selection",
+      "trackerProjections",
+      "trackerPreflight",
+      "dupes",
+      "trackerApproval",
+    ] as const
+  ).every(
+    (key) =>
+      previous.workflow[key]?.id === current.workflow[key]?.id &&
+      previous.workflow[key]?.revision === current.workflow[key]?.revision,
+  );
+
 const invalidateStaleScreenshotPlan = (state: SessionState, current: ReleaseWorkflowCurrent) => {
   if (
     !state.screenshots.value &&
@@ -521,12 +556,10 @@ const invalidateStaleScreenshotPlan = (state: SessionState, current: ReleaseWork
   const previous = state.workflowView.current;
   const release = workflowReleaseRef(current);
   const previousRelease = workflowReleaseRef(previous);
-  const projections = current.workflow.trackerProjections;
   if (
     previousRelease?.SourcePath === release?.SourcePath &&
     previousRelease?.Generation === release?.Generation &&
-    previous?.workflow.trackerProjections?.id === projections?.id &&
-    previous?.workflow.trackerProjections?.revision === projections?.revision
+    sameScreenshotPlanAuthority(previous, current)
   ) {
     return state.screenshots;
   }
@@ -886,14 +919,60 @@ const trackerSelectionChanged = (
   };
 };
 
+const visibleWorkflowOperation = (
+  state: SessionState,
+  operation: ReleaseWorkflowCurrent["operation"],
+) =>
+  operation?.status === "canceled" &&
+  operation.workflowId === state.dismissedCancellation?.workflowID &&
+  operation.id === state.dismissedCancellation.operationID
+    ? undefined
+    : operation;
+
 /** Applies one transition, ignoring stale revision- or correlation-scoped completions. */
 export const sessionReducer = (state: SessionState, action: SessionAction): SessionState => {
   switch (action.type) {
+    case "workflow_attempt_started": {
+      const current = state.workflowView.current;
+      return current?.operation?.status === "canceled"
+        ? {
+            ...state,
+            dismissedCancellation: {
+              workflowID: current.workflow.id,
+              operationID: current.operation.id,
+            },
+            workflowView: {
+              ...state.workflowView,
+              current: { ...current, operation: undefined },
+            },
+          }
+        : state;
+    }
     case "active_input_loading":
       return {
         ...state,
         workflowView: { ...state.workflowView, status: "running", error: "", failure: null },
       };
+    case "workflow_attempt_rejected": {
+      const current = state.workflowView.current;
+      const operation = action.operation;
+      if (
+        !current ||
+        operation?.status !== "canceled" ||
+        operation.workflowId !== current.workflow.id ||
+        operation.workflowId !== state.dismissedCancellation?.workflowID ||
+        operation.id !== state.dismissedCancellation.operationID
+      )
+        return state;
+      return {
+        ...state,
+        dismissedCancellation: null,
+        workflowView: {
+          ...state.workflowView,
+          current: { ...current, operation: current.operation ?? operation },
+        },
+      };
+    }
     case "workflow_view_failed":
       return {
         ...state,
@@ -914,29 +993,46 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
             action.operation?.status === "queued" || action.operation?.status === "running"
               ? "running"
               : state.workflowView.status,
-          current: { ...state.workflowView.current, operation: action.operation },
+          current: {
+            ...state.workflowView.current,
+            operation: visibleWorkflowOperation(state, action.operation),
+          },
         },
       };
     case "workflow_current_published": {
+      const current = {
+        ...action.current,
+        operation: visibleWorkflowOperation(state, action.current.operation),
+      };
       const previous = state.workflowView.current;
       if (
         previous &&
-        (previous.workflow.id !== action.current.workflow.id ||
-          previous.workflow.revision > action.current.workflow.revision)
+        (previous.workflow.id !== current.workflow.id ||
+          previous.workflow.revision > current.workflow.revision)
       ) {
         return state;
       }
-      const release = workflowReleaseRef(action.current);
+      const release = workflowReleaseRef(current);
       const previousRelease = workflowReleaseRef(previous) ?? state.release;
       const releaseChanged = release && releaseRefChanged(previousRelease, release);
       return {
         ...state,
         sessionRevision: releaseChanged ? state.sessionRevision + 1 : state.sessionRevision,
-        screenshots: invalidateStaleScreenshotPlan(state, action.current),
+        // Background hydration borrows the command's running state without owning a preparation.
+        preparation:
+          action.status === "ready" &&
+          state.preparation.status === "running" &&
+          !state.preparation.correlationID
+            ? {
+                ...state.preparation,
+                status: pendingCorrectionReview(current) ? "awaiting_input" : "ready",
+              }
+            : state.preparation,
+        screenshots: invalidateStaleScreenshotPlan(state, current),
         // Confirmation is specific to the reviewed revision and identity; ordinary edits can survive resync.
         correctionConfirmFields: sameCorrectionValue(
           pendingCorrectionReview(previous),
-          pendingCorrectionReview(action.current),
+          pendingCorrectionReview(current),
         )
           ? state.correctionConfirmFields
           : [],
@@ -945,7 +1041,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           : state.descriptions,
         workflowView: {
           status: action.status,
-          current: action.current,
+          current: current,
           error: "",
           failure: null,
         },
@@ -976,7 +1072,12 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         sourceVersion: snapshot.sourceVersion || "",
         recoveryWorkflowIDs: [...(snapshot.recoveryWorkflowIds || [])],
       };
-      const current = snapshot.current || null;
+      const current = snapshot.current
+        ? {
+            ...snapshot.current,
+            operation: visibleWorkflowOperation(state, snapshot.current.operation),
+          }
+        : null;
       if (!current) {
         if (snapshot.state === "empty") {
           if (
@@ -1078,7 +1179,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         };
       }
       const correctionReview = pendingCorrectionReview(current);
-      if ((!action.preview && !correctionReview) || !action.intent) {
+      if ((!action.preview && !correctionReview && !current.inputReview) || !action.intent) {
         const requestedSourcePath = action.requestedSourcePath?.trim() || "";
         if (requestedSourcePath && action.intent && !sameDraftKey) {
           const reset = initialSessionState();
@@ -1136,11 +1237,20 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         action.requestedSourcePath?.trim() ||
         (sameDraftKey ? state.selectedSource : "");
       const release = action.preview?.Release;
-      if (!correctionReview && (!sourcePath || !release?.Generation)) return state;
+      if (!correctionReview && !current.inputReview && (!sourcePath || !release?.Generation))
+        return state;
       const retainDraft =
         sameDraftKey &&
         (action.preserveInputDraft || state.inputEditRevision > action.capturedInputEditRevision);
       const base = sameDraftKey ? state : initialSessionState();
+      const retainPreparation =
+        sameDraftKey &&
+        Boolean(current.inputReview) &&
+        !correctionReview &&
+        !action.preview &&
+        Boolean(state.preparation.correlationID) &&
+        state.preparation.status === "running" &&
+        state.preparation.sourcePath === sourcePath;
       // Commands may publish a generation before the next active-input poll.
       const releaseChanged =
         !sameDraftKey ||
@@ -1166,7 +1276,9 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           failure: null,
         },
         sessionRevision: releaseChanged ? state.sessionRevision + 1 : state.sessionRevision,
-        commandRevision: Math.max(base.commandRevision, current.workflow.revision),
+        commandRevision: retainPreparation
+          ? state.commandRevision
+          : Math.max(base.commandRevision, current.workflow.revision),
         sourceVerification: null,
         sourceDraft:
           retainDraft ||
@@ -1177,16 +1289,22 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
             ? state.sourceDraft
             : sourcePath,
         selectedSource: sourcePath,
-        preparation: {
-          correlationID: "",
-          sourcePath,
-          commandRevision: current.workflow.revision,
-          inputEditRevision: retainDraft ? state.inputEditRevision : base.inputEditRevision,
-          status:
-            action.status === "running" ? "running" : correctionReview ? "awaiting_input" : "ready",
-          error: "",
-          failure: null,
-        },
+        preparation: retainPreparation
+          ? state.preparation
+          : {
+              correlationID: "",
+              sourcePath,
+              commandRevision: current.workflow.revision,
+              inputEditRevision: retainDraft ? state.inputEditRevision : base.inputEditRevision,
+              status:
+                action.status === "running"
+                  ? "running"
+                  : correctionReview
+                    ? "awaiting_input"
+                    : "ready",
+              error: "",
+              failure: null,
+            },
         preparationDirty: retainDraft,
         correctionDirty: retainDraft ? state.correctionDirty : false,
         inputEditRevision: retainDraft ? state.inputEditRevision : base.inputEditRevision,
@@ -1792,7 +1910,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         [action.facet]: {
           ...state[action.facet],
           revision: state[action.facet].revision + 1,
-          status: "idle",
+          status: action.status ?? "idle",
           staleReason: action.reason || "Operation canceled.",
           error: "",
         },
@@ -1817,6 +1935,11 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
               : state.screenshots.finalSelectionArtifactIDs),
         },
       };
+    case "comparison_discovered":
+    case "comparison_previewed":
+      if (!workflowMatches(state, "screenshots", action.sessionRevision, action.revision))
+        return state;
+      return { ...state, screenshots: readyWorkflow(state.screenshots) };
     case "screenshot_previewed":
       if (!workflowMatches(state, "screenshots", action.sessionRevision, action.revision))
         return state;

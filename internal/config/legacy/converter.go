@@ -116,7 +116,6 @@ var legacyDefaultSectionByKey = map[string]string{
 	"emby_dir":                       "arr_integration",
 	"emby_tv_dir":                    "arr_integration",
 	"mkbrr_threads":                  "torrent_creation",
-	"prefer_max_16_torrent":          "torrent_creation",
 	"rehash_cooldown":                "torrent_creation",
 	"inject_delay":                   "post_upload",
 	"show_upload_duration":           "post_upload",

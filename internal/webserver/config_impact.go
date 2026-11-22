@@ -19,6 +19,8 @@ func ConfigImpactDetails(previous, next config.Config) []api.ConfigImpactDetail 
 }
 
 func configImpactDetails(previous, next config.Config) []api.ConfigImpactDetail {
+	previous = config.WorkflowConfigForComparison(previous)
+	next = config.WorkflowConfigForComparison(next)
 	impacts := make([]api.ConfigImpact, 0, 8)
 	add := func(impact api.ConfigImpact) {
 		if !slices.Contains(impacts, impact) {
@@ -32,23 +34,22 @@ func configImpactDetails(previous, next config.Config) []api.ConfigImpactDetail 
 		!configValueEqual(previous.ArrIntegration, next.ArrIntegration) {
 		add(api.ConfigImpactProvider)
 	}
-	if previous.MainSettings.TrackerPassChecks != next.MainSettings.TrackerPassChecks ||
-		!configValueEqual(previous.TorrentCreation, next.TorrentCreation) {
+	if !configValueEqual(previous.TorrentCreation, next.TorrentCreation) {
 		add(api.ConfigImpactTrackers)
 	}
-	if !configValueEqual(previous.Description, next.Description) {
+	previousPTP, _ := config.TrackerConfigByName(previous.Trackers.Trackers, "PTP")
+	nextPTP, _ := config.TrackerConfigByName(next.Trackers.Trackers, "PTP")
+	if !configValueEqual(previous.Description, next.Description) ||
+		previousPTP.ScreenshotBlankLineEnabled() != nextPTP.ScreenshotBlankLineEnabled() {
 		add(api.ConfigImpactDescription)
 	}
-	if previous.ScreenshotHandling.Screens != next.ScreenshotHandling.Screens ||
-		previous.ScreenshotHandling.CutoffScreens != next.ScreenshotHandling.CutoffScreens {
+	if previous.ScreenshotHandling.Screens != next.ScreenshotHandling.Screens {
 		add(api.ConfigImpactScreenshotSelection)
 	}
 	previousCapture := previous.ScreenshotHandling
 	nextCapture := next.ScreenshotHandling
 	previousCapture.Screens = 0
-	previousCapture.CutoffScreens = 0
 	nextCapture.Screens = 0
-	nextCapture.CutoffScreens = 0
 	if !configValueEqual(previousCapture, nextCapture) {
 		add(api.ConfigImpactScreenshotCapture)
 	}
@@ -60,9 +61,7 @@ func configImpactDetails(previous, next config.Config) []api.ConfigImpactDetail 
 		!configValueEqual(previous.PostUpload, next.PostUpload) {
 		add(api.ConfigImpactClientInjection)
 	}
-	if previous.MainSettings.UpdateNotification != next.MainSettings.UpdateNotification ||
-		previous.MainSettings.VerboseNotification != next.MainSettings.VerboseNotification ||
-		previous.MainSettings.InputHistoryLimit != next.MainSettings.InputHistoryLimit ||
+	if previous.MainSettings.InputHistoryLimit != next.MainSettings.InputHistoryLimit ||
 		previous.MainSettings.UseFavicons != next.MainSettings.UseFavicons ||
 		previous.MainSettings.FaviconOnly != next.MainSettings.FaviconOnly ||
 		!configValueEqual(previous.Logging, next.Logging) {
@@ -72,8 +71,10 @@ func configImpactDetails(previous, next config.Config) []api.ConfigImpactDetail 
 	for _, impact := range impacts {
 		result = append(result, api.ConfigImpactDetail{Kind: impact})
 	}
-	if !configValueEqual(previous.Trackers, next.Trackers) {
-		changed := changedTrackerImpactIDs(previous.Trackers, next.Trackers)
+	previousTrackers := previous.Trackers.WithoutScreenshotSpacing()
+	nextTrackers := next.Trackers.WithoutScreenshotSpacing()
+	if !configValueEqual(previousTrackers, nextTrackers) {
+		changed := changedTrackerImpactIDs(previousTrackers, nextTrackers)
 		result = append(result, api.ConfigImpactDetail{Kind: api.ConfigImpactTrackers, TrackerIDs: changed})
 	}
 	return result

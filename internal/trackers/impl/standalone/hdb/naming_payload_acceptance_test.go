@@ -48,7 +48,7 @@ func TestHDBReviewedNameReachesSerializedPayload(t *testing.T) {
 				if failure != nil {
 					t.Fatal(failure)
 				}
-				search := "Example Original 2026 REPACK2 1080p 3D WEB-DL DDP 5.1 H.264-GRP"
+				search := "Example Original 2026 REPACK2 1080p 3D WEB-DL DDP5.1 H.264-GRP"
 				if omitted {
 					search = strings.Replace(search, " 3D", "", 1)
 				}

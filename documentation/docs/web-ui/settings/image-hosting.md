@@ -11,20 +11,20 @@ Use **Settings → Image Hosting** to define global image-upload candidates. **I
 
 Choose up to six hosts in preferred order. The Web UI reveals credential fields only for selected hosts.
 
-| Host         | Required setting                |
-| ------------ | ------------------------------- |
-| ImgBB        | API key                         |
-| ImgBox       | None                            |
-| Pixhost      | None                            |
-| Lensdump     | API key                         |
-| PTScreens    | API key                         |
-| OnlyImage    | API key                         |
-| Dalexni      | API key                         |
-| Zipline      | Upload endpoint URL and API key |
-| PassTheImage | API key                         |
-| Seedpool CDN | API key                         |
-| ShareX       | Endpoint URL and API key        |
-| UTPPM        | API key                         |
+| Host           | Required setting                |
+| -------------- | ------------------------------- |
+| ImgBB          | API key                         |
+| ImgBox         | None                            |
+| Pixhost        | None                            |
+| Lensdump       | API key                         |
+| PTScreens      | API key                         |
+| OnlyImage      | API key                         |
+| Dalexni        | API key                         |
+| Zipline        | Upload endpoint URL and API key |
+| PassTheImage   | API key                         |
+| `seedpool_cdn` | API key                         |
+| ShareX         | Endpoint URL and API key        |
+| UTPPM          | API key                         |
 
 Tracker-specific host choices still apply after warning acknowledgement and when existing images are reused. Cached images on another host do not replace the configured choice.
 
@@ -32,13 +32,13 @@ For composite uploads, CLI `--imghost` (`-ih`) and API `imageHosting.preferredHo
 
 When an allowed host fails, upbrr can try the next eligible configured host. A host rejected by the target tracker's policy is skipped regardless of its global position.
 
-Imported tracker images still follow the destination's host policy. upbrr resolves supported thumbnail and proxy URLs to full-size sources where possible. Links tied to the source tracker, including PTP-hosted images when uploading elsewhere, require an eligible image host; this also applies to images inside imported comparison blocks. If a required image cannot be downloaded or rehosted, preparation reports the failure instead of treating the source URL as a valid destination upload.
+Imported tracker images still follow the destination's host policy. upbrr resolves supported thumbnail and proxy URLs to full-size sources where possible. Links tied to the source tracker require an eligible image host; this also applies to images inside imported comparison blocks. If a required image cannot be downloaded or rehosted, preparation reports the failure instead of treating the source URL as a valid destination upload.
 
 For size-limited batch uploads, upbrr respects both the host’s file-count and encoded-size limits, including multipart overhead, by splitting images into separate requests. If one image cannot fit by itself, reduce its file size before retrying. The same limits apply to CLI and Web UI uploads.
 
 ## Additional hosts
 
-**Lostimg**, **ReelFliX**, and **Samaritano** are conditional, tracker-owned integrations. Enable one and enter its API key only when the corresponding tracker advertises support. They are not general global fallback slots; Samaritano is available only for SAM.
+The **Additional hosts** section contains conditional, tracker-owned integrations. Enable one and enter its API key only when the corresponding tracker advertises support. They are not general global fallback slots.
 
 ## Verify the change
 

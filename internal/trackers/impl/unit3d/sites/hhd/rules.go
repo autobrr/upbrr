@@ -32,9 +32,10 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 	}
 	facts := subject.LanguageFacts
 	englishDubs := 0
+	englishOnlyOriginal := len(facts.OriginalLanguages) == 1 && languageutil.ContainsLanguage(facts.OriginalLanguages, "English")
 	for _, track := range facts.Tracks {
 		if facts.ProgrammeAudioOrigin(track) == api.TrackAudioDubbed && languageutil.ContainsLanguage(track.Languages, "English") &&
-			!languageutil.ContainsLanguage(facts.OriginalLanguages, "English") {
+			!englishOnlyOriginal {
 			englishDubs++
 		}
 	}

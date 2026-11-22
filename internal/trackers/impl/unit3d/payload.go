@@ -4,11 +4,11 @@
 package unit3d
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/trackers"
-	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // applyDiscTaxonomy adds optional disc metadata before site-specific payload
@@ -34,6 +34,8 @@ func applyDiscTaxonomy(req trackers.PreparationInput, data map[string]string, pr
 	set("distributor_id", req.Meta.Distributor, profile.DistributorID)
 }
 
+var errFinalDescriptionRequirements = errors.New("final description requirements")
+
 func applySubmissionRequirements(req trackers.PreparationInput, data map[string]string, profile SiteProfile) error {
 	if profile.SubmissionRequirements != nil {
 		requirements, err := profile.SubmissionRequirements(req)
@@ -50,9 +52,9 @@ func applySubmissionRequirements(req trackers.PreparationInput, data map[string]
 			data["description"] = strings.TrimSpace(data["description"] + "\n\n" + appendix)
 		}
 	}
-	if profile.ValidateFinalDescription != nil && api.NormalizeWorkflowExecutionMode(req.ExecutionMode) != api.WorkflowExecutionModeDebug {
+	if profile.ValidateFinalDescription != nil {
 		if err := profile.ValidateFinalDescription(req.Meta, data["description"], data["mediainfo"], data["bdinfo"]); err != nil {
-			return fmt.Errorf("final description requirements: %w", err)
+			return fmt.Errorf("%w: %w", errFinalDescriptionRequirements, err)
 		}
 	}
 	return nil

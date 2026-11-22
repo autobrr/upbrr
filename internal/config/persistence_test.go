@@ -311,7 +311,6 @@ func TestYAMLRoundTrip(t *testing.T) {
 		},
 		TorrentCreation: TorrentCreationConfig{
 			MkbrrThreads:   4,
-			PreferMax16:    true,
 			RehashCooldown: 30,
 		},
 		ClientSetup: ClientSetupConfig{

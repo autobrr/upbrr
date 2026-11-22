@@ -62,6 +62,7 @@ type stubTrackerLookup struct {
 	results      map[string]trackerdata.Result
 	calls        []string
 	searchNames  []string
+	policies     []api.PreparationPolicy
 	ids          map[string]string
 	beforeLookup func(context.Context, string) error
 	mu           sync.Mutex
@@ -93,12 +94,13 @@ func (s *stubTrackerLookup) Lookup(
 	trackerID string,
 	_ api.UploadSubject,
 	searchName string,
-	_ bool,
-	_ bool,
+	onlyID bool,
+	keepImages bool,
 ) (trackerdata.Result, error) {
 	s.mu.Lock()
 	s.calls = append(s.calls, tracker)
 	s.searchNames = append(s.searchNames, searchName)
+	s.policies = append(s.policies, api.PreparationPolicy{OnlyID: onlyID, KeepImages: keepImages})
 	if s.ids == nil {
 		s.ids = make(map[string]string)
 	}

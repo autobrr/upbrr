@@ -71,6 +71,17 @@ func endedLSTSeries(subject api.TrackerValidationSubject) bool {
 		metadata.TVmaze != nil && strings.EqualFold(metadata.TVmaze.Status, "Ended")
 }
 
+func sourceResourcePrefix(file api.MediaFileFact) string {
+	switch {
+	case file.ResourceID != "":
+		return "Resource " + file.ResourceID + ": "
+	case file.Primary:
+		return "Primary video: "
+	default:
+		return "Unidentified resource: "
+	}
+}
+
 func sourceValidationFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 	subject = primaryTechnicalSubject(subject)
 	var failures []api.RuleFailure
@@ -91,7 +102,7 @@ func sourceValidationFailures(subject api.TrackerValidationSubject) []api.RuleFa
 		if prohibitedLSTSource(file.Source) {
 			add(
 				"resource_prohibited_source",
-				"Resource "+file.ResourceID+": the established source is not permitted",
+				sourceResourcePrefix(file)+"the established source is not permitted",
 				api.MetadataEvidenceStatusComplete,
 				api.RuleDispositionStrict,
 			)
@@ -208,9 +219,10 @@ func sourceValidationFailures(subject api.TrackerValidationSubject) []api.RuleFa
 		}
 		for _, file := range subject.MediaFileFacts.Files {
 			if !singleLegacyContainerCandidate(containerFileSubject(subject, file)) {
+				resource := sourceResourcePrefix(file)
 				inspectEncode(
 					"resource_",
-					"Resource "+file.ResourceID+": ",
+					resource,
 					file.Resolution,
 					file.VideoEncoder,
 					file.VideoCodec,
@@ -225,21 +237,21 @@ func sourceValidationFailures(subject api.TrackerValidationSubject) []api.RuleFa
 				case api.VideoRateControlMultiPassVBR:
 					add(
 						"resource_encode_rate_control",
-						"Resource "+file.ResourceID+": settings report a final statistics-reading VBR pass, but do not establish the total pass count",
+						resource+"settings report a final statistics-reading VBR pass, but do not establish the total pass count",
 						api.MetadataEvidenceStatusPartial,
 						api.RuleDispositionAdvisory,
 					)
 				case api.VideoRateControlABR, api.VideoRateControlCBR, api.VideoRateControlCQP:
 					add(
 						"resource_encode_rate_control",
-						"Resource "+file.ResourceID+": encoder settings explicitly report "+string(file.RateControl)+" rate control; use CRF or two-pass VBR",
+						resource+"encoder settings explicitly report "+string(file.RateControl)+" rate control; use CRF or two-pass VBR",
 						api.MetadataEvidenceStatusComplete,
 						api.RuleDispositionWaivable,
 					)
 				default:
 					add(
 						"resource_encode_rate_control",
-						"Resource "+file.ResourceID+": rate control is not established by the inspected encoder settings; a generic VBR label does not prove CRF or two-pass encoding",
+						resource+"rate control is not established by the inspected encoder settings; a generic VBR label does not prove CRF or two-pass encoding",
 						api.MetadataEvidenceStatusPartial,
 						api.RuleDispositionAdvisory,
 					)

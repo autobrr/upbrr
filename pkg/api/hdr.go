@@ -53,3 +53,14 @@ type HDRFacts struct {
 	SourceFields       []string          `json:"sourceFields,omitempty"`
 	Contradictions     []string          `json:"contradictions,omitempty"`
 }
+
+// SupportsToneMapping distinguishes HDR video from SDR and wide-gamut-only video.
+// Renderer compatibility is checked separately when capturing the picture.
+func (f HDRFacts) SupportsToneMapping() bool {
+	for _, format := range f.Formats {
+		if format != HDRFormatSDR && format != HDRFormatWCG {
+			return true
+		}
+	}
+	return false
+}

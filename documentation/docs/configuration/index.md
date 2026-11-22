@@ -40,24 +40,57 @@ Database-adjacent files include:
 
 Back up the whole state directory, not only `db.sqlite`.
 
+To select custom state explicitly, set `main_settings.db_path` in a full configuration file and pass that file with `--config`:
+
+```powershell
+.\upbrr.exe serve --config ".\custom-state.yaml"
+```
+
+`UA_DEFAULT_DB_PATH` overrides the file's database path on this explicit-config route. Without `--config`, bootstrap first looks for settings in the default database. If it finds them, that default database wins over `UA_DEFAULT_DB_PATH`; this applies to `serve` and CLI workflow startup. Do not use the environment variable alone to isolate another build from normal state. Reports, queues, auth and web settings resolve relative to the active database directory, so check its actual location before backup, migration or maintenance.
+
+## Environment overrides
+
+These application variables override stored/imported configuration at runtime; they do not update the stored values. Empty values are ignored. Invalid integer/boolean syntax is ignored; a syntactically valid value must still pass configuration validation. Boolean values use `true`/`false` (also `1`/`0`, `t`/`f`, `T`/`F`, `TRUE`/`FALSE`, `True`/`False`). Lists are comma-separated, trim entries, and ignore blank entries. They are not a general mapping from every YAML key.
+
+| Variable                                                                                                 | Setting or value                                                                                                             |
+| -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `UA_DEFAULT_DB_PATH`                                                                                     | SQLite path override; a populated default database wins without explicit `--config` (see [State location](#state-location)). |
+| `UA_DEFAULT_TMDB_API`                                                                                    | TMDB API key; keep it secret.                                                                                                |
+| `UA_DEFAULT_SCREENS`                                                                                     | Positive decimal automatic screenshot count.                                                                                 |
+| `UA_DEFAULT_ONLY_ID`                                                                                     | Boolean metadata-ID-only tracker lookup.                                                                                     |
+| `UA_DEFAULT_KEEP_IMAGES`                                                                                 | Boolean existing-image collection.                                                                                           |
+| `UA_TRACKERS_DEFAULT`                                                                                    | List of configured tracker IDs.                                                                                              |
+| `UA_TRACKERS_PREFERRED`                                                                                  | Preferred tracker ID.                                                                                                        |
+| `UA_DEFAULT_TORRENT_CLIENT`                                                                              | Configured default client entry name.                                                                                        |
+| `UA_DEFAULT_SEARCHING_CLIENT_LIST`                                                                       | List of configured search-client names.                                                                                      |
+| `UA_SONARR_USE`, `UA_RADARR_USE`                                                                         | Enable the respective integration with a boolean.                                                                            |
+| `UA_SONARR_URL`, `UA_RADARR_URL`                                                                         | Primary service base URL.                                                                                                    |
+| `UA_SONARR_API_KEY`, `UA_RADARR_API_KEY`                                                                 | Primary service secret.                                                                                                      |
+| `UA_SONARR_URL_1` through `UA_SONARR_URL_3`, `UA_RADARR_URL_1` through `UA_RADARR_URL_3`                 | Additional instance URLs.                                                                                                    |
+| `UA_SONARR_API_KEY_1` through `UA_SONARR_API_KEY_3`, `UA_RADARR_API_KEY_1` through `UA_RADARR_API_KEY_3` | Corresponding additional secrets.                                                                                            |
+
+Environment-only changes can make CLI workflow startup differ from the active database generation. Resolve unfinished work and activate the intended settings before continuing; do not use another database to bypass recovery. Web listener variables and their precedence are documented [separately](./web-server.md#precedence).
+
 ## Setting groups
 
 | Group                | Controls                                                               |
 | -------------------- | ---------------------------------------------------------------------- |
-| Main settings        | updates, metadata API access, input history, scene detection           |
+| Main settings        | metadata API access, input history, tracker icons, scene detection     |
 | Image hosting        | host priority and host credentials                                     |
 | Metadata             | torrent discovery, playlist selection, cached images, external lookups |
 | Screenshot handling  | count, concurrency, tone mapping, overlays, DVD menu limits            |
 | Description settings | image layout, limits, headers, signatures, optional artwork            |
 | Client setup         | default, searching, and injecting torrent clients                      |
 | Arr integration      | Sonarr, Radarr, and mapped media directories                           |
-| Torrent creation     | hashing threads, piece-size preference, rehash scheduling              |
-| Post upload          | injection delay, tracker concurrency, messages, cross-seeding          |
+| Torrent creation     | compatible torrent reuse and rehash scheduling                         |
+| Post upload          | injection delay and tracker upload concurrency                         |
 | Logging              | level, file output, retention size and count                           |
 | Trackers             | defaults, preferred tracker, auth, and tracker-owned options           |
 | Torrent clients      | qBittorrent and other registered client settings                       |
 
 Fields shown for each tracker come from the active tracker catalog. Configure only fields presented for that tracker.
+
+Where **Blank line between generated screenshots** is available, it is on by default. Turning it off keeps each generated screenshot on its own line without an empty line between images. It does not change reviewed descriptions or paragraph spacing. In YAML, set `screenshot_blank_line: false` under the relevant tracker entry.
 
 See the [Web UI Settings reference](../web-ui/settings/index.md) for section-by-section field behavior.
 
@@ -127,3 +160,16 @@ The Web UI can import and export configuration from **Settings**.
 - Use a dry run after changes to tracker, image-host, torrent, or client behavior.
 
 Web listen settings have separate precedence and storage. See [Web server and reverse proxy](./web-server.md).
+
+## TMDB logo languages
+
+Set `description_settings.logo_language` to a comma- or semicolon-separated list of preferred
+two-letter language codes, in order. Matching is case-insensitive. Regional values such as
+`PT-BR` select the base language (`pt`) for logos only. Duplicate codes are ignored after their
+first occurrence; unsupported entries are reported and ignored.
+
+For example, `logo_language: "pt-BR,ja"` tries Portuguese, then Japanese, then English, then
+language-neutral artwork. An empty setting tries English and then language-neutral artwork.
+If no matching logo exists, the description has no TMDB logo. If a lookup fails, upbrr keeps any
+previous logo and retries the next time you prepare the release.
+TMDB does not distinguish Brazilian and European Portuguese logos by these language tags.

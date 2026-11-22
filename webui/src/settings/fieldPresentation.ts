@@ -74,15 +74,15 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
   Metadata: {
     SkipAutoTorrent: field(
       "Skip automatic torrent-client search",
-      "Do not automatically search configured torrent clients for reusable torrents during preparation.",
+      "Skip the initial search for tracker metadata and reusable torrents. BASE preparation still checks clients for compatible torrents before hashing.",
     ),
     SkipTrackerFilenameLookup: field(
       "Skip filename-based tracker lookup",
       "Do not use the source filename for tracker-data lookup. Known tracker IDs can still be looked up.",
     ),
     UseLargestPlaylist: field(
-      "Automatically select largest Blu-ray playlist",
-      "Lets CLI preparation select the largest Blu-ray playlist instead of asking. This does not replace Web UI playlist selection.",
+      "Automatically select best Blu-ray playlist per disc",
+      "Lets CLI preparation select the highest-scoring playlist for each disc instead of asking. This does not replace Web UI playlist selection.",
     ),
     KeepImages: field(
       "Collect existing tracker images",
@@ -186,7 +186,7 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
     ),
     LogoLanguage: field(
       "Preferred logo languages",
-      "Comma- or semicolon-separated TMDB language codes for logo lookup. Empty leaves the normal provider selection in place.",
+      "Choose logo languages in priority order. To move one to the end, remove and select it again. English and language-neutral artwork are used next. Brazilian Portuguese selects Portuguese artwork, not Brazil-specific artwork.",
     ),
     ThumbnailSize: field(
       "Screenshot thumbnail width (pixels)",
@@ -281,10 +281,6 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
     MkbrrThreads: field(
       "Torrent hashing threads (compatibility)",
       "Retained for configuration compatibility. This value does not currently control mkbrr hashing concurrency.",
-    ),
-    PreferMax16: field(
-      "Prefer reusable torrents with pieces up to 16 MiB",
-      "Prefer a validated reusable client torrent with piece size at most 16 MiB. Does not impose that piece size on newly generated torrents.",
     ),
     RehashCooldown: field(
       "Rehash-dependent upload delay (seconds)",

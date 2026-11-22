@@ -101,6 +101,7 @@ func (s *Service) SearchProviderCandidates(ctx context.Context, request api.Prov
 			}
 			if client, ok := provider.client.(candidateSearcher); ok {
 				items, err := client.SearchCandidates(ctx, query, year, request.Category)
+				out.SearchFailed = err != nil
 				if err == nil {
 					out.Status = api.MetadataEvidenceStatusComplete
 					out.Candidates = items

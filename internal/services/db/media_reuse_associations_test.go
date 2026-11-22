@@ -95,13 +95,13 @@ func TestReusableMediaAuthorityHandlesUnavailableActiveInput(t *testing.T) {
 					t.Fatalf("claim legacy recovery: %v", err)
 				}
 				return api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{
-					CoordinatorID: recovering.CoordinatorID,
-					Fence:         recovering.Fence,
-				}), api.PreparedMediaBinding{
-					SourcePath:               `C:\releases\legacy.mkv`,
-					PreparedMediaFingerprint: "legacy-prepared",
-					PreparedGeneration:       1,
-				}
+						CoordinatorID: recovering.CoordinatorID,
+						Fence:         recovering.Fence,
+					}), api.PreparedMediaBinding{
+						SourcePath:               `C:\releases\legacy.mkv`,
+						PreparedMediaFingerprint: "legacy-prepared",
+						PreparedGeneration:       1,
+					}
 			},
 			changed: true,
 		},
@@ -114,13 +114,13 @@ func TestReusableMediaAuthorityHandlesUnavailableActiveInput(t *testing.T) {
 					t.Fatalf("drop input records: %v", err)
 				}
 				return api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{
-					CoordinatorID: active.CoordinatorID,
-					Fence:         active.Fence,
-				}), api.PreparedMediaBinding{
-					SourcePath:               `C:\releases\failed.mkv`,
-					PreparedMediaFingerprint: "failed-prepared",
-					PreparedGeneration:       1,
-				}
+						CoordinatorID: active.CoordinatorID,
+						Fence:         active.Fence,
+					}), api.PreparedMediaBinding{
+						SourcePath:               `C:\releases\failed.mkv`,
+						PreparedMediaFingerprint: "failed-prepared",
+						PreparedGeneration:       1,
+					}
 			},
 			failed: true,
 		},
@@ -279,6 +279,12 @@ func TestReusableMediaAssetsRoundTripOnlyStrongClaims(t *testing.T) {
 	if err != nil || len(current) != 1 || !current[0].Binding.Equal(updatedBinding) ||
 		current[0].Order != updated.Order || len(current[0].HostedLinks) != 0 {
 		t.Fatalf("current reusable asset = %#v, err=%v", current, err)
+	}
+	binding.CompatibilityKey = compatibilityKey
+	exact, err := repo.LoadReusableMediaAssetsForBinding(t.Context(), binding)
+	if err != nil || len(exact) != 1 || !exact[0].Binding.Equal(binding) ||
+		exact[0].Order != asset.Order || len(exact[0].HostedLinks) != len(asset.HostedLinks) {
+		t.Fatalf("exact reusable asset = %#v, err=%v", exact, err)
 	}
 }
 

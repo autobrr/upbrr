@@ -11,6 +11,7 @@ import (
 	"github.com/autobrr/rls"
 	"github.com/autobrr/rls/taginfo"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/metadata/bluraycom"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
@@ -88,6 +89,7 @@ func CorrectionChoices() (map[string][]CorrectionChoice, error) {
 			{Value: "IMAX Open Matte", Label: "IMAX Open Matte"},
 		},
 		"SubtitleLanguages":          choices,
+		"LogoLanguages":              labeledCorrectionChoices(config.LogoLanguageNames()),
 		"HardcodedSubtitleLanguages": hardcoded,
 		"Category": {
 			{Value: string(api.CanonicalCategoryMovie), Label: "Movie"},

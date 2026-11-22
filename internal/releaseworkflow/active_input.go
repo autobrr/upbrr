@@ -14,6 +14,7 @@ import (
 	"github.com/autobrr/upbrr/internal/logging"
 
 	"github.com/autobrr/upbrr/internal/pathing"
+	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -38,6 +39,7 @@ type OpenInputRequest struct {
 	ExpectedRevision    uint64
 	Input               api.PrepareInput
 	CorrectionPatch     *api.ReleaseCorrectionPatch
+	ReuseVerifiedSource bool
 	IdempotencyKey      string
 	TrackerDecisionMode TrackerDecisionMode
 	Composite           *compositeUploadSession
@@ -285,8 +287,10 @@ func (m *Module) ResetIdleInputOnStartup(ctx context.Context) (resetErr error) {
 	return nil
 }
 
-// OpenInput verifies each explicit new open request under a renewable reservation.
+// OpenInput verifies explicit opens under a renewable reservation. A metadata
+// edit can reuse the current input's verification if its inventory still matches.
 // A repeated idempotency key returns the already committed result without repeating work.
+// Canceled admission retains the prior worker's authority until its cleanup finishes.
 func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputRequest) (api.ActiveInputRecord, error) {
 	if err := m.requireActiveConfig(ctx); err != nil {
 		return api.ActiveInputRecord{}, err
@@ -304,10 +308,16 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		fingerprintInput.ExternalFreshness = api.ExternalFreshnessReuse
 	}
 	fingerprint, err := canonicalCommandFingerprint(struct {
-		Input           api.PrepareInput
-		CorrectionPatch *api.ReleaseCorrectionPatch `json:",omitempty"`
-		Request         api.WorkflowFingerprint
-	}{fingerprintInput, request.CorrectionPatch, request.RequestFingerprint})
+		Input               api.PrepareInput
+		CorrectionPatch     *api.ReleaseCorrectionPatch `json:",omitempty"`
+		Request             api.WorkflowFingerprint
+		ReuseVerifiedSource bool `json:",omitempty"`
+	}{
+		Input:               fingerprintInput,
+		CorrectionPatch:     request.CorrectionPatch,
+		Request:             request.RequestFingerprint,
+		ReuseVerifiedSource: request.ReuseVerifiedSource,
+	})
 	if err != nil {
 		return api.ActiveInputRecord{}, err
 	}
@@ -317,7 +327,9 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 	}
 	admissionRevision := prior.Revision
 	logging.FromContext(ctx, m.logger).Debugf("active input: open admission decision=check state=%s revision=%d", prior.State, prior.Revision)
-	if prior.State != api.ActiveInputEmpty && !prior.LeaseExpiresAt.After(m.clock.Now()) {
+	leaseLive := prior.LeaseExpiresAt.After(m.clock.Now())
+	reuseVerification := request.ReuseVerifiedSource && leaseLive && prior.State == api.ActiveInputActive && m.OwnsActiveInput(prior)
+	if prior.State != api.ActiveInputEmpty && !leaseLive {
 		foreignOwner := prior.OwnerID != owner
 		prior, err = m.recoverActiveInput(ctx, prior, owner, false)
 		if err != nil {
@@ -376,6 +388,31 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		if committed {
 			return
 		}
+		if prior.WorkflowID != "" {
+			cancelPriorWorkers := func() []<-chan struct{} {
+				m.operationWorkersMu.Lock()
+				defer m.operationWorkersMu.Unlock()
+				var workers []<-chan struct{}
+				for _, worker := range m.operationWorkers {
+					if worker.ownerID == owner && worker.workflowID == prior.WorkflowID {
+						worker.cancel()
+						workers = append(workers, worker.done)
+					}
+				}
+				return workers
+			}
+			// A running stage holds the command lock, so signal it before the barrier.
+			// Start holds that lock through registration; snapshot again for queued work.
+			cancelPriorWorkers()
+			admission := m.commandLock(strings.TrimSpace(owner) + "\x00" + string(prior.WorkflowID))
+			admission.Lock()
+			workers := cancelPriorWorkers()
+			admission.Unlock()
+			for _, done := range workers {
+				// Canceled workers retain their fence until durable cleanup.
+				<-done
+			}
+		}
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		rollback := prior
@@ -383,10 +420,32 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		rollback.OwnerID, rollback.CoordinatorID = owner, m.processEpoch
 		rollback.LeaseExpiresAt = m.clock.Now().Add(workflowWorkLeaseTTL)
 		if cleanupErr := m.activeInputs.CompareAndSwapActiveInput(cleanup, pending, rollback, m.clock.Now()); cleanupErr != nil {
-			logging.FromContext(ctx, m.logger).Warnf("active input: rollback failed state=recovery_required")
+			logging.FromContext(ctx, m.logger).Warnf("active input: rollback failed state=recovery_required action=reload")
+			if m.activeCancel != nil {
+				m.activeCancel()
+			}
+			if m.activeDone != nil {
+				select {
+				case <-m.activeDone:
+					m.activeCancel, m.activeDone = nil, nil
+				case <-cleanup.Done():
+					return
+				}
+			}
+			current, readErr := m.activeInputs.LoadActiveInput(cleanup)
+			if readErr != nil {
+				return
+			}
+			current.LeaseExpiresAt = pending.LeaseExpiresAt
+			if current != pending {
+				return
+			}
+			if releaseErr := m.activeInputs.RelinquishActiveInput(cleanup, m.processEpoch, pending.Fence, m.clock.Now()); releaseErr != nil {
+				logging.FromContext(ctx, m.logger).Warnf("active input: rollback lease release failed state=recovery_required action=reload")
+			}
 		}
 	}()
-	if err := m.startActiveInputHeartbeat(ctx, pending.Fence); err != nil {
+	if err := m.startActiveInputHeartbeat(context.WithoutCancel(ctx), pending.Fence); err != nil {
 		return api.ActiveInputRecord{}, err
 	}
 	if err := m.cancelPriorInputWork(ctx, owner, prior.WorkflowID); err != nil {
@@ -395,9 +454,19 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 	if err := m.reconcileReusableMedia(ctx, owner, prior.WorkflowID); err != nil {
 		return api.ActiveInputRecord{}, err
 	}
-	record, err := m.inputVerifier(ctx, request.Input)
-	if err != nil {
-		return api.ActiveInputRecord{}, fmt.Errorf("release workflow verify input: %w", err)
+	record := api.InputRecord{}
+	if reuseVerification {
+		record = m.reusableInputVerification(ctx, prior, request)
+	}
+	if record.ID == "" {
+		record, err = m.inputVerifier(ctx, request.Input)
+		if err != nil {
+			return api.ActiveInputRecord{}, fmt.Errorf("release workflow verify input: %w", err)
+		}
+	} else {
+		api.EmitPreparationProgress(ctx, api.NewPreparationProgressUpdate(
+			api.PreparationPhaseSourceInspection, api.PreparationProgressCompleted, "Verified source inventory. Reused content samples.",
+		))
 	}
 	// Verification may resolve a different canonical path than the requested alias.
 	if err := m.requireInputSourceReconciled(ctx, owner, record.CanonicalPath); err != nil {
@@ -460,12 +529,16 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 							pendingWorkflow = priorState.Workflow.ID
 						}
 					}
+					state, loadErr := m.repository.Load(ctx, owner, workflow)
+					if loadErr != nil {
+						return api.ActiveInputRecord{}, fmt.Errorf("release workflow load new input workflow: %w", loadErr)
+					}
+					adoptedComparisons, adoptErr := m.adoptInputComparisons(owner, &state, priorState, record.CanonicalPath, m.clock.Now())
+					if adoptErr != nil {
+						return api.ActiveInputRecord{}, adoptErr
+					}
 					if pending != nil || priorState.Workflow.HDRAnalysis != nil || association.HDRAnalysisID != "" || len(priorState.HDRExtractions) > 0 ||
-						priorState.PendingHDRAnalysisWorkflowID != "" {
-						state, loadErr := m.repository.Load(ctx, owner, workflow)
-						if loadErr != nil {
-							return api.ActiveInputRecord{}, fmt.Errorf("release workflow load new input workflow: %w", loadErr)
-						}
+						priorState.PendingHDRAnalysisWorkflowID != "" || adoptedComparisons {
 						state.PendingAudioAnalysis = pending
 						state.PendingAudioAnalysisWorkflowID = pendingWorkflow
 						state.PendingHDRAnalysis = priorState.Workflow.HDRAnalysis
@@ -564,6 +637,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 			}
 			if prior.SourceVersion != record.SourceVersion {
 				// Old source checkpoints must not become pending authority on a later reverify.
+				state.ComparisonMedia = nil
 				clear(state.HDRExtractions)
 				state.HDRPendingRequest = nil
 				state.PendingCorrectionConfirmation = nil
@@ -587,6 +661,11 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 			} else {
 				state.PendingDuplicateReuse = nil
 			}
+			if prior.SourceVersion == record.SourceVersion {
+				retainInputReview(&state)
+			} else {
+				state.InputReview = nil
+			}
 			invalidatePreparedAndDownstream(&state.Workflow)
 			if state.Composite != nil {
 				state.Composite.LastCommittedRevision = state.Workflow.Revision
@@ -608,6 +687,30 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 	}
 	committed = true
 	return active, nil
+}
+
+// reusableInputVerification keeps sampled evidence for an in-place correction
+// while the committed source inventory still matches. Explicit opens and
+// confirmation of content-bound corrections run fresh verification.
+func (m *Module) reusableInputVerification(ctx context.Context, prior api.ActiveInputRecord, request OpenInputRequest) api.InputRecord {
+	patch := request.CorrectionPatch
+	if patch == nil || len(patch.ConfirmFields) != 0 || request.Composite != nil ||
+		!ordinaryMetadataRefresh(request.Input) || request.Input.Controls.BlurayDetails != nil {
+		return api.InputRecord{}
+	}
+	record, err := m.activeInputs.LoadInputRecord(ctx, preparedrelease.CanonicalSourceKey(request.Input.SourcePath))
+	if err != nil || record.ID != prior.InputID || record.SourceVersion != prior.SourceVersion {
+		return api.InputRecord{}
+	}
+	var verified api.VerifiedInputSource
+	if err := json.Unmarshal(record.Manifest, &verified); err != nil ||
+		verified.Identity.Version != api.SourceContentIdentityVersion || verified.Identity.Digest != record.SourceVersion {
+		return api.InputRecord{}
+	}
+	if err := preparedrelease.VerifyInputManifestStability(ctx, request.Input, verified); err != nil {
+		return api.InputRecord{}
+	}
+	return record
 }
 
 // ordinaryMetadataRefresh excludes explicit collection and evidence renewal.
