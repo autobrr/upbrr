@@ -34,8 +34,8 @@ func TestPTPPackRequirementIsOwnedByPTPAndUsesOnlyEligibleFiles(t *testing.T) {
 	}{
 		{
 			name:    "mixed targets",
-			files:   []string{"Movie.cd1.mkv", "sample.mkv", "Movie.cd2.MP4", "Movie.srt", "Movie.cd1.mkv"},
-			members: []string{mediafacts.TrackResourceID("Movie.cd1.mkv"), mediafacts.TrackResourceID("Movie.cd2.MP4")},
+			files:   []string{"Movie.Sampler.cd1.mkv", "sample.mkv", "Movie.!sample.cd2.MP4", "Movie-sample.mkv", "Movie.srt", "Movie.Sampler.cd1.mkv"},
+			members: []string{mediafacts.TrackResourceID("Movie.Sampler.cd1.mkv"), mediafacts.TrackResourceID("Movie.!sample.cd2.MP4")},
 		},
 		{name: "single video", files: []string{"Movie.mkv", "Movie.srt"}},
 		{

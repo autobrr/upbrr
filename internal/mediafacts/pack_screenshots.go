@@ -4,7 +4,9 @@
 package mediafacts
 
 import (
+	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/pathing"
@@ -19,7 +21,7 @@ func PackScreenshotMembers(paths []string) []api.ScreenshotPackMember {
 	for _, path := range paths {
 		path = strings.TrimSpace(path)
 		name := strings.ToLower(pathing.Base(path))
-		if !filesystem.IsVideoFile(name) || strings.Contains(name, "sample") && !strings.Contains(name, "!sample") {
+		if !filesystem.IsVideoFile(name) || isPackSample(name) {
 			continue
 		}
 		id := TrackResourceID(path)
@@ -29,4 +31,10 @@ func PackScreenshotMembers(paths []string) []api.ScreenshotPackMember {
 		}
 	}
 	return members
+}
+
+func isPackSample(name string) bool {
+	return slices.Contains(strings.FieldsFunc(name, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '!'
+	}), "sample")
 }

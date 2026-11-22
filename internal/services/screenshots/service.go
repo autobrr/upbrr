@@ -545,6 +545,9 @@ func (s *Service) captureDisc(
 
 	base := screenshotBaseName(meta)
 	tonemap := shouldTonemap(meta, s.cfg)
+	if meta.PackMemberID != "" && info.HDRFacts.Status == api.HDREvidenceComplete {
+		tonemap = s.cfg.ScreenshotHandling.ToneMap && info.HDRFacts.SupportsToneMapping()
+	}
 
 	type captureJob struct {
 		selection api.ScreenshotSelection

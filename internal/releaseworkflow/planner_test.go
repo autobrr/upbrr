@@ -2451,6 +2451,39 @@ func TestContinuationPlannerCapturesEachNewExplicitScreenshotIndex(t *testing.T)
 	}
 }
 
+func TestContinuationIgnoresPackCaptureForDuplicateExcludedTracker(t *testing.T) {
+	current := readyContinuationPlannerResult(t, time.Now())
+	current.Projections.Projections = append(current.Projections.Projections, api.TrackerReleaseProjection{
+		TrackerID:   "PACK",
+		Readiness:   api.ReadinessStatusReady,
+		UploadReady: true,
+		DupeReady:   true,
+		Artifacts:   api.TrackerArtifactRequirements{PackScreenshots: &api.PackScreenshotRequirement{MemberIDs: []string{"member-a", "member-b"}, CountPerMember: 2}},
+	})
+	current.Dupes.Results = append(current.Dupes.Results, api.TrackerDupeAssessment{
+		TrackerID: "PACK",
+ Status: api.StageStatusCompleted,
+ Decision: api.DupeDecisionAccepted,
+	})
+	current.Media = &api.MediaArtifactSet{
+		Status:    api.StageStatusCompleted,
+		Artifacts: []api.MediaArtifact{{
+ID: "ordinary",
+ Kind: api.MediaArtifactScreenshot,
+ Selected: true,
+ Index: 3,
+}},
+	}
+	explicit := &api.MediaCaptureInstructions{Purpose: api.ScreenshotPurposeFinal, Selections: []api.ScreenshotSelection{{Index: 3}}}
+	if !continuationMediaCaptureSatisfied(current, explicit) {
+		t.Fatal("duplicate-excluded pack tracker caused ordinary capture to repeat")
+	}
+	current.Dupes.Results[1].Decision = api.DupeDecisionNoMatch
+	if continuationMediaCaptureSatisfied(current, explicit) {
+		t.Fatal("eligible pack tracker was not checked for missing pack media")
+	}
+}
+
 func TestContinuationPlannerImportsSavedImagesWithExistingMedia(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, time.July, 23, 1, 2, 3, 0, time.UTC)

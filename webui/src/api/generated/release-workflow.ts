@@ -1498,6 +1498,7 @@ export type MediaCaptureInstructions = Readonly<{
 }>;
 
 export type MediaCaptureRequirement = Readonly<{
+  automaticPackScreenshots?: boolean;
   dvdMenuCount: number;
   purpose: ScreenshotPurpose;
   screenshotCount: number;

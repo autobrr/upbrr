@@ -207,7 +207,9 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
             className="primary"
             type="button"
             onClick={() => void facet.generate("final")}
-            disabled={mutationsBlocked || selections.length === 0}
+            disabled={
+              mutationsBlocked || (selections.length === 0 && !plan?.AutomaticPackScreenshots)
+            }
           >
             {busy && view.activeAction === "capture" ? "Working..." : "Generate screenshots"}
           </button>

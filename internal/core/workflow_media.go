@@ -67,10 +67,11 @@ func (b workflowMediaBuilder) Plan(
 	requirements := make([]api.MediaCaptureRequirement, 0, len(projections.Projections))
 	for _, projection := range projections.Projections {
 		requirements = append(requirements, api.MediaCaptureRequirement{
-			TrackerID:       projection.TrackerID,
-			ScreenshotCount: projection.Artifacts.ScreenshotCount,
-			DVDMenuCount:    projection.Artifacts.DVDMenuCount,
-			Purpose:         api.ScreenshotPurposeFinal,
+			TrackerID:                projection.TrackerID,
+			ScreenshotCount:          projection.Artifacts.ScreenshotCount,
+			AutomaticPackScreenshots: projection.Artifacts.PackScreenshots != nil,
+			DVDMenuCount:             projection.Artifacts.DVDMenuCount,
+			Purpose:                  api.ScreenshotPurposeFinal,
 		})
 	}
 	screenshotCount, _ := projectedMediaRequirements(projections.Projections)

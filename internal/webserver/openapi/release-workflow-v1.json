@@ -5782,6 +5782,9 @@
       "MediaCaptureRequirement": {
         "type": "object",
         "properties": {
+          "automaticPackScreenshots": {
+            "type": "boolean"
+          },
           "dvdMenuCount": {
             "type": "integer"
           },

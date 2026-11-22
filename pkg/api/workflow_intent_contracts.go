@@ -20,10 +20,12 @@ type WorkflowResourceRef struct {
 
 // MediaCaptureRequirement is one tracker-derived final-media requirement.
 type MediaCaptureRequirement struct {
-	TrackerID       TrackerID         `json:"trackerId"`
-	ScreenshotCount int               `json:"screenshotCount"`
-	DVDMenuCount    int               `json:"dvdMenuCount"`
-	Purpose         ScreenshotPurpose `json:"purpose"`
+	TrackerID       TrackerID `json:"trackerId"`
+	ScreenshotCount int       `json:"screenshotCount"`
+	DVDMenuCount    int       `json:"dvdMenuCount"`
+	// AutomaticPackScreenshots requires no user frame selections.
+	AutomaticPackScreenshots bool              `json:"automaticPackScreenshots,omitempty"`
+	Purpose                  ScreenshotPurpose `json:"purpose"`
 }
 
 // MediaPlan is the safe page-facing plan for one exact workflow revision.

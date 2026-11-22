@@ -44,24 +44,33 @@ type descriptionImageHostResolution struct {
 
 // hasExactPackScreenshotScope routes pack descriptions through per-tracker
 // image selection even when hosting was not skipped.
-func hasExactPackScreenshotScope(meta api.UploadSubject) bool {
+func hasExactPackScreenshotScope(meta api.UploadSubject, registry *Registry) bool {
 	if meta.ExactMedia == nil {
 		return false
 	}
 	if slices.ContainsFunc(meta.ExactMedia.Screenshots, func(image api.ScreenshotImage) bool { return image.PackMemberID != "" }) {
 		return true
 	}
-	return strings.TrimSpace(meta.DiscType) == "" && len(mediafacts.PackScreenshotMembers(meta.FileList)) > 1 &&
-		slices.ContainsFunc(meta.Trackers, func(tracker string) bool { return strings.EqualFold(tracker, "PTP") })
+	return slices.ContainsFunc(meta.Trackers, func(tracker string) bool {
+		return RequiresPackScreenshots(registry, tracker, meta)
+	})
 }
 
-// scopeExactPackMedia preserves distinct PTP pack and ordinary screenshot
+// RequiresPackScreenshots reports whether the registered tracker requires
+// screenshots from each eligible video file for this prepared release.
+func RequiresPackScreenshots(registry *Registry, tracker string, meta api.UploadSubject) bool {
+	descriptor, ok := registry.LookupDescriptor(tracker)
+	return ok && descriptor.WorkflowMedia != nil && descriptor.WorkflowMedia.PackScreenshotsPerMember > 0 &&
+		strings.TrimSpace(meta.DiscType) == "" && len(mediafacts.PackScreenshotMembers(meta.FileList)) > 1
+}
+
+// scopeExactPackMedia preserves distinct per-file and ordinary screenshot
 // lanes without altering the shared exact media or comparison inputs.
-func scopeExactPackMedia(meta api.UploadSubject, tracker string) api.UploadSubject {
-	if !hasExactPackScreenshotScope(meta) {
+func scopeExactPackMedia(meta api.UploadSubject, tracker string, registry *Registry) api.UploadSubject {
+	if !hasExactPackScreenshotScope(meta, registry) {
 		return meta
 	}
-	wantPack := strings.EqualFold(tracker, "PTP") && strings.TrimSpace(meta.DiscType) == "" && len(mediafacts.PackScreenshotMembers(meta.FileList)) > 1
+	wantPack := RequiresPackScreenshots(registry, tracker, meta)
 	exact := meta.ExactMedia.Clone()
 	removedPaths := make(map[string]bool)
 	exact.Screenshots = slices.DeleteFunc(exact.Screenshots, func(image api.ScreenshotImage) bool {

@@ -458,7 +458,7 @@ func exactDescriptionMedia(
 		}
 		menuImages = append(menuImages, image)
 	}
-	if hasExactPackScreenshotScope(meta) {
+	if slices.ContainsFunc(meta.ExactMedia.Screenshots, func(image api.ScreenshotImage) bool { return image.PackMemberID != "" }) {
 		membersByPath := make(map[string]string, len(meta.ExactMedia.Screenshots))
 		for _, image := range meta.ExactMedia.Screenshots {
 			membersByPath[strings.TrimSpace(image.Path)] = image.PackMemberID

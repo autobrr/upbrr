@@ -18,7 +18,6 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/imagehosting"
 	"github.com/autobrr/upbrr/internal/logging"
-	"github.com/autobrr/upbrr/internal/mediafacts"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -409,15 +408,25 @@ func (m *mediaModule) resolveFallbackImageUploadTargets(
 
 // scopePackUploadImages constrains final images to the target tracker set.
 // Other kinds of media use the original shared hosting policy.
-func scopePackUploadImages(images []api.ScreenshotImage, trackers []string) []api.ScreenshotImage {
-	ptp := slices.Contains(trackers, "PTP")
-	ordinary := !ptp || len(trackers) > 1
+func (m *mediaModule) scopePackUploadImages(images []api.ScreenshotImage, names []string, meta api.UploadSubject) []api.ScreenshotImage {
+	pack, ordinary := m.packUploadLanes(names, meta)
 	return slices.DeleteFunc(slices.Clone(images), func(image api.ScreenshotImage) bool {
 		if image.PackMemberID != "" {
-			return !ptp
+			return !pack
 		}
 		return image.Purpose == api.ScreenshotPurposeFinal && !ordinary
 	})
+}
+
+func (m *mediaModule) packUploadLanes(names []string, meta api.UploadSubject) (pack, ordinary bool) {
+	for _, tracker := range names {
+		if trackers.RequiresPackScreenshots(m.registry, tracker, meta) {
+			pack = true
+		} else {
+			ordinary = true
+		}
+	}
+	return pack, ordinary
 }
 
 func (m *mediaModule) uploadImagesToTargetsWithFallback(
@@ -459,14 +468,14 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 	coveredTrackers := make(map[string]struct{})
 	results := make(chan completedAttempt)
 	pending := 0
-	packScope := slices.ContainsFunc(images, func(image api.ScreenshotImage) bool { return image.PackMemberID != "" }) ||
-		strings.TrimSpace(meta.DiscType) == "" && len(mediafacts.PackScreenshotMembers(meta.FileList)) > 1 && slices.Contains(meta.Trackers, "PTP")
+	declaredPack, _ := m.packUploadLanes(meta.Trackers, meta)
+	packScope := declaredPack || slices.ContainsFunc(images, func(image api.ScreenshotImage) bool { return image.PackMemberID != "" })
 
 	targetKey := func(target trackers.ImageUploadTarget) string {
 		key := strings.ToLower(strings.TrimSpace(target.Host)) + "\x00" + normalizeImageUploadUsageScope(target.UsageScope)
-		if packScope && slices.Contains(target.Trackers, "PTP") {
-			if len(target.Trackers) == 1 {
-				return key + "\x00ptp-pack"
+		if pack, ordinary := m.packUploadLanes(target.Trackers, meta); packScope && pack {
+			if !ordinary {
+				return key + "\x00pack"
 			}
 			return key + "\x00mixed-pack"
 		}
@@ -517,7 +526,7 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 		go func() {
 			targetImages := images
 			if packScope {
-				targetImages = scopePackUploadImages(images, target.Trackers)
+				targetImages = m.scopePackUploadImages(images, target.Trackers, meta)
 			}
 			if target.ReuseOnly {
 				available := uploadedImagesByPathForTarget(retainedLinks, target)
@@ -822,12 +831,24 @@ func (m *mediaModule) uploadImagesToTarget(
 	)
 	uploaded, err := m.images.Upload(progressCtx, imageHostingSubject(meta), target.Host, target.UsageScope, missing)
 	results = mergeUploadedImageLinks(images, results, uploaded)
-	if err != nil && !strictAnalysisBatch && m.partialHostUploadIsUsable(ctx, target, len(images), len(results), err) {
+	var packImages []api.ScreenshotImage
+	for _, image := range images {
+		if image.PackMemberID != "" {
+			packImages = append(packImages, image)
+		}
+	}
+	packCovered := uploadedImageLinksCoverTarget(results, target, packImages)
+	if err != nil && packCovered && !strictAnalysisBatch && m.partialHostUploadIsUsable(ctx, target, len(images), len(results), err) {
 		emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), err)
 		return results, nil
 	}
-	if err == nil && strictAnalysisBatch && !uploadedImageLinksCoverTarget(results, target, images) {
-		err = errors.New("analysis image upload is incomplete")
+	if err == nil {
+		switch {
+		case !packCovered:
+			err = errors.New("per-file screenshot uploads are incomplete")
+		case strictAnalysisBatch && !uploadedImageLinksCoverTarget(results, target, images):
+			err = errors.New("analysis image upload is incomplete")
+		}
 	}
 	emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), err)
 	if err != nil {
@@ -964,7 +985,7 @@ func (m *mediaModule) retainedFallbackImageUploadTargets(
 					fallbackTarget = normalizeImageUploadTarget(fallbackTarget)
 					targetImages := images
 					if packScope {
-						targetImages = scopePackUploadImages(images, fallbackTarget.Trackers)
+						targetImages = m.scopePackUploadImages(images, fallbackTarget.Trackers, meta)
 					}
 					if len(targetImages) > 0 && uploadedImageLinksCoverTarget(retainedLinks, fallbackTarget, targetImages) {
 						covered = append(covered, fallbackTarget)

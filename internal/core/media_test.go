@@ -898,6 +898,70 @@ func TestAudioAnalysisRequiresCompleteHostBatchAndFallsBack(t *testing.T) {
 	}
 }
 
+func TestPackScreenshotIncompleteUploadFallsBackDespiteOrdinaryMinimum(t *testing.T) {
+	t.Parallel()
+	registry := mediaImageHostRegistry(t)
+	if err := registry.RegisterDescriptor(trackers.Descriptor{
+		Name:              "PACK",
+		Definition:        mediaImageHostDefinition("PACK"),
+		Family:            trackers.FamilyStandalone,
+		BaseURL:           "https://pack.example.invalid",
+		UploadContentMode: trackers.UploadContentModeScreenshots,
+		ImageHost:         &trackers.ImageHostPolicy{AllowedHosts: []string{"pixhost", "imgbb"}},
+		WorkflowMedia:     &trackers.WorkflowMediaRequirements{PackScreenshotsPerMember: 2},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	images := []api.ScreenshotImage{
+		{
+Path: "a1.png",
+ Purpose: api.ScreenshotPurposeFinal,
+ PackMemberID: "a",
+},
+		{
+Path: "a2.png",
+ Purpose: api.ScreenshotPurposeFinal,
+ PackMemberID: "a",
+},
+		{
+Path: "b1.png",
+ Purpose: api.ScreenshotPurposeFinal,
+ PackMemberID: "b",
+},
+		{
+Path: "b2.png",
+ Purpose: api.ScreenshotPurposeFinal,
+ PackMemberID: "b",
+},
+	}
+	for _, silent := range []bool{false, true} {
+		module := &mediaModule{
+			cfg: config.Config{
+				ImageHosting:       config.ImageHostingConfig{Host1: "pixhost", Host2: "imgbb"},
+				ScreenshotHandling: config.ScreenshotHandlingConfig{MinSuccessfulUploads: 3},
+			},
+			images:   &partialImageHostingService{
+published: 3,
+ failHost: "pixhost",
+ silentPartial: silent,
+},
+			logger:   &recordingMediaLogger{},
+			registry: registry,
+		}
+		subject := api.UploadSubject{Trackers: []string{"PACK"}, FileList: []string{"Movie.cd1.mkv", "Movie.cd2.mkv"}}
+		result, err := module.uploadImagesToTargetsWithFallback(t.Context(), subject, "", nil,
+			[]trackers.ImageUploadTarget{{
+Host: "pixhost",
+ UsageScope: "global",
+ Trackers: []string{"PACK"},
+}}, images, nil, nil)
+		if err != nil || len(result.Attempts) != 2 || result.Attempts[0].Failure == nil || result.Attempts[1].Failure != nil ||
+			result.Attempts[1].Host != "imgbb" || len(result.Attempts[1].Links) != len(images) || len(result.Failures) != 0 {
+			t.Fatalf("incomplete pack bypassed fallback (silent=%t): result=%+v, error=%v", silent, result, err)
+		}
+	}
+}
+
 func TestUploadImagesAcceptsPartialHostBatchAtConfiguredMinimum(t *testing.T) {
 	t.Parallel()
 

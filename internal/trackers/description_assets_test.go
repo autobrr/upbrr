@@ -4667,35 +4667,43 @@ func TestResolvePackDescriptionAssetsKeepsHostedVariantsBoundToEachVideo(t *test
 	exact := &api.ExactMediaAssets{}
 	for index, member := range []string{members[0].ID, members[0].ID, members[1].ID, members[1].ID, ""} {
 		image := api.ScreenshotImage{
-Path: filepath.Join(root, fmt.Sprintf("screen-%d.png", index)),
-			Purpose: api.ScreenshotPurposeFinal,
- PackMemberID: member,
-}
+			Path:         filepath.Join(root, fmt.Sprintf("screen-%d.png", index)),
+			Purpose:      api.ScreenshotPurposeFinal,
+			PackMemberID: member,
+		}
 		link := fmt.Sprintf("https://i.ibb.co/test/screen-%d.png", index)
 		exact.Screenshots = append(exact.Screenshots, image)
 		exact.ScreenshotUploads = append(exact.ScreenshotUploads, api.UploadedImageLink{
-			ImagePath: image.Path,
- Host: "imgbb",
- UsageScope: globalImageUsageScope,
- ImgURL: link,
- RawURL: link,
+			ImagePath:  image.Path,
+			Host:       "imgbb",
+			UsageScope: globalImageUsageScope,
+			ImgURL:     link,
+			RawURL:     link,
 		})
 	}
 	meta := api.UploadSubject{
-SourcePath: root,
- FileList: files,
- Trackers: []string{"PTP", "HHD"},
- ExactMedia: exact,
-}
+		SourcePath: root,
+		FileList:   files,
+		Trackers:   []string{"PTP", "HHD"},
+		ExactMedia: exact,
+	}
 	repo := &stubRepo{}
 	registry := descriptionAssetsTestRegistry(t)
-	ptpMeta := scopeExactPackMedia(meta, "PTP")
-	ptpExact, err := exactMediaForTrackerHost("PTP", ptpMeta, config.Config{}, config.TrackerConfig{}, registry)
+	if err := registry.RegisterDescriptor(Descriptor{
+		Name:          "PACK",
+		Definition:    stubDefinition{name: "PACK"},
+		WorkflowMedia: &WorkflowMediaRequirements{PackScreenshotsPerMember: 2},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	meta.Trackers[0] = "PACK"
+	ptpMeta := scopeExactPackMedia(meta, "PACK", registry)
+	ptpExact, err := exactMediaForTrackerHost("PACK", ptpMeta, config.Config{}, config.TrackerConfig{}, registry)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ptpMeta.ExactMedia = ptpExact
-	assets, err := ResolveDescriptionAssets(t.Context(), "PTP", ptpMeta, repo, api.NopLogger{}, registry)
+	assets, err := ResolveDescriptionAssets(t.Context(), "PACK", ptpMeta, repo, api.NopLogger{}, registry)
 	if err != nil || len(assets.Screenshots) != 4 {
 		t.Fatalf("PTP pack description assets = %#v, err = %v", assets.Screenshots, err)
 	}
@@ -4704,7 +4712,7 @@ SourcePath: root,
 			t.Fatalf("member binding not preserved through the hosted description slot: %#v", screenshot)
 		}
 	}
-	ordinary, err := ResolveDescriptionAssets(t.Context(), "HHD", scopeExactPackMedia(meta, "HHD"), repo, api.NopLogger{}, registry)
+	ordinary, err := ResolveDescriptionAssets(t.Context(), "HHD", scopeExactPackMedia(meta, "HHD", registry), repo, api.NopLogger{}, registry)
 	if err != nil || len(ordinary.Screenshots) != 1 || ordinary.Screenshots[0].RawURL != exact.ScreenshotUploads[4].RawURL ||
 		ordinary.Screenshots[0].PackMemberID != "" || len(meta.ExactMedia.Screenshots) != 5 || repo.uploadsCalls != 0 {
 		t.Fatalf("ordinary lane or source was changed = %#v, repository reads = %d, err = %v", ordinary.Screenshots, repo.uploadsCalls, err)
