@@ -1804,7 +1804,13 @@ for (const checkFirst of [false, true]) {
       });
       await expect(choice).toHaveValue("yes");
       await expect(reason).toHaveValue("verified improvement");
-      const checked = await runDuplicateCheck(page, "blocked");
+      // A retained check can complete without clearing the pending duplicate decision.
+      const checked = await runDuplicateCheck(page, checkFirst ? "completed" : "blocked");
+      expect(checked.workflow.status).toBe("blocked");
+      expect(checked.dupes?.results).toMatchObject([
+        { trackerId: "ANT", decision: "pending", status: "blocked" },
+      ]);
+      if (checkFirst) expect(checked.dupes).toEqual(applied.dupes);
       expect(checked.projections!.projections[0].questionnaireAnswers).toMatchObject({
         [choiceKey]: "yes",
         [reasonKey]: "verified improvement",
