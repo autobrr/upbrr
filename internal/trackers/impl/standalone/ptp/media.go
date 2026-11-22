@@ -47,10 +47,8 @@ func buildMediaSection(meta api.UploadSubject, dbPath string) (string, error) {
 			return "[mediainfo]" + strings.TrimSpace(text) + "[/mediainfo]", nil
 		}
 		sections := make([]string, 0, len(meta.Disc.Items))
-		for index, disc := range meta.Disc.Items {
-			// Preserve playlist order inside each disc’s own block.
-			summary := (api.DiscFacts{Items: []api.DiscItemFacts{disc}}).AggregateSummary()
-			sections = append(sections, fmt.Sprintf("[b]Disc %d[/b]\n[mediainfo]%s[/mediainfo]", index+1, summary))
+		for _, disc := range meta.Disc.Items {
+			sections = append(sections, bdDiscMediaBlock(disc))
 		}
 		return strings.Join(sections, "\n\n"), nil
 	default:
@@ -68,4 +66,35 @@ func buildMediaSection(meta api.UploadSubject, dbPath string) (string, error) {
 		}
 		return strings.Join(sections, "\n\n"), nil
 	}
+}
+
+// ptpDiscMediaBlocks binds each report to its prepared disc rather than
+// parsing headings in a concatenated report or relying on screenshot order.
+func ptpDiscMediaBlocks(meta api.UploadSubject, dbPath string) map[string]string {
+	blocks := make(map[string]string, len(meta.Discs))
+	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
+	case "BDMV":
+		if _, err := readBDSummary(meta, dbPath); err == nil {
+			for _, disc := range meta.Disc.Items {
+				blocks[disc.ID] = bdDiscMediaBlock(disc)
+			}
+		}
+	case "DVD":
+		for _, disc := range meta.Discs {
+			ifo, _ := readTextFile(disc.MediaInfoTextPath)
+			ifo, vob := strings.TrimSpace(ifo), strings.TrimSpace(disc.DVDVOBMediaInfoText)
+			if ifo != "" && vob != "" {
+				ifo += "\n\n"
+			}
+			if report := ifo + vob; report != "" {
+				blocks[disc.ID] = "[mediainfo]" + report + "[/mediainfo]"
+			}
+		}
+	}
+	return blocks
+}
+
+func bdDiscMediaBlock(disc api.DiscItemFacts) string {
+	summary := (api.DiscFacts{Items: []api.DiscItemFacts{disc}}).AggregateSummary()
+	return "[mediainfo]" + summary + "[/mediainfo]"
 }

@@ -4,6 +4,8 @@
 package ptp
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -62,13 +64,55 @@ func TestDiscScreenshotSectionCapsExtrasWithoutDroppingFirstDiscFrames(t *testin
 			})
 		}
 	}
-	section := buildScreenshotSection(meta, screenshots, false)
+	section := strings.Join(ptpDiscScreenshotGroups(meta.Discs, screenshots, "\n"), "\n")
 	if strings.Count(section, "[img]") != 8 || !strings.Contains(section, "first-d.png") ||
 		strings.Contains(section, "second-c.png") || strings.Contains(section, "third-c.png") {
 		t.Fatalf("wrong per-disc screenshots: %q", section)
 	}
-	if got := buildScreenshotSection(meta, screenshots[:9], false); got != "" {
+	if got := ptpDiscScreenshotGroups(meta.Discs, screenshots[:9], "\n"); got != nil {
 		t.Fatalf("other discs supplied missing third-disc frames: %q", got)
+	}
+}
+
+func TestMultiDVDDescriptionPairsEachReportWithItsOwnImages(t *testing.T) {
+	t.Parallel()
+	ifo := filepath.Join(t.TempDir(), "second-ifo.txt")
+	if err := os.WriteFile(ifo, []byte("DVD B IFO"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	meta := api.UploadSubject{
+		DiscType: "DVD",
+		ExactMedia: &api.ExactMediaAssets{},
+		Discs: []api.DiscEvidenceResource{
+			{ID: "a", DVDVOBMediaInfoText: "DVD A VOB"},
+			{
+ID: "b",
+ DVDVOBMediaInfoText: "DVD B VOB",
+ MediaInfoTextPath: ifo,
+},
+		},
+	}
+	assets := trackers.DescriptionAssets{Screenshots: []api.ScreenshotImage{
+		{
+DiscID: "b",
+ Host: "pixhost",
+ RawURL: "https://img.pixhost.to/b1.png",
+},
+		{
+DiscID: "a",
+ Host: "pixhost",
+ RawURL: "https://img.pixhost.to/a1.png",
+},
+		{
+DiscID: "b",
+ Host: "pixhost",
+ RawURL: "https://img.pixhost.to/b2.png",
+},
+	}}
+	want := "[mediainfo]DVD A VOB[/mediainfo]\n[img]https://img.pixhost.to/a1.png[/img]\n\n\n" +
+		"[mediainfo]DVD B IFO\n\nDVD B VOB[/mediainfo]\n[img]https://img.pixhost.to/b1.png[/img]\n[img]https://img.pixhost.to/b2.png[/img]"
+	if got := buildDescription(meta, config.TrackerConfig{ScreenshotBlankLine: new(false)}, config.Config{}, assets); got != want {
+		t.Fatalf("DVD report and screenshot sequence = %q", got)
 	}
 }
 

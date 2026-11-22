@@ -114,14 +114,15 @@ func testPTPDescriptionCaptureScope(t *testing.T, disc string, frameDiscs []stri
 		}
 	}
 	if len(discs) > 1 {
-		if strings.Count(body, "[mediainfo]") != 3 ||
-			!strings.Contains(body, "BDInfo report 1\n\nfirst — 00002.MPLS\nAnother playlist on disc 1[/mediainfo]") ||
-			!strings.Contains(body, "[b]Disc 2[/b]\n[mediainfo]BDInfo report 2[/mediainfo]") {
-			t.Fatalf("disc reports were not separated by disc: %s", body)
+		groups := strings.Split(body, "\n\n\n")
+		if len(groups) != 3 || strings.Count(body, "[mediainfo]") != 3 || strings.Contains(body, "[b]Disc ") ||
+			!strings.Contains(groups[0], "BDInfo report 1\n\nfirst — 00002.MPLS\nAnother playlist on disc 1[/mediainfo]") {
+			t.Fatalf("disc galleries did not have one unlabelled MediaInfo block per disc: %s", body)
 		}
-		for index := range discs {
-			if !strings.Contains(body, fmt.Sprintf("[b]Disc %d[/b]\n[img]", index+1)) {
-				t.Fatalf("disc screenshot section %d is not labelled: %s", index+1, body)
+		for index, firstFrame := range []int{0, 3, 5} {
+			if !strings.HasPrefix(groups[index], "[mediainfo]"+[]string{"first", "BDInfo report 2", "BDInfo report 3"}[index]) ||
+				!strings.Contains(groups[index], "[/mediainfo]\n[img]"+exact.ScreenshotUploads[firstFrame].RawURL) {
+				t.Fatalf("disc %d report did not immediately precede its own screenshots: %s", index+1, groups[index])
 			}
 		}
 	}

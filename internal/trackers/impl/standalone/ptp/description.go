@@ -43,8 +43,11 @@ func buildDescription(meta api.UploadSubject, trackerConfig config.TrackerConfig
 	}
 
 	var sections []string
-	if mediaSection, err := buildMediaSection(meta, appConfig.MainSettings.DBPath); err == nil && mediaSection != "" {
-		sections = append(sections, mediaSection)
+	multiDisc := meta.ExactMedia != nil && len(meta.Discs) > 1
+	if !multiDisc {
+		if mediaSection, err := buildMediaSection(meta, appConfig.MainSettings.DBPath); err == nil && mediaSection != "" {
+			sections = append(sections, mediaSection)
+		}
 	}
 	if strings.TrimSpace(baseDescription) != "" {
 		sections = append(sections, comparison.MapOutsideBlocks(baseDescription, convertDescription))
@@ -58,7 +61,19 @@ func buildDescription(meta api.UploadSubject, trackerConfig config.TrackerConfig
 	if audioAnalysis != "" {
 		sections = append(sections, convertDescription(audioAnalysis))
 	}
-	if shots := buildScreenshotSection(meta, assets.Screenshots, trackerConfig.ScreenshotBlankLineEnabled()); shots != "" {
+	blankLine := trackerConfig.ScreenshotBlankLineEnabled()
+	if multiDisc {
+		galleries := ptpDiscScreenshotGroups(meta.Discs, assets.Screenshots, screenshotSeparator(blankLine))
+		if len(galleries) > 0 {
+			reports := ptpDiscMediaBlocks(meta, appConfig.MainSettings.DBPath)
+			for index, disc := range meta.Discs {
+				if report := reports[disc.ID]; report != "" {
+					galleries[index] = report + "\n" + galleries[index]
+				}
+			}
+			sections = append(sections, strings.Join(galleries, "\n\n\n"))
+		}
+	} else if shots := buildScreenshotSection(meta, assets.Screenshots, blankLine); shots != "" {
 		sections = append(sections, shots)
 	}
 	return strings.TrimSpace(strings.Join(sections, "\n\n"))
@@ -73,13 +88,7 @@ func buildScreenshotSection(meta api.UploadSubject, screenshots []api.Screenshot
 	if len(screenshots) == 0 {
 		return ""
 	}
-	separator := "\n"
-	if blankLine {
-		separator += "\n"
-	}
-	if meta.ExactMedia != nil && len(meta.Discs) > 1 {
-		return ptpDiscScreenshotSection(meta.Discs, screenshots, separator)
-	}
+	separator := screenshotSeparator(blankLine)
 	if members := ptpExactPackMembers(meta); len(members) > 0 {
 		return strings.Join(ptpPackScreenshotImages(members, screenshots), separator)
 	}
@@ -96,9 +105,16 @@ func buildScreenshotSection(meta api.UploadSubject, screenshots []api.Screenshot
 	return strings.Join(allowed, separator)
 }
 
-// ptpDiscScreenshotSection labels the requested first-disc frames and two
-// distinct hosted frames for each remaining prepared disc.
-func ptpDiscScreenshotSection(discs []api.DiscEvidenceResource, screenshots []api.ScreenshotImage, separator string) string {
+func screenshotSeparator(blankLine bool) string {
+	if blankLine {
+		return "\n\n"
+	}
+	return "\n"
+}
+
+// ptpDiscScreenshotGroups returns one gallery per prepared disc in order, or
+// nil when any disc lacks its required distinct hosted frames.
+func ptpDiscScreenshotGroups(discs []api.DiscEvidenceResource, screenshots []api.ScreenshotImage, separator string) []string {
 	sections := make([]string, 0, len(discs))
 	seen := make(map[string]bool)
 	for index, disc := range discs {
@@ -118,11 +134,11 @@ func ptpDiscScreenshotSection(discs []api.DiscEvidenceResource, screenshots []ap
 			}
 		}
 		if len(images) == 0 || index > 0 && len(images) != screenshotsPerAdditionalDisc {
-			return ""
+			return nil
 		}
-		sections = append(sections, fmt.Sprintf("[b]Disc %d[/b]\n%s", index+1, strings.Join(images, separator)))
+		sections = append(sections, strings.Join(images, separator))
 	}
-	return strings.Join(sections, "\n\n")
+	return sections
 }
 
 func ptpExactPackMembers(meta api.UploadSubject) []api.ScreenshotPackMember {
