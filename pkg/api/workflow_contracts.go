@@ -585,6 +585,8 @@ type MediaArtifact struct {
 	DiscID string `json:"discId,omitempty"`
 	// PackMemberID keeps pack images out of ordinary release-level slots.
 	PackMemberID string `json:"packMemberId,omitempty"`
+	// AdditionalDisc keeps tracker-required extra frames out of the shared screenshot set.
+	AdditionalDisc bool `json:"additionalDisc,omitempty"`
 	// DiscName is the safe page-facing label derived from prepared facts.
 	DiscName         string            `json:"discName,omitempty"`
 	Kind             MediaArtifactKind `json:"kind"`

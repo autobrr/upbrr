@@ -239,6 +239,8 @@ type ScreenshotLinkedImage struct {
 }
 
 type ScreenshotImage struct {
+	// AdditionalDisc marks a frame captured for a tracker’s extra-disc quota.
+	AdditionalDisc bool `json:",omitempty"`
 	// PackMemberID identifies the eligible video that actually produced this screenshot.
 	PackMemberID string                `json:",omitempty"`
 	Processing   *ScreenshotProcessing `json:",omitempty"`

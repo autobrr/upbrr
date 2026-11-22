@@ -898,6 +898,78 @@ func TestAudioAnalysisRequiresCompleteHostBatchAndFallsBack(t *testing.T) {
 	}
 }
 
+func TestAdditionalDiscFramesStayWithTheTrackersThatNeedThem(t *testing.T) {
+	t.Parallel()
+	registry := mediaImageHostRegistry(t)
+	if err := registry.RegisterDescriptor(trackers.Descriptor{
+		Name:              "DISC",
+		Definition:        mediaImageHostDefinition("DISC"),
+		Family:            trackers.FamilyStandalone,
+		BaseURL:           "https://disc.example.invalid",
+		UploadContentMode: trackers.UploadContentModeScreenshots,
+		ImageHost:         &trackers.ImageHostPolicy{AllowedHosts: []string{"onlyimage"}},
+		WorkflowMedia:     &trackers.WorkflowMediaRequirements{AdditionalDiscScreenshots: 2},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	images := []api.ScreenshotImage{
+		{
+Path: "main.png",
+ DiscID: "a",
+ Purpose: api.ScreenshotPurposeFinal,
+},
+		{
+Path: "extra-1.png",
+ DiscID: "b",
+ Purpose: api.ScreenshotPurposeFinal,
+ AdditionalDisc: true,
+},
+		{
+Path: "extra-2.png",
+ DiscID: "b",
+ Purpose: api.ScreenshotPurposeFinal,
+ AdditionalDisc: true,
+},
+	}
+	module := &mediaModule{
+		cfg:      config.Config{ImageHosting: config.ImageHostingConfig{Host1: "pixhost", Host2: "imgbb"}},
+		images:   &partialImageHostingService{failHost: "pixhost"},
+		logger:   api.NopLogger{},
+		registry: registry,
+	}
+	subject := api.UploadSubject{Trackers: []string{"ONE", "DISC"}, Discs: []api.DiscEvidenceResource{{ID: "a"}, {ID: "b"}}}
+	result, err := module.uploadImagesToTargetsWithFallback(t.Context(), subject, "", nil,
+		[]trackers.ImageUploadTarget{
+			{
+Host: "pixhost",
+ UsageScope: "global",
+ Trackers: []string{"ONE"},
+},
+			{
+Host: "onlyimage",
+ UsageScope: "global",
+ Trackers: []string{"DISC"},
+},
+		}, images, nil, nil)
+	if err != nil || len(result.Attempts) != 3 || len(result.Failures) != 0 {
+		t.Fatalf("upload routing = %+v, err = %v", result, err)
+	}
+	disc, fallback := result.Attempts[1], result.Attempts[2]
+	if disc.Host != "onlyimage" || len(disc.Links) != 3 ||
+		fallback.Host != "imgbb" || !fallback.Fallback || len(fallback.Links) != 1 || fallback.Links[0].ImagePath != "main.png" {
+		t.Fatalf("extra images crossed host lanes: disc = %+v, ordinary fallback = %+v", disc, fallback)
+	}
+	ordinary, err := module.uploadImagesToTargetsWithFallback(t.Context(), subject, "imgbb", nil,
+		[]trackers.ImageUploadTarget{{
+Host: "imgbb",
+ UsageScope: "global",
+ Trackers: []string{"ONE"},
+}}, images, nil, nil)
+	if err != nil || len(ordinary.Links) != 1 || ordinary.Links[0].ImagePath != "main.png" {
+		t.Fatalf("explicit ordinary host retry sent extra images: %+v, err = %v", ordinary, err)
+	}
+}
+
 func TestPackScreenshotIncompleteUploadFallsBackDespiteOrdinaryMinimum(t *testing.T) {
 	t.Parallel()
 	registry := mediaImageHostRegistry(t)

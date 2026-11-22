@@ -42,13 +42,13 @@ type descriptionImageHostResolution struct {
 	blocking    bool
 }
 
-// hasExactPackScreenshotScope routes pack descriptions through per-tracker
+// hasExactScreenshotScope routes scoped descriptions through per-tracker
 // image selection even when hosting was not skipped.
-func hasExactPackScreenshotScope(meta api.UploadSubject, registry *Registry) bool {
+func hasExactScreenshotScope(meta api.UploadSubject, registry *Registry) bool {
 	if meta.ExactMedia == nil {
 		return false
 	}
-	if slices.ContainsFunc(meta.ExactMedia.Screenshots, func(image api.ScreenshotImage) bool { return image.PackMemberID != "" }) {
+	if slices.ContainsFunc(meta.ExactMedia.Screenshots, func(image api.ScreenshotImage) bool { return image.PackMemberID != "" || image.AdditionalDisc }) {
 		return true
 	}
 	return slices.ContainsFunc(meta.Trackers, func(tracker string) bool {
@@ -64,17 +64,25 @@ func RequiresPackScreenshots(registry *Registry, tracker string, meta api.Upload
 		strings.TrimSpace(meta.DiscType) == "" && len(mediafacts.PackScreenshotMembers(meta.FileList)) > 1
 }
 
-// scopeExactPackMedia preserves distinct per-file and ordinary screenshot
+// RequiresAdditionalDiscScreenshots reports whether this tracker can consume
+// extra screenshots from later discs in the prepared collection.
+func RequiresAdditionalDiscScreenshots(registry *Registry, tracker string, meta api.UploadSubject) bool {
+	descriptor, ok := registry.LookupDescriptor(tracker)
+	return ok && descriptor.WorkflowMedia != nil && descriptor.WorkflowMedia.AdditionalDiscScreenshots > 0 && len(meta.Discs) > 1
+}
+
+// scopeExactScreenshotMedia keeps extra disc and per-file screenshots out of ordinary tracker
 // lanes without altering the shared exact media or comparison inputs.
-func scopeExactPackMedia(meta api.UploadSubject, tracker string, registry *Registry) api.UploadSubject {
-	if !hasExactPackScreenshotScope(meta, registry) {
+func scopeExactScreenshotMedia(meta api.UploadSubject, tracker string, registry *Registry) api.UploadSubject {
+	if !hasExactScreenshotScope(meta, registry) {
 		return meta
 	}
 	wantPack := RequiresPackScreenshots(registry, tracker, meta)
+	wantExtraDisc := RequiresAdditionalDiscScreenshots(registry, tracker, meta)
 	exact := meta.ExactMedia.Clone()
 	removedPaths := make(map[string]bool)
 	exact.Screenshots = slices.DeleteFunc(exact.Screenshots, func(image api.ScreenshotImage) bool {
-		remove := (image.PackMemberID != "") != wantPack
+		remove := (image.PackMemberID != "") != wantPack || image.AdditionalDisc && !wantExtraDisc
 		if remove {
 			removedPaths[strings.TrimSpace(image.Path)] = true
 		}

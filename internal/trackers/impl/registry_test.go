@@ -48,10 +48,24 @@ func testPTPDescriptionCaptureScope(t *testing.T, disc string, frameDiscs []stri
 		wantCount = 3
 	}
 	var discs []api.DiscEvidenceResource
+	var facts api.DiscFacts
+	trackerIDs := []string{"PTP"}
 	if len(frameDiscs) > 0 {
-		discs = []api.DiscEvidenceResource{{ID: "first"}, {ID: "second"}, {ID: "third"}}
 		captureFiles = make([]string, len(frameDiscs))
 		wantCount = 7
+		trackerIDs = append(trackerIDs, "HHD")
+		for index, id := range []string{"first", "second", "third"} {
+			discs = append(discs, api.DiscEvidenceResource{ID: id, Type: "BDMV"})
+			facts.Items = append(facts.Items, api.DiscItemFacts{
+				ID: id,
+				Name: id,
+				Reports: []api.DiscReportFacts{{Summary: fmt.Sprintf("BDInfo report %d", index+1)}},
+			})
+		}
+		facts.Items[0].Reports = append(facts.Items[0].Reports, api.DiscReportFacts{
+			Playlist: api.PlaylistInfo{File: "00002.MPLS"},
+			Summary: "Another playlist on disc 1",
+		})
 	}
 	for index, file := range captureFiles {
 		imagePath := filepath.Join(root, fmt.Sprintf("frame-%d.png", index))
@@ -59,6 +73,7 @@ func testPTPDescriptionCaptureScope(t *testing.T, disc string, frameDiscs []stri
 		image := api.ScreenshotImage{Path: imagePath, Purpose: api.ScreenshotPurposeFinal}
 		if index < len(frameDiscs) {
 			image.DiscID = frameDiscs[index]
+			image.AdditionalDisc = image.DiscID != "first"
 		}
 		if file != "" {
 			image.PackMemberID = mediafacts.TrackResourceID(file)
@@ -77,22 +92,45 @@ func testPTPDescriptionCaptureScope(t *testing.T, disc string, frameDiscs []stri
 		SourcePath:         root,
 		DiscType:           disc,
 		Discs:              discs,
+		Disc:               facts,
 		FileList:           files,
-		Trackers:           []string{"PTP"},
+		Trackers:           trackerIDs,
 		ExactMedia:         exact,
 		ImageHostOverrides: api.ImageHostOverrides{SkipUpload: new(true)},
 	}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "upbrr.db")},
 		ImageHosting: config.ImageHostingConfig{Host1: "imgbb"}}
 	service := trackers.NewServiceWithRegistry(cfg, api.NopLogger{}, descriptionPreviewPersistence{}, MustNewRegistry())
-	preview, err := service.BuildPreparation(t.Context(), api.NewDescriptionSubject(meta), []string{"PTP"})
-	if err != nil || len(preview.ContentFailures) != 0 || len(preview.Descriptions) != 1 {
+	preview, err := service.BuildPreparation(t.Context(), api.NewDescriptionSubject(meta), trackerIDs)
+	if err != nil || len(preview.ContentFailures) != 0 || len(preview.Descriptions) != len(trackerIDs) {
 		t.Fatalf("pack preview = %+v, err = %v", preview, err)
 	}
-	body := preview.Descriptions[0].RawDescription
+	var body, ordinary string
+	for _, desc := range preview.Descriptions {
+		if slices.Contains(desc.Trackers, "PTP") {
+			body = desc.RawDescription
+		} else {
+			ordinary = desc.RawDescription
+		}
+	}
+	if len(discs) > 1 {
+		if strings.Count(body, "[mediainfo]") != 3 ||
+			!strings.Contains(body, "BDInfo report 1\n\nfirst — 00002.MPLS\nAnother playlist on disc 1[/mediainfo]") ||
+			!strings.Contains(body, "[b]Disc 2[/b]\n[mediainfo]BDInfo report 2[/mediainfo]") {
+			t.Fatalf("disc reports were not separated by disc: %s", body)
+		}
+		for index := range discs {
+			if !strings.Contains(body, fmt.Sprintf("[b]Disc %d[/b]\n[img]", index+1)) {
+				t.Fatalf("disc screenshot section %d is not labelled: %s", index+1, body)
+			}
+		}
+	}
 	for index, image := range exact.ScreenshotUploads {
 		if got := strings.Contains(body, image.RawURL); got != (index < wantCount) {
 			t.Errorf("PTP description used the wrong screenshot set: frame %d present=%t; %s", index, got, body)
+		}
+		if len(discs) > 1 && strings.Contains(ordinary, image.RawURL) != (index < 3) {
+			t.Errorf("ordinary description used the wrong screenshot set: frame %d; %s", index, ordinary)
 		}
 	}
 }

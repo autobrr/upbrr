@@ -83,7 +83,7 @@ func prepareDescription(ctx context.Context, req trackers.PreparationInput) (tra
 
 	description := strings.TrimSpace(assets.Description)
 	if !assets.Final {
-		if req.Meta.ExactMedia != nil && len(req.Meta.Discs) > 1 && len(ptpDiscScreenshotImages(req.Meta.Discs, assets.Screenshots)) == 0 {
+		if req.Meta.ExactMedia != nil && len(req.Meta.Discs) > 1 && ptpDiscScreenshotSection(req.Meta.Discs, assets.Screenshots, "\n") == "" {
 			return trackers.DescriptionResult{}, errors.New(
 				"PTP multi-disc upload needs hosted screenshots from the first disc and two from every additional disc",
 			)

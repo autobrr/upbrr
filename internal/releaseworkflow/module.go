@@ -7081,7 +7081,7 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 		}
 		switch artifact.Kind {
 		case api.MediaArtifactScreenshot:
-			if artifact.PackMemberID == "" {
+			if artifact.PackMemberID == "" && !artifact.AdditionalDisc {
 				selectedScreenshots++
 			}
 		case api.MediaArtifactComparison:
@@ -7277,7 +7277,8 @@ func HostedScreenshotRequirementsMet(snapshot api.MediaArtifactSet, projections 
 						}
 						sources[source.ID] = struct{}{}
 					}
-				} else if final || source.Kind == api.MediaArtifactComparison && reusedComparison && !comparisonHostFailed {
+				} else if final && (!source.AdditionalDisc || discs != nil) ||
+					source.Kind == api.MediaArtifactComparison && reusedComparison && !comparisonHostFailed {
 					sources[source.ID] = struct{}{}
 					if discs != nil && final && !comparisonHostFailed && host != "" {
 						if discSources[host] == nil {

@@ -43,7 +43,16 @@ func buildMediaSection(meta api.UploadSubject, dbPath string) (string, error) {
 		if strings.TrimSpace(text) == "" {
 			return "", nil
 		}
-		return "[mediainfo]" + strings.TrimSpace(text) + "[/mediainfo]", nil
+		if len(meta.Disc.Items) < 2 {
+			return "[mediainfo]" + strings.TrimSpace(text) + "[/mediainfo]", nil
+		}
+		sections := make([]string, 0, len(meta.Disc.Items))
+		for index, disc := range meta.Disc.Items {
+			// Preserve playlist order inside each disc’s own block.
+			summary := (api.DiscFacts{Items: []api.DiscItemFacts{disc}}).AggregateSummary()
+			sections = append(sections, fmt.Sprintf("[b]Disc %d[/b]\n[mediainfo]%s[/mediainfo]", index+1, summary))
+		}
+		return strings.Join(sections, "\n\n"), nil
 	default:
 		text, err := readTextFile(strings.TrimSpace(meta.MediaInfoTextPath))
 		if err != nil {

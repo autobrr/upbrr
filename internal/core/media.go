@@ -408,16 +408,21 @@ func (m *mediaModule) resolveFallbackImageUploadTargets(
 	return normalized, nil
 }
 
-// scopePackUploadImages constrains final images to the target tracker set.
+// scopeUploadScreenshots constrains final images to the target tracker set.
 // Other kinds of media use the original shared hosting policy.
-func (m *mediaModule) scopePackUploadImages(images []api.ScreenshotImage, names []string, meta api.UploadSubject) []api.ScreenshotImage {
+func (m *mediaModule) scopeUploadScreenshots(images []api.ScreenshotImage, names []string, meta api.UploadSubject) []api.ScreenshotImage {
 	pack, ordinary := m.packUploadLanes(names, meta)
+	extraDiscs := uploadWantsAdditionalDiscScreenshots(m.registry, names, meta)
 	return slices.DeleteFunc(slices.Clone(images), func(image api.ScreenshotImage) bool {
 		if image.PackMemberID != "" {
 			return !pack
 		}
-		return image.Purpose == api.ScreenshotPurposeFinal && !ordinary
+		return image.Purpose == api.ScreenshotPurposeFinal && (!ordinary || image.AdditionalDisc && !extraDiscs)
 	})
+}
+
+func uploadWantsAdditionalDiscScreenshots(registry *trackers.Registry, names []string, meta api.UploadSubject) bool {
+	return slices.ContainsFunc(names, func(name string) bool { return trackers.RequiresAdditionalDiscScreenshots(registry, name, meta) })
 }
 
 func (m *mediaModule) packUploadLanes(names []string, meta api.UploadSubject) (pack, ordinary bool) {
@@ -474,9 +479,14 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 	batchID := rand.Text()
 	declaredPack, _ := m.packUploadLanes(meta.Trackers, meta)
 	packScope := declaredPack || slices.ContainsFunc(images, func(image api.ScreenshotImage) bool { return image.PackMemberID != "" })
+	discScope := slices.ContainsFunc(images, func(image api.ScreenshotImage) bool { return image.AdditionalDisc })
+	scoped := packScope || discScope
 
 	targetKey := func(target trackers.ImageUploadTarget) string {
 		key := strings.ToLower(strings.TrimSpace(target.Host)) + "\x00" + normalizeImageUploadUsageScope(target.UsageScope)
+		if discScope && uploadWantsAdditionalDiscScreenshots(m.registry, target.Trackers, meta) {
+			return key + "\x00discs"
+		}
 		if pack, ordinary := m.packUploadLanes(target.Trackers, meta); packScope && pack {
 			if !ordinary {
 				return key + "\x00pack"
@@ -529,8 +539,8 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 		pending++
 		go func() {
 			targetImages := images
-			if packScope {
-				targetImages = m.scopePackUploadImages(images, target.Trackers, meta)
+			if scoped {
+				targetImages = m.scopeUploadScreenshots(images, target.Trackers, meta)
 			}
 			if target.ReuseOnly {
 				available := uploadedImagesByPathForTarget(retainedLinks, target)
@@ -558,7 +568,7 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 		return true
 	}
 	if allowFallback && len(retainedLinks) > 0 {
-		for _, retainedTarget := range m.retainedFallbackImageUploadTargets(host, meta, sortedMapKeys(failedHosts), targets, images, retainedLinks, packScope) {
+		for _, retainedTarget := range m.retainedFallbackImageUploadTargets(host, meta, sortedMapKeys(failedHosts), targets, images, retainedLinks, scoped) {
 			launch(retainedTarget, true)
 			markCovered(retainedTarget)
 		}
@@ -853,10 +863,7 @@ func (m *mediaModule) uploadImagesToTarget(
 	}
 	packCovered := uploadedImageLinksCoverTarget(results, target, packImages)
 	discCovered := true
-	if len(meta.Discs) > 1 && m.registry != nil && slices.ContainsFunc(target.Trackers, func(tracker string) bool {
-		descriptor, ok := m.registry.LookupDescriptor(tracker)
-		return ok && descriptor.WorkflowMedia != nil && descriptor.WorkflowMedia.AdditionalDiscScreenshots > 0
-	}) {
+	if uploadWantsAdditionalDiscScreenshots(m.registry, target.Trackers, meta) {
 		discImages := slices.DeleteFunc(slices.Clone(images), func(image api.ScreenshotImage) bool {
 			return image.DiscID == "" || image.Purpose != api.ScreenshotPurposeFinal
 		})
@@ -981,7 +988,7 @@ func (m *mediaModule) retainedFallbackImageUploadTargets(
 	targets []trackers.ImageUploadTarget,
 	images []api.ScreenshotImage,
 	retainedLinks []api.UploadedImageLink,
-	packScope bool,
+	scoped bool,
 ) []trackers.ImageUploadTarget {
 	covered := make([]trackers.ImageUploadTarget, 0, len(targets))
 	for _, target := range targets {
@@ -1010,8 +1017,8 @@ func (m *mediaModule) retainedFallbackImageUploadTargets(
 				for _, fallbackTarget := range fallbackTargets {
 					fallbackTarget = normalizeImageUploadTarget(fallbackTarget)
 					targetImages := images
-					if packScope {
-						targetImages = m.scopePackUploadImages(images, fallbackTarget.Trackers, meta)
+					if scoped {
+						targetImages = m.scopeUploadScreenshots(images, fallbackTarget.Trackers, meta)
 					}
 					if len(targetImages) > 0 && uploadedImageLinksCoverTarget(retainedLinks, fallbackTarget, targetImages) {
 						covered = append(covered, fallbackTarget)

@@ -5530,6 +5530,9 @@
       "MediaArtifact": {
         "type": "object",
         "properties": {
+          "additionalDisc": {
+            "type": "boolean"
+          },
           "discId": {
             "type": "string"
           },

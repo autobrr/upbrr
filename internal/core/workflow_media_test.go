@@ -2531,6 +2531,9 @@ func TestWorkflowMediaPlansAndCapturesConfiguredPrimaryAndFixedExtras(t *testing
 	counts := make(map[string]int)
 	for _, artifact := range media.Artifacts {
 		counts[artifact.DiscID]++
+		if artifact.AdditionalDisc != (artifact.DiscID != "first") {
+			t.Fatalf("screenshot has the wrong tracker scope: %+v", artifact)
+		}
 	}
 	if counts["first"] != 3 || counts["second"] != 2 || counts["third"] != 2 {
 		t.Fatalf("actual capture counts = %+v", counts)

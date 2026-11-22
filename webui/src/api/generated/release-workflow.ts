@@ -1431,6 +1431,7 @@ export type LanguageFacts = Readonly<{
 }>;
 
 export type MediaArtifact = Readonly<{
+  additionalDisc?: boolean;
   discId?: string;
   discName?: string;
   height?: number;

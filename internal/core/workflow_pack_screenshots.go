@@ -10,20 +10,22 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // selectedTrackerImageSources keeps reuse decisions in the same screenshot lane
 // as live hosting. Menus and comparison sets keep their existing behavior.
 func selectedTrackerImageSources(
-	artifacts []api.MediaArtifact, selected map[api.PublicResourceID]struct{}, pack *api.PackScreenshotRequirement,
+	artifacts []api.MediaArtifact, selected map[api.PublicResourceID]struct{}, requirements api.TrackerArtifactRequirements,
 ) map[api.PublicResourceID]struct{} {
 	scoped := make(map[api.PublicResourceID]struct{}, len(selected))
 	for _, artifact := range artifacts {
 		if _, ok := selected[artifact.ID]; !ok {
 			continue
 		}
-		if artifact.Kind == api.MediaArtifactScreenshot && !screenshotMatchesPackRequirement(artifact, pack) {
+		if artifact.Kind == api.MediaArtifactScreenshot && (!screenshotMatchesPackRequirement(artifact, requirements.PackScreenshots) ||
+			artifact.AdditionalDisc && requirements.DiscScreenshots == nil) {
 			continue
 		}
 		scoped[artifact.ID] = struct{}{}
@@ -38,22 +40,19 @@ func screenshotMatchesPackRequirement(artifact api.MediaArtifact, pack *api.Pack
 	return slices.Contains(pack.MemberIDs, artifact.PackMemberID)
 }
 
-func packImageSourcesCoverRequirement(artifacts []api.MediaArtifact, covered map[api.PublicResourceID]struct{}, pack *api.PackScreenshotRequirement) bool {
-	if pack == nil {
+func scopedImageSourcesCoverRequirement(
+	artifacts []api.MediaArtifact, covered map[api.PublicResourceID]struct{}, requirements api.TrackerArtifactRequirements,
+) bool {
+	if requirements.PackScreenshots == nil && requirements.DiscScreenshots == nil {
 		return true
 	}
-	counts := make(map[string]int, len(pack.MemberIDs))
+	sources := make([]api.MediaArtifact, 0, len(covered))
 	for _, artifact := range artifacts {
-		if _, ok := covered[artifact.ID]; ok && artifact.Kind == api.MediaArtifactScreenshot && artifact.Purpose == api.ScreenshotPurposeFinal {
-			counts[artifact.PackMemberID]++
+		if _, ok := covered[artifact.ID]; ok {
+			sources = append(sources, artifact)
 		}
 	}
-	for _, member := range pack.MemberIDs {
-		if counts[member] < pack.CountPerMember {
-			return false
-		}
-	}
-	return true
+	return releaseworkflow.LocalScreenshotSourceRequirementsMet(sources, []api.TrackerReleaseProjection{{Artifacts: requirements}})
 }
 
 // captureWorkflowPackScreenshots uses only member paths in the exact prepared

@@ -4697,7 +4697,7 @@ func TestResolvePackDescriptionAssetsKeepsHostedVariantsBoundToEachVideo(t *test
 		t.Fatal(err)
 	}
 	meta.Trackers[0] = "PACK"
-	ptpMeta := scopeExactPackMedia(meta, "PACK", registry)
+	ptpMeta := scopeExactScreenshotMedia(meta, "PACK", registry)
 	ptpExact, err := exactMediaForTrackerHost("PACK", ptpMeta, config.Config{}, config.TrackerConfig{}, registry)
 	if err != nil {
 		t.Fatal(err)
@@ -4712,7 +4712,7 @@ func TestResolvePackDescriptionAssetsKeepsHostedVariantsBoundToEachVideo(t *test
 			t.Fatalf("member binding not preserved through the hosted description slot: %#v", screenshot)
 		}
 	}
-	ordinary, err := ResolveDescriptionAssets(t.Context(), "HHD", scopeExactPackMedia(meta, "HHD", registry), repo, api.NopLogger{}, registry)
+	ordinary, err := ResolveDescriptionAssets(t.Context(), "HHD", scopeExactScreenshotMedia(meta, "HHD", registry), repo, api.NopLogger{}, registry)
 	if err != nil || len(ordinary.Screenshots) != 1 || ordinary.Screenshots[0].RawURL != exact.ScreenshotUploads[4].RawURL ||
 		ordinary.Screenshots[0].PackMemberID != "" || len(meta.ExactMedia.Screenshots) != 5 || repo.uploadsCalls != 0 {
 		t.Fatalf("ordinary lane or source was changed = %#v, repository reads = %d, err = %v", ordinary.Screenshots, repo.uploadsCalls, err)

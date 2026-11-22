@@ -1667,6 +1667,9 @@ func compositeUploadSelectedScreenshotExcess(artifacts []api.MediaArtifact, proj
 			artifact.Purpose != api.ScreenshotPurposeFinal || artifact.Source == "comparison" || artifact.PackMemberID != "" {
 			continue
 		}
+		if discLimits == nil && artifact.AdditionalDisc {
+			continue
+		}
 		lane, limit := "", required
 		if len(discLimits) > 0 {
 			lane, limit = artifact.DiscID, discLimits[artifact.DiscID]

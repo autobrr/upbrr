@@ -978,6 +978,7 @@ func TestMultiDiscScreenshotReadinessDoesNotBorrowFramesAcrossDiscs(t *testing.T
 		source := api.MediaArtifact{
 			ID:       id,
 			DiscID:   disc,
+			AdditionalDisc: disc != "first",
 			Kind:     api.MediaArtifactScreenshot,
 			Purpose:  api.ScreenshotPurposeFinal,
 			Selected: true,
@@ -1014,6 +1015,16 @@ func TestMultiDiscScreenshotReadinessDoesNotBorrowFramesAcrossDiscs(t *testing.T
 		t.Fatal("a different tracker scope must not count towards disc coverage")
 	}
 	snapshot.HostAttempts = []api.HostedImageAttempt{attempt}
+	ordinary := api.TrackerReleaseProjection{
+		TrackerID: "OTHER",
+		Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 3},
+	}
+	snapshot.HostAttempts[0].TrackerIDs = []api.TrackerID{"PTP", "OTHER"}
+	snapshot.HostAttempts[0].Results = attempt.Results[4:]
+	if HostedScreenshotRequirementsMet(snapshot, []api.TrackerReleaseProjection{ordinary}) {
+		t.Fatal("ordinary tracker counted extra-disc uploads on the same host")
+	}
+	snapshot.HostAttempts[0] = attempt
 
 	last := len(snapshot.Artifacts) - 2
 	snapshot.Artifacts[last].Selected = false
