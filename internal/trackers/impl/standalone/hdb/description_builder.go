@@ -49,6 +49,7 @@ func BuildDescription(
 	}
 
 	keptDescription = trackers.StripDescriptionSignatures(keptDescription)
+	keptDescription, discReports := description.SplitLeadingDiscReports(keptDescription)
 	keptDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(keptDescription)
 	parts := make([]string, 0, 8)
 
@@ -80,7 +81,10 @@ func BuildDescription(
 		parts = append(parts, transformBaseDescription(audioAnalysis, false))
 	}
 
-	if section := buildDiscScreenshotSections(meta, screenshots, meta.Options.Screens); section != "" {
+	if discReports != "" {
+		parts = append(parts, transformBaseDescription(discReports, false))
+	}
+	if section := buildScreenshotSection(screenshots, meta.Options.Screens); section != "" {
 		parts = append(parts, section)
 	}
 

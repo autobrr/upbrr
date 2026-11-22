@@ -177,7 +177,7 @@
   },
   "internal/trackers/impl/standalone/ar/description.go:buildDescription": {
     "reason": "AR center-tag conversion applies only outside complete code/pre blocks in generated or final descriptions. Title, database-link, overview, genre, and YouTube provider selection and manual precedence remain unchanged, including PreferredGenreText and the final-description bypass of generated sections. Additional-disc markup changes only prepared report presentation, not provider selection.",
-    "sha256": "8fae15e9b92a55ff1b37a69d023543fe0ca177cd829416c2148a2589c9e0d38d"
+    "sha256": "70195be02c9a567a37845e6145ebd2b486311565ce20849a826d6175a9f8d4f7"
   },
   "internal/trackers/impl/standalone/ar/description.go:resolveOverview": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -961,7 +961,7 @@
   },
   "internal/trackers/impl/standalone/hds/description.go:buildDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. Screenshot notices consume selected image processing evidence only; provider/manual metadata precedence and tracker markup remain unchanged. Additional-disc markup changes only prepared report presentation, not provider selection.",
-    "sha256": "f8f1bd5a585ed4159b4c9f59c5507c860586a8c9ebb85d21f178c1c3e44aacf7"
+    "sha256": "35eaf276b0af5d2df5244c52d198664770108e6b98dac67d6aa1f4d02e961160"
   },
   "internal/trackers/impl/standalone/hds/description.go:prepareDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -1009,7 +1009,7 @@
   },
   "internal/trackers/impl/standalone/hdt/description.go:buildDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. Screenshot notices consume selected image processing evidence only; provider/manual metadata precedence and tracker markup remain unchanged. Additional-disc markup changes only prepared report presentation, not provider selection.",
-    "sha256": "310a3418c2d078b2942955b6147ac6b3c901055666456eba80d84b69417c7518"
+    "sha256": "bcf4fa8c1585f5f70065437dc0bd6e9a9e318464b5810657c353c64b5c169236"
   },
   "internal/trackers/impl/standalone/hdt/description.go:prepareDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -1265,7 +1265,7 @@
   },
   "internal/trackers/impl/standalone/tvc/description.go:buildDescription": {
     "reason": "Only the provider title logo is gated by AddLogo; episode text and other finalized facts retain their existing manual precedence.",
-    "sha256": "015239e4170bc1843d42708f6a8015d0067bf23b8195880fd244e05fceb86885"
+    "sha256": "fc28d0c495dbd1703d652e3130dd3c6ea352534ac505d6a09724e99c602a9bf0"
   },
   "internal/trackers/impl/standalone/tvc/description.go:genresText": {
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input",

@@ -58,7 +58,7 @@ func testPTPDescriptionCaptureScope(t *testing.T, disc string, frameDiscs []stri
 			discs = append(discs, api.DiscEvidenceResource{ID: id, Type: "BDMV"})
 			facts.Items = append(facts.Items, api.DiscItemFacts{
 				ID:      id,
-				Name:    id,
+				Name:    fmt.Sprintf("Disc %d", index+1),
 				Reports: []api.DiscReportFacts{{Summary: fmt.Sprintf("BDInfo report %d", index+1)}},
 			})
 		}
@@ -98,8 +98,11 @@ func testPTPDescriptionCaptureScope(t *testing.T, disc string, frameDiscs []stri
 		ExactMedia:         exact,
 		ImageHostOverrides: api.ImageHostOverrides{SkipUpload: new(true)},
 	}
-	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "upbrr.db")},
-		ImageHosting: config.ImageHostingConfig{Host1: "imgbb"}}
+	cfg := config.Config{
+MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "upbrr.db")},
+		ImageHosting: config.ImageHostingConfig{Host1: "imgbb"},
+		Description:  config.DescriptionSettingsConfig{CustomDescriptionHeader: "Release notes", ScreenshotHeader: "[b]Screenshots[/b]"},
+}
 	service := trackers.NewServiceWithRegistry(cfg, api.NopLogger{}, descriptionPreviewPersistence{}, MustNewRegistry())
 	preview, err := service.BuildPreparation(t.Context(), api.NewDescriptionSubject(meta), trackerIDs)
 	if err != nil || len(preview.ContentFailures) != 0 || len(preview.Descriptions) != len(trackerIDs) {
@@ -119,17 +122,27 @@ func testPTPDescriptionCaptureScope(t *testing.T, disc string, frameDiscs []stri
 	if len(discs) > 1 {
 		groups := strings.Split(body, "\n\n\n")
 		if len(groups) != 3 || strings.Count(body, "[mediainfo]") != 3 || strings.Contains(body, "[b]Disc ") ||
-			!strings.Contains(groups[0], "BDInfo report 1\n\nfirst — 00002.MPLS\nAnother playlist on disc 1[/mediainfo]") {
+			!strings.Contains(groups[0], "BDInfo report 1\n\nDisc 1 — 00002.MPLS\nAnother playlist on disc 1[/mediainfo]") {
 			t.Fatalf("disc galleries did not have one unlabelled MediaInfo block per disc: %s", body)
 		}
 		for index, firstFrame := range []int{0, 3, 5} {
-			if !strings.HasPrefix(groups[index], "[mediainfo]"+[]string{"first", "BDInfo report 2", "BDInfo report 3"}[index]) ||
+			if !strings.HasPrefix(groups[index], "[mediainfo]"+[]string{"Disc 1", "BDInfo report 2", "BDInfo report 3"}[index]) ||
 				!strings.Contains(groups[index], "[/mediainfo]\n[img]"+exact.ScreenshotUploads[firstFrame].RawURL) {
 				t.Fatalf("disc %d report did not immediately precede its own screenshots: %s", index+1, groups[index])
 			}
 		}
 	}
 	if len(discs) > 1 {
+		hhd := ordinary["HHD"]
+		notes, reports, header := strings.Index(hhd, "Release notes"), strings.Index(hhd, "[spoiler=BDInfo - Disc 2]"), strings.Index(hhd, "[b]Screenshots[/b]")
+		if notes < 0 || reports <= notes || header <= reports ||
+			!strings.Contains(hhd, "[/code][/spoiler]\n\n[b]Screenshots[/b]") || strings.Contains(hhd, "[b]Disc 1[/b]") {
+			t.Errorf("HHD should put extra disc reports between other description data and the existing screenshot header: %s", hhd)
+		}
+		hdb := ordinary["HDB"]
+		if !strings.Contains(hdb, "[/font][/hide]\n\n[center][url=") || strings.Contains(hdb, "[b]Disc 1[/b]") {
+			t.Errorf("HDB should put converted reports directly above the gallery, without a disc label: %s", hdb)
+		}
 		for tracker, tags := range map[string][2]string{
 			"HHD": {"[spoiler=BDInfo - Disc %d][code]", "[/code][/spoiler]"},
 			"HDB": {"[hide=BDInfo - Disc %d][font=monospace]", "[/font][/hide]"},

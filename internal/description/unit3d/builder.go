@@ -82,8 +82,8 @@ func BuildDescription(
 // without applying Unit3D cleanup or tag conversion to tracker-owned content.
 // Callers own removal of stale signatures, NFO, and screenshot blocks. Composition
 // normalizes whitespace outside literal and comparison blocks, skips duplicate
-// parts and images, and appends the configured or default signature. A canceled
-// context returns an error.
+// parts and images, and appends the configured or default signature. Additional
+// disc reports precede the screenshot section. A canceled context returns an error.
 func ComposeDescription(
 	ctx context.Context,
 	meta api.DescriptionSubject,
@@ -101,6 +101,7 @@ func ComposeDescription(
 	if logger == nil {
 		logger = api.NopLogger{}
 	}
+	keptDescription, discReports := description.SplitLeadingDiscReports(keptDescription)
 	keptDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(keptDescription)
 
 	parts := make([]string, 0, 10)
@@ -182,8 +183,7 @@ func ComposeDescription(
 	filteredScreenshots := filterScreenshotDuplicates(screenshots, keptDescription, menuImages)
 	logger.Tracef("trackers: unit3d desc screenshots total=%d filtered=%d", len(screenshots), len(filteredScreenshots))
 	screenshotHeader := strings.TrimSpace(appConfig.Description.ScreenshotHeader)
-	screenshotSection := buildDiscScreenshotSections(
-		meta,
+	screenshotSection := buildScreenshotSection(
 		filteredScreenshots,
 		appConfig.Description.ThumbnailSize,
 		parseScreensPerRow(appConfig.Description.ScreensPerRow),
@@ -195,6 +195,7 @@ func ComposeDescription(
 		logger.Tracef("trackers: unit3d desc part=tonemap_header len=%d", len(tonemapHeader))
 	}
 
+	appendUniquePart(discReports, "additional_disc_reports")
 	if screenshotSection != "" && screenshotHeader != "" {
 		appendUniquePart(screenshotHeader, "screenshot_header")
 		logger.Tracef("trackers: unit3d desc part=screenshot_header len=%d", len(screenshotHeader))
