@@ -94,7 +94,11 @@ func prepareDescription(ctx context.Context, req trackers.PreparationInput) (tra
 		if members := ptpExactPackMembers(req.Meta); len(members) > 0 && len(ptpPackScreenshotImages(members, assets.Screenshots)) == 0 {
 			return trackers.DescriptionResult{}, errors.New("PTP pack needs two hosted screenshots from each eligible video")
 		}
-		description = buildDescription(req.Meta, req.TrackerConfig, req.Runtime.DescriptionConfig(), assets)
+		var err error
+		description, err = buildDescription(req.Meta, req.TrackerConfig, req.Runtime.DescriptionConfig(), assets)
+		if err != nil {
+			return trackers.DescriptionResult{}, err
+		}
 	}
 	if strings.TrimSpace(description) == "" && req.Logger != nil {
 		req.Logger.Infof("trackers: PTP preparation description empty")

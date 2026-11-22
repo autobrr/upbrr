@@ -1037,14 +1037,29 @@ func TestDiscUploadUsesProjectedQuotasRatherThanEverySelectedFrame(t *testing.T)
 		})
 	}
 	target := trackers.ImageUploadTarget{
-Host: "imgbb",
- UsageScope: "global",
- Trackers: []string{"PTP"},
-}
-	for _, published := range []int{7, 6} {
+		Host:       "imgbb",
+		UsageScope: "global",
+		Trackers:   []string{"PTP"},
+	}
+	for _, test := range []struct {
+		requested, published int
+		ok                   bool
+	}{
+		{
+			requested: 8,
+			published: 7,
+			ok:        true,
+		},
+		{requested: 8, published: 6},
+		{
+			requested: 5,
+			published: 5,
+			ok:        true,
+		},
+	} {
 		module := &mediaModule{
-			cfg: config.Config{ScreenshotHandling: config.ScreenshotHandlingConfig{MinSuccessfulUploads: 3}},
-			images: &partialImageHostingService{published: published},
+			cfg:    config.Config{ScreenshotHandling: config.ScreenshotHandlingConfig{MinSuccessfulUploads: 3}},
+			images: &partialImageHostingService{published: test.published},
 			logger: api.NopLogger{},
 			uploadProjections: []api.TrackerReleaseProjection{{
 				TrackerID: "PTP",
@@ -1054,9 +1069,9 @@ Host: "imgbb",
 				},
 			}},
 		}
-		links, err := module.uploadImagesToTarget(t.Context(), api.UploadSubject{}, target, images, nil, nil, "test", false)
-		if len(links) != published || (err == nil) != (published == 7) {
-			t.Fatalf("published=%d; got %d results and error %v", published, len(links), err)
+		links, err := module.uploadImagesToTarget(t.Context(), api.UploadSubject{}, target, images[:test.requested], nil, nil, "test", false)
+		if len(links) != test.published || (err == nil) != test.ok {
+			t.Fatalf("requested=%d published=%d; got %d results and error %v", test.requested, test.published, len(links), err)
 		}
 	}
 }

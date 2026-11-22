@@ -70,13 +70,19 @@ func buildMediaSection(meta api.UploadSubject, dbPath string) (string, error) {
 
 // ptpDiscMediaBlocks binds each report to its prepared disc rather than
 // parsing headings in a concatenated report or relying on screenshot order.
-func ptpDiscMediaBlocks(meta api.UploadSubject, dbPath string) map[string]string {
+func ptpDiscMediaBlocks(meta api.UploadSubject, dbPath string) (map[string]string, error) {
 	blocks := make(map[string]string, len(meta.Discs))
 	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
 	case "BDMV":
-		if _, err := readBDSummary(meta, dbPath); err == nil {
-			for _, disc := range meta.Disc.Items {
-				blocks[disc.ID] = bdDiscMediaBlock(disc)
+		if _, err := readBDSummary(meta, dbPath); err != nil {
+			return nil, err
+		}
+		for _, disc := range meta.Disc.Items {
+			blocks[disc.ID] = bdDiscMediaBlock(disc)
+		}
+		for i, disc := range meta.Discs {
+			if blocks[disc.ID] == "" {
+				return nil, fmt.Errorf("trackers: PTP prepared BDInfo evidence is missing for disc %d", i+1)
 			}
 		}
 	case "DVD":
@@ -91,7 +97,7 @@ func ptpDiscMediaBlocks(meta api.UploadSubject, dbPath string) map[string]string
 			}
 		}
 	}
-	return blocks
+	return blocks, nil
 }
 
 func bdDiscMediaBlock(disc api.DiscItemFacts) string {

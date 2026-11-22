@@ -21,7 +21,7 @@ Use **Settings → Description** to control shared description builders. Tracker
 
 ## Text blocks
 
-Generated Blu-ray pack descriptions put each additional disc's BDInfo in its own spoiler and code block by default. Trackers adapt the markup to their supported format. PTP instead places each disc's report above its own screenshots.
+Generated Blu-ray pack descriptions put each additional disc's BDInfo in its own spoiler and code block by default. Report placement and markup can vary according to the destination's supported format.
 
 | Field                                | Default         | Effect                                                                                                                                                                              |
 | ------------------------------------ | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

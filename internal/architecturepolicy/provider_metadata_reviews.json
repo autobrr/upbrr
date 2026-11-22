@@ -1136,8 +1136,8 @@
     "sha256": "529fc165a5f125ccb2154a762a22b4f1830a41320c58dc8ef83f5d62b64ed3eb"
   },
   "internal/trackers/impl/standalone/ptp/upload.go:prepareUploadStateAt": {
-    "reason": "Audio-order policy review: only order eligibility, its retired questionnaire/call arguments, or the validation policy version changed. Existing finalized/manual metadata precedence and provider selectors remain unchanged; HDB animation uses finalized Anime/Genres, including explicit manual clears.",
-    "sha256": "1d4e2479e064e2e86bd7b816cff1f511410f7866280d144236da0069afcb0e1a"
+    "reason": "Description preparation now returns incomplete multi-disc Blu-ray report errors before upload. Existing manual metadata precedence and provider selectors are unchanged.",
+    "sha256": "c50ed0669190768cef4ef850e4b9955b36bb6f668f5cd48c1574541d1587d1f1"
   },
   "internal/trackers/impl/standalone/ptp/upload.go:resolveGroupTitleYear": {
     "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged.",

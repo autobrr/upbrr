@@ -976,12 +976,12 @@ func TestMultiDiscScreenshotReadinessDoesNotBorrowFramesAcrossDiscs(t *testing.T
 	for index, disc := range []string{"first", "first", "first", "first", "second", "second", "third", "third"} {
 		id := api.PublicResourceID(fmt.Sprintf("disc-screen-%d", index))
 		source := api.MediaArtifact{
-			ID:       id,
-			DiscID:   disc,
+			ID:             id,
+			DiscID:         disc,
 			AdditionalDisc: disc != "first",
-			Kind:     api.MediaArtifactScreenshot,
-			Purpose:  api.ScreenshotPurposeFinal,
-			Selected: true,
+			Kind:           api.MediaArtifactScreenshot,
+			Purpose:        api.ScreenshotPurposeFinal,
+			Selected:       true,
 		}
 		hosted := api.MediaArtifact{
 			ID:       api.PublicResourceID("hosted-" + string(id)),
@@ -1035,5 +1035,20 @@ func TestMultiDiscScreenshotReadinessDoesNotBorrowFramesAcrossDiscs(t *testing.T
 	snapshot.HostAttempts[0].Results = attempt.Results[:len(attempt.Results)-1]
 	if HostedScreenshotRequirementsMet(snapshot, projections) {
 		t.Fatal("missing hosted frame passed the disc quota")
+	}
+	// Successful links from a partially failed attempt remain usable only
+	// once the host is recovered and the retry supplies the missing coverage.
+	snapshot.HostAttempts[0].Status = api.StageStatusFailed
+	retry := attempt
+	retry.Status = api.StageStatusCompleted
+	retry.Results = attempt.Results[len(attempt.Results)-1:]
+	snapshot.HostAttempts = append(snapshot.HostAttempts, retry)
+	snapshot.FailedHosts = []string{"one"}
+	if HostedScreenshotRequirementsMet(snapshot, projections) {
+		t.Fatal("unrecovered host counted toward disc coverage")
+	}
+	snapshot.FailedHosts = nil
+	if !HostedScreenshotRequirementsMet(snapshot, projections) {
+		t.Fatal("recovered host rejected retained links after the missing frame uploaded")
 	}
 }

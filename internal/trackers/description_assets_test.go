@@ -525,6 +525,33 @@ func TestAudioGraphUploadDoesNotAttachToScreenshotSlot(t *testing.T) {
 	}
 }
 
+func TestAdditionalDiscReportsPreserveSavedBlocksWithoutDuplicatingThem(t *testing.T) {
+	t.Parallel()
+	service := &Service{registry: descriptionAssetsTestRegistry(t)}
+	meta := multiDiscBDInfoSubject(t.TempDir())
+	meta.Disc.Items[1].Reports[0].Summary = "BDINFO TWO\nVideo: [Example]"
+	fresh := service.withAdditionalDiscReports("AITHER", meta, &DescriptionAssets{Description: "Fresh notes"})
+	if strings.Count(fresh.Description, "[spoiler=BDInfo - Disc 2]") != 1 || !strings.HasSuffix(fresh.Description, "Fresh notes") {
+		t.Fatalf("fresh generation missing report: %q", fresh.Description)
+	}
+	for _, saved := range []string{
+		strings.ReplaceAll(fresh.Description, "BDINFO TWO", "Reviewed disc report"),
+		"Notes\n[hide=BDInfo - Disc 2][pre]Reviewed disc report[/pre][/hide]",
+		"Notes\n[hide=BDInfo - Disc 2][font=monospace]Reviewed disc report[/font][/hide]",
+		"Notes\n[hide=BDInfo - Disc 2][code]Reviewed disc report[/code][/hide]",
+		"Notes<br>\nBDINFO TWO<br>\nVideo: &amp;#91;Example]",
+	} {
+		assets := &DescriptionAssets{Description: saved, Override: true}
+		if got := service.withAdditionalDiscReports("AITHER", meta, assets); got.Description != saved {
+			t.Fatalf("saved block changed or duplicated: %q", got.Description)
+		}
+	}
+	final := &DescriptionAssets{Description: "Final notes", Final: true}
+	if got := service.withAdditionalDiscReports("AITHER", meta, final); got.Description != final.Description {
+		t.Fatalf("reviewed output changed: %q", got.Description)
+	}
+}
+
 func TestPreparedDescriptionAssetsReturnsDefensiveCopy(t *testing.T) {
 	t.Parallel()
 

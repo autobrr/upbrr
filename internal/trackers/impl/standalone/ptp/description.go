@@ -30,10 +30,10 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func buildDescription(meta api.UploadSubject, trackerConfig config.TrackerConfig, appConfig config.Config, assets trackers.DescriptionAssets) string {
+func buildDescription(meta api.UploadSubject, trackerConfig config.TrackerConfig, appConfig config.Config, assets trackers.DescriptionAssets) (string, error) {
 	baseDescription := strings.TrimSpace(assets.Description)
 	if assets.Final {
-		return baseDescription
+		return baseDescription, nil
 	}
 	baseDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(baseDescription)
 	if baseDescription != "" {
@@ -63,9 +63,12 @@ func buildDescription(meta api.UploadSubject, trackerConfig config.TrackerConfig
 	}
 	blankLine := trackerConfig.ScreenshotBlankLineEnabled()
 	if multiDisc {
+		reports, err := ptpDiscMediaBlocks(meta, appConfig.MainSettings.DBPath)
+		if err != nil {
+			return "", err
+		}
 		galleries := ptpDiscScreenshotGroups(meta.Discs, assets.Screenshots, screenshotSeparator(blankLine))
 		if len(galleries) > 0 {
-			reports := ptpDiscMediaBlocks(meta, appConfig.MainSettings.DBPath)
 			for index, disc := range meta.Discs {
 				if report := reports[disc.ID]; report != "" {
 					galleries[index] = report + "\n" + galleries[index]
@@ -76,7 +79,7 @@ func buildDescription(meta api.UploadSubject, trackerConfig config.TrackerConfig
 	} else if shots := buildScreenshotSection(meta, assets.Screenshots, blankLine); shots != "" {
 		sections = append(sections, shots)
 	}
-	return strings.TrimSpace(strings.Join(sections, "\n\n"))
+	return strings.TrimSpace(strings.Join(sections, "\n\n")), nil
 }
 
 const (

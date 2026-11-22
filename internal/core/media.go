@@ -932,30 +932,38 @@ func (m *mediaModule) uploadImagesToTarget(
 	return results, nil
 }
 
-// hostedDiscQuotasMet checks the exact approved projection for this target,
-// not the number of extra frames the user opted to select.
+// hostedDiscQuotasMet enforces disc quotas only when the requested batch
+// covers them. A partial batch contributes links to overall gallery readiness.
 func (m *mediaModule) hostedDiscQuotasMet(target trackers.ImageUploadTarget, images []api.ScreenshotImage, links []api.UploadedImageLink) bool {
-	var counts map[string]int
+	var requested, hosted map[string]int
 	for _, projection := range m.uploadProjections {
 		discs := projection.Artifacts.DiscScreenshots
 		if discs == nil || !slices.Contains(target.Trackers, string(projection.TrackerID)) {
 			continue
 		}
-		if counts == nil {
+		if requested == nil {
 			byPath := uploadedImagesByPathForTarget(links, target)
-			counts = make(map[string]int, len(discs.DiscIDs))
+			requested = make(map[string]int, len(discs.DiscIDs))
+			hosted = make(map[string]int, len(discs.DiscIDs))
+			seen := make(map[string]bool, len(images))
 			for _, image := range images {
 				if image.Purpose != api.ScreenshotPurposeFinal || image.DiscID == "" {
 					continue
 				}
 				path := normalizedUploadImagePath(image.Path)
-				if _, hosted := byPath[path]; hosted {
-					counts[image.DiscID]++
-					delete(byPath, path)
+				if path == "" || seen[path] {
+					continue
+				}
+				seen[path] = true
+				requested[image.DiscID]++
+				if _, ok := byPath[path]; ok {
+					hosted[image.DiscID]++
 				}
 			}
 		}
-		if !releaseworkflow.DiscScreenshotCountsCover(counts, discs, projection.Artifacts.ScreenshotCount) {
+		primary := projection.Artifacts.ScreenshotCount
+		if releaseworkflow.DiscScreenshotCountsCover(requested, discs, primary) &&
+			!releaseworkflow.DiscScreenshotCountsCover(hosted, discs, primary) {
 			return false
 		}
 	}

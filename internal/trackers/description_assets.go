@@ -7,10 +7,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"maps"
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -71,11 +73,24 @@ func (s *Service) withAdditionalDiscReports(tracker string, meta api.UploadSubje
 		return assets
 	}
 
+	var existing map[string]bool
+	var savedText string
+	if assets != nil && assets.Description != "" {
+		existing = make(map[string]bool)
+		savedText = normalizeDiscReportText(assets.Description)
+		for _, block := range additionalDiscReportPattern.FindAllStringSubmatch(assets.Description, -1) {
+			existing[block[1]] = true
+		}
+	}
 	blocks := make([]string, 0, len(meta.Disc.Items)-1)
 	for i, disc := range meta.Disc.Items[1:] {
+		number := strconv.Itoa(i + 2)
+		if existing[number] {
+			continue
+		}
 		text := (api.DiscFacts{Items: []api.DiscItemFacts{disc}}).AggregateSummary()
-		if text != "" {
-			blocks = append(blocks, fmt.Sprintf("[spoiler=BDInfo - Disc %d][code]%s[/code][/spoiler]", i+2, strings.ReplaceAll(text, "[", "&#91;")))
+		if text != "" && !strings.Contains(savedText, normalizeDiscReportText(text)) {
+			blocks = append(blocks, fmt.Sprintf("[spoiler=BDInfo - Disc %s][code]%s[/code][/spoiler]", number, strings.ReplaceAll(text, "[", "&#91;")))
 		}
 	}
 	if len(blocks) == 0 {
@@ -91,6 +106,16 @@ func (s *Service) withAdditionalDiscReports(tracker string, meta api.UploadSubje
 	}
 	out.Description = strings.Join(blocks, "\n\n")
 	return &out
+}
+
+var additionalDiscReportPattern = regexp.MustCompile(`(?is)\[(?:spoiler|hide)=BDInfo - Disc ([0-9]+)\].*?\[/(?:spoiler|hide)\]`)
+
+var discReportLineBreaks = strings.NewReplacer("<br>", " ", "<br/>", " ", "<br />", " ")
+
+// Some descriptions remove BBCode wrappers and escape reports as HTML.
+func normalizeDiscReportText(value string) string {
+	value = html.UnescapeString(html.UnescapeString(value))
+	return strings.Join(strings.Fields(discReportLineBreaks.Replace(value)), " ")
 }
 
 var embeddedNFOBlockPatterns = []*regexp.Regexp{

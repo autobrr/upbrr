@@ -16,6 +16,15 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func mustBuildDescription(t *testing.T, meta api.UploadSubject, cfg config.TrackerConfig, assets trackers.DescriptionAssets) string {
+	t.Helper()
+	text, err := buildDescription(meta, cfg, config.Config{}, assets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return text
+}
+
 func TestPackScreenshotSectionUsesTwoDistinctFramesPerVideoAndPreservesSpacing(t *testing.T) {
 	files := []string{"Movie.cd1.mkv", "Movie.cd2.mkv"}
 	first, second := mediafacts.TrackResourceID(files[0]), mediafacts.TrackResourceID(files[1])
@@ -51,7 +60,7 @@ func TestDiscScreenshotSectionCapsExtrasWithoutDroppingFirstDiscFrames(t *testin
 	t.Parallel()
 
 	meta := api.UploadSubject{
-		Discs: []api.DiscEvidenceResource{{ID: "first"}, {ID: "second"}, {ID: "third"}},
+		Discs:      []api.DiscEvidenceResource{{ID: "first"}, {ID: "second"}, {ID: "third"}},
 		ExactMedia: &api.ExactMediaAssets{},
 	}
 	screenshots := make([]api.ScreenshotImage, 0, 4*len(meta.Discs))
@@ -59,7 +68,7 @@ func TestDiscScreenshotSectionCapsExtrasWithoutDroppingFirstDiscFrames(t *testin
 		for _, frame := range []string{"a", "b", "c", "d"} {
 			screenshots = append(screenshots, api.ScreenshotImage{
 				DiscID: disc.ID,
-				Host: "pixhost",
+				Host:   "pixhost",
 				RawURL: "https://img.pixhost.to/" + disc.ID + "-" + frame + ".png",
 			})
 		}
@@ -81,38 +90,89 @@ func TestMultiDVDDescriptionPairsEachReportWithItsOwnImages(t *testing.T) {
 		t.Fatal(err)
 	}
 	meta := api.UploadSubject{
-		DiscType: "DVD",
+		DiscType:   "DVD",
 		ExactMedia: &api.ExactMediaAssets{},
 		Discs: []api.DiscEvidenceResource{
 			{ID: "a", DVDVOBMediaInfoText: "DVD A VOB"},
 			{
-ID: "b",
- DVDVOBMediaInfoText: "DVD B VOB",
- MediaInfoTextPath: ifo,
-},
+				ID:                  "b",
+				DVDVOBMediaInfoText: "DVD B VOB",
+				MediaInfoTextPath:   ifo,
+			},
 		},
 	}
 	assets := trackers.DescriptionAssets{Screenshots: []api.ScreenshotImage{
 		{
-DiscID: "b",
- Host: "pixhost",
- RawURL: "https://img.pixhost.to/b1.png",
-},
+			DiscID: "b",
+			Host:   "pixhost",
+			RawURL: "https://img.pixhost.to/b1.png",
+		},
 		{
-DiscID: "a",
- Host: "pixhost",
- RawURL: "https://img.pixhost.to/a1.png",
-},
+			DiscID: "a",
+			Host:   "pixhost",
+			RawURL: "https://img.pixhost.to/a1.png",
+		},
 		{
-DiscID: "b",
- Host: "pixhost",
- RawURL: "https://img.pixhost.to/b2.png",
-},
+			DiscID: "b",
+			Host:   "pixhost",
+			RawURL: "https://img.pixhost.to/b2.png",
+		},
 	}}
 	want := "[mediainfo]DVD A VOB[/mediainfo]\n[img]https://img.pixhost.to/a1.png[/img]\n\n\n" +
 		"[mediainfo]DVD B IFO\n\nDVD B VOB[/mediainfo]\n[img]https://img.pixhost.to/b1.png[/img]\n[img]https://img.pixhost.to/b2.png[/img]"
-	if got := buildDescription(meta, config.TrackerConfig{ScreenshotBlankLine: new(false)}, config.Config{}, assets); got != want {
+	if got := mustBuildDescription(t, meta, config.TrackerConfig{ScreenshotBlankLine: new(false)}, assets); got != want {
 		t.Fatalf("DVD report and screenshot sequence = %q", got)
+	}
+}
+
+func TestMultiBluRayDescriptionRequiresEveryPreparedReport(t *testing.T) {
+	t.Parallel()
+	meta := api.UploadSubject{
+		DiscType:   "BDMV",
+		ExactMedia: &api.ExactMediaAssets{},
+		Discs:      []api.DiscEvidenceResource{{ID: "first"}, {ID: "second"}},
+		Disc: api.DiscFacts{Items: []api.DiscItemFacts{
+			{ID: "first", Reports: []api.DiscReportFacts{{Summary: "PRIMARY REPORT"}}},
+			{ID: "second", Reports: []api.DiscReportFacts{{Summary: "SECONDARY REPORT"}}},
+		}},
+	}
+	assets := trackers.DescriptionAssets{Screenshots: []api.ScreenshotImage{
+		{
+			DiscID: "first",
+			Host:   "pixhost",
+			RawURL: "https://img.pixhost.to/primary.png",
+		},
+		{
+			DiscID: "second",
+			Host:   "pixhost",
+			RawURL: "https://img.pixhost.to/second-1.png",
+		},
+		{
+			DiscID: "second",
+			Host:   "pixhost",
+			RawURL: "https://img.pixhost.to/second-2.png",
+		},
+	}}
+	req := trackers.PreparationInput{Meta: meta, Assets: &assets}
+	got, err := prepareDescription(t.Context(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, part := range []string{"PRIMARY REPORT[/mediainfo]\n[img]https://img.pixhost.to/primary.png", "SECONDARY REPORT[/mediainfo]\n[img]https://img.pixhost.to/second-1.png"} {
+		if !strings.Contains(got.Description, part) {
+			t.Fatalf("description report and gallery do not match: %q", got.Description)
+		}
+	}
+	req.Meta.Disc.Items = req.Meta.Disc.Items[:1]
+	got, err = prepareDescription(t.Context(), req)
+	if err == nil || got.Description != "" {
+		t.Fatalf("published incomplete multi-disc description: %+v, err = %v", got, err)
+	}
+
+	assets.Final, assets.Description = true, "[b]Reviewed[/b]"
+	got, err = prepareDescription(t.Context(), req)
+	if err != nil || got.Description != assets.Description {
+		t.Fatalf("reviewed output changed: %+v, err = %v", got, err)
 	}
 }
 
@@ -184,7 +244,7 @@ func TestPrepareDescriptionScreenshotSpacing(t *testing.T) {
 			t.Fatalf("rendered screenshots = %q, want %q", got, want)
 		}
 	}
-	if got := buildDescription(api.UploadSubject{}, config.TrackerConfig{}, config.Config{}, trackers.DescriptionAssets{
+	if got := mustBuildDescription(t, api.UploadSubject{}, config.TrackerConfig{}, trackers.DescriptionAssets{
 		Description: final,
 		Screenshots: images,
 		Final:       true,
