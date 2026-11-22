@@ -126,6 +126,16 @@ type ScreenshotSubject struct {
 	DefaultCount int
 	ManualFrames []int
 	Discs        []ScreenshotDiscSubject
+	// PackMembers is private exact-generation authority for per-file captures.
+	PackMembers []ScreenshotPackMember `json:"-"`
+	// PackMemberID scopes the renderer's cache to one server-selected video.
+	PackMemberID string `json:"-"`
+}
+
+// ScreenshotPackMember binds an opaque prepared file identity to its private source path.
+type ScreenshotPackMember struct {
+	ID   string
+	Path string `json:"-"`
 }
 
 // ScreenshotDiscSubject contains private capture inputs for one ordered disc.
@@ -226,7 +236,9 @@ type ScreenshotLinkedImage struct {
 }
 
 type ScreenshotImage struct {
-	Processing *ScreenshotProcessing `json:",omitempty"`
+	// PackMemberID identifies the eligible video that actually produced this screenshot.
+	PackMemberID string                `json:",omitempty"`
+	Processing   *ScreenshotProcessing `json:",omitempty"`
 	// Tonemapping records actual processing; empty means unknown. ContentSHA256 binds it to image bytes.
 	Tonemapping   ScreenshotTonemapping `json:",omitempty"`
 	ContentSHA256 string                `json:",omitempty"`

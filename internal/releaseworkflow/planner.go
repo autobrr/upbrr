@@ -1222,9 +1222,12 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 		return stageSucceeded(current.Media.Status) && err == nil && current.Media.CaptureFingerprint == expected
 	}
 	if (desired.Purpose == "" || desired.Purpose == api.ScreenshotPurposeFinal) && desired.Selections != nil {
+		if !LocalPackScreenshotRequirementsMet(current.Media.Artifacts, current.Projections.Projections) {
+			return false
+		}
 		retained := make(map[int]struct{}, len(current.Media.Artifacts))
 		for _, artifact := range current.Media.Artifacts {
-			if artifact.Kind == api.MediaArtifactScreenshot && artifact.Source != "tracker" {
+			if artifact.Kind == api.MediaArtifactScreenshot && artifact.PackMemberID == "" && artifact.Source != "tracker" {
 				retained[artifact.Index] = struct{}{}
 			}
 		}
@@ -1246,7 +1249,9 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 		}
 		switch artifact.Kind {
 		case api.MediaArtifactScreenshot:
-			screenshots++
+			if artifact.PackMemberID == "" {
+				screenshots++
+			}
 		case api.MediaArtifactComparison:
 			if _, reused := comparisonScreenshots[artifact.ID]; reused {
 				screenshots++
@@ -1265,6 +1270,9 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 		}
 		return automaticMenus > 0 && stageSucceeded(current.Media.Status)
 	case "", api.ScreenshotPurposeFinal:
+		if !LocalPackScreenshotRequirementsMet(current.Media.Artifacts, current.Projections.Projections) {
+			return false
+		}
 		required := desired.ScreenshotCount
 		if desired.Selections != nil {
 			required = len(desired.Selections)

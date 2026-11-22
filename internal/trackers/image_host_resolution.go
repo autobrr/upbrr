@@ -27,6 +27,7 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/pathing"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	dbsvc "github.com/autobrr/upbrr/internal/services/db"
@@ -39,6 +40,42 @@ type descriptionImageHostResolution struct {
 	feedback    api.ImageHostFeedback
 	usageScope  string
 	blocking    bool
+}
+
+// hasExactPackScreenshotScope routes pack descriptions through per-tracker
+// image selection even when hosting was not skipped.
+func hasExactPackScreenshotScope(meta api.UploadSubject) bool {
+	if meta.ExactMedia == nil {
+		return false
+	}
+	if slices.ContainsFunc(meta.ExactMedia.Screenshots, func(image api.ScreenshotImage) bool { return image.PackMemberID != "" }) {
+		return true
+	}
+	return strings.TrimSpace(meta.DiscType) == "" && len(mediafacts.PackScreenshotMembers(meta.FileList)) > 1 &&
+		slices.ContainsFunc(meta.Trackers, func(tracker string) bool { return strings.EqualFold(tracker, "PTP") })
+}
+
+// scopeExactPackMedia preserves distinct PTP pack and ordinary screenshot
+// lanes without altering the shared exact media or comparison inputs.
+func scopeExactPackMedia(meta api.UploadSubject, tracker string) api.UploadSubject {
+	if !hasExactPackScreenshotScope(meta) {
+		return meta
+	}
+	wantPack := strings.EqualFold(tracker, "PTP") && strings.TrimSpace(meta.DiscType) == "" && len(mediafacts.PackScreenshotMembers(meta.FileList)) > 1
+	exact := meta.ExactMedia.Clone()
+	removedPaths := make(map[string]bool)
+	exact.Screenshots = slices.DeleteFunc(exact.Screenshots, func(image api.ScreenshotImage) bool {
+		remove := (image.PackMemberID != "") != wantPack
+		if remove {
+			removedPaths[strings.TrimSpace(image.Path)] = true
+		}
+		return remove
+	})
+	exact.ScreenshotUploads = slices.DeleteFunc(exact.ScreenshotUploads, func(upload api.UploadedImageLink) bool {
+		return removedPaths[strings.TrimSpace(upload.ImagePath)]
+	})
+	meta.ExactMedia = exact
+	return meta
 }
 
 // exactMediaForTrackerHost selects reusable screenshots and excludes source-only

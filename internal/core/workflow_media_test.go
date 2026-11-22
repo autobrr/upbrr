@@ -2398,6 +2398,9 @@ func (f *workflowScreenshotFake) Capture(
 		if selection.DiscID != "" {
 			name = fmt.Sprintf("%s-screen-%d.png", selection.DiscID, selection.Index)
 		}
+		if subject.PackMemberID != "" {
+			name = fmt.Sprintf("%s-screen-%d.png", subject.PackMemberID, selection.Index)
+		}
 		images[index] = api.ScreenshotImage{
 			DiscID:           selection.DiscID,
 			DiscName:         discNames[selection.DiscID],

@@ -46,7 +46,8 @@ func (s *Service) prepareUploadContent(
 	if mode == UploadContentModeNone {
 		return preparedUploadContent{Mode: mode, State: preparedUploadContentNotRequired}
 	}
-	if meta.ExactMedia != nil && imageHostUploadSkipped(meta) {
+	if meta.ExactMedia != nil && (imageHostUploadSkipped(meta) || hasExactPackScreenshotScope(meta)) {
+		meta = scopeExactPackMedia(meta, tracker)
 		var err error
 		meta.ExactMedia, err = exactMediaForTrackerHost(tracker, meta, s.cfg, trackerCfg, s.registry)
 		if err != nil {

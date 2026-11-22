@@ -1681,3 +1681,48 @@ func screenshotTestBinding(sourcePath string) api.PreparedMediaBinding {
 		PreparedGeneration:       1,
 	}
 }
+
+func TestPackMemberCaptureIsBoundToFileAndSourceVersion(t *testing.T) {
+	release, videoA, videoB := multiDiscScreenshotSubject(t)
+	root := t.TempDir()
+	if err := writeTestBundledFFmpeg(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	runner := &writingScreenshotRunner{payload: testPNGBytes(t, color.RGBA{
+R: 16,
+ G: 16,
+ B: 16,
+ A: 255,
+})}
+	service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), runner)
+	ordinary := release
+	ordinary.Discs = nil
+	ordinary.VideoPath = videoA
+	ordinary.MediaInfoJSONPath = release.Discs[0].MediaInfoJSONPath
+	for _, member := range []string{"first", "second"} {
+		subject := ordinary
+		subject.PackMemberID = member
+		subject.MediaBinding.CompatibilityKey = api.MediaCompatibilityKey(strings.Repeat("a", 64))
+		if member == "second" {
+			subject.VideoPath = videoB
+			subject.MediaInfoJSONPath = release.Discs[1].MediaInfoJSONPath
+		}
+		selection := api.ScreenshotSelection{Index: 0, TimestampSeconds: 10}
+		result, err := service.Capture(t.Context(), subject, []api.ScreenshotSelection{selection}, api.ScreenshotPurposeFinal)
+		if err != nil || len(result.Images) != 1 {
+			t.Fatalf("capture for %s: result=%+v, err=%v", member, result, err)
+		}
+		image := result.Images[0]
+		memberBase := screenshotBaseName(subject)
+		tmpDir := filepath.Dir(image.Path)
+		if image.PackMemberID != member || ffmpegInputArg(runner.calls[len(runner.calls)-1].args) != subject.VideoPath ||
+			len(listExistingScreens(tmpDir, memberBase)) != 1 || len(listExistingScreens(tmpDir, screenshotBaseName(ordinary))) != 0 {
+			t.Fatalf("member scope leaked or rendered wrong source: %+v", image)
+		}
+		subject.MediaBinding.CompatibilityKey = api.MediaCompatibilityKey(strings.Repeat("b", 64))
+		if len(listExistingScreens(tmpDir, screenshotBaseName(subject))) != 0 {
+			t.Fatal("bytes captured for the previous source version matched the new source")
+		}
+	}
+}

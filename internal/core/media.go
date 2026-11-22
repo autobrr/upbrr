@@ -18,6 +18,7 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/imagehosting"
 	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -406,6 +407,19 @@ func (m *mediaModule) resolveFallbackImageUploadTargets(
 	return normalized, nil
 }
 
+// scopePackUploadImages constrains final images to the target tracker set.
+// Other kinds of media use the original shared hosting policy.
+func scopePackUploadImages(images []api.ScreenshotImage, trackers []string) []api.ScreenshotImage {
+	ptp := slices.Contains(trackers, "PTP")
+	ordinary := !ptp || len(trackers) > 1
+	return slices.DeleteFunc(slices.Clone(images), func(image api.ScreenshotImage) bool {
+		if image.PackMemberID != "" {
+			return !ptp
+		}
+		return image.Purpose == api.ScreenshotPurposeFinal && !ordinary
+	})
+}
+
 func (m *mediaModule) uploadImagesToTargetsWithFallback(
 	ctx context.Context,
 	meta api.UploadSubject,
@@ -445,9 +459,18 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 	coveredTrackers := make(map[string]struct{})
 	results := make(chan completedAttempt)
 	pending := 0
+	packScope := slices.ContainsFunc(images, func(image api.ScreenshotImage) bool { return image.PackMemberID != "" }) ||
+		strings.TrimSpace(meta.DiscType) == "" && len(mediafacts.PackScreenshotMembers(meta.FileList)) > 1 && slices.Contains(meta.Trackers, "PTP")
 
 	targetKey := func(target trackers.ImageUploadTarget) string {
-		return strings.ToLower(strings.TrimSpace(target.Host)) + "\x00" + normalizeImageUploadUsageScope(target.UsageScope)
+		key := strings.ToLower(strings.TrimSpace(target.Host)) + "\x00" + normalizeImageUploadUsageScope(target.UsageScope)
+		if packScope && slices.Contains(target.Trackers, "PTP") {
+			if len(target.Trackers) == 1 {
+				return key + "\x00ptp-pack"
+			}
+			return key + "\x00mixed-pack"
+		}
+		return key
 	}
 	markCovered := func(target trackers.ImageUploadTarget) {
 		for _, tracker := range target.Trackers {
@@ -493,9 +516,12 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 		pending++
 		go func() {
 			targetImages := images
+			if packScope {
+				targetImages = scopePackUploadImages(images, target.Trackers)
+			}
 			if target.ReuseOnly {
 				available := uploadedImagesByPathForTarget(retainedLinks, target)
-				targetImages = slices.DeleteFunc(slices.Clone(images), func(image api.ScreenshotImage) bool {
+				targetImages = slices.DeleteFunc(slices.Clone(targetImages), func(image api.ScreenshotImage) bool {
 					_, ok := available[normalizedUploadImagePath(image.Path)]
 					return !ok
 				})
@@ -510,7 +536,7 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 		return true
 	}
 	if allowFallback && len(retainedLinks) > 0 {
-		for _, retainedTarget := range m.retainedFallbackImageUploadTargets(host, meta, sortedMapKeys(failedHosts), targets, images, retainedLinks) {
+		for _, retainedTarget := range m.retainedFallbackImageUploadTargets(host, meta, sortedMapKeys(failedHosts), targets, images, retainedLinks, packScope) {
 			launch(retainedTarget, true)
 			markCovered(retainedTarget)
 		}
@@ -908,6 +934,7 @@ func (m *mediaModule) retainedFallbackImageUploadTargets(
 	targets []trackers.ImageUploadTarget,
 	images []api.ScreenshotImage,
 	retainedLinks []api.UploadedImageLink,
+	packScope bool,
 ) []trackers.ImageUploadTarget {
 	covered := make([]trackers.ImageUploadTarget, 0, len(targets))
 	for _, target := range targets {
@@ -935,7 +962,11 @@ func (m *mediaModule) retainedFallbackImageUploadTargets(
 				matched, advanced := false, false
 				for _, fallbackTarget := range fallbackTargets {
 					fallbackTarget = normalizeImageUploadTarget(fallbackTarget)
-					if uploadedImageLinksCoverTarget(retainedLinks, fallbackTarget, images) {
+					targetImages := images
+					if packScope {
+						targetImages = scopePackUploadImages(images, fallbackTarget.Trackers)
+					}
+					if len(targetImages) > 0 && uploadedImageLinksCoverTarget(retainedLinks, fallbackTarget, targetImages) {
 						covered = append(covered, fallbackTarget)
 						matched = true
 						break

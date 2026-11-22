@@ -9,9 +9,41 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/description"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestPackScreenshotSectionUsesTwoDistinctFramesPerVideoAndPreservesSpacing(t *testing.T) {
+	files := []string{"Movie.cd1.mkv", "Movie.cd2.mkv"}
+	first, second := mediafacts.TrackResourceID(files[0]), mediafacts.TrackResourceID(files[1])
+	meta := api.UploadSubject{FileList: files, ExactMedia: &api.ExactMediaAssets{}}
+	image := func(member, suffix string) api.ScreenshotImage {
+		return api.ScreenshotImage{
+			PackMemberID: member,
+			Host:         "pixhost",
+			RawURL:       "https://img.pixhost.to/" + suffix + ".png",
+		}
+	}
+	ordinary := image("", "ordinary")
+	pack := []api.ScreenshotImage{image(second, "b1"), image(first, "a1"), image(first, "a2"), image(first, "a3"), image(second, "b2"), ordinary}
+	for _, blank := range []bool{false, true} {
+		separator := "\n"
+		if blank {
+			separator += "\n"
+		}
+		want := make([]string, 0, 4)
+		for _, suffix := range []string{"a1", "a2", "b1", "b2"} {
+			want = append(want, "[img]https://img.pixhost.to/"+suffix+".png[/img]")
+		}
+		if got := buildScreenshotSection(meta, pack, blank); got != strings.Join(want, separator) {
+			t.Fatalf("pack description with blankLine=%t: %q", blank, got)
+		}
+	}
+	if got := buildScreenshotSection(meta, append(pack[:4:4], ordinary), true); got != "" {
+		t.Fatalf("extra frames from one file filled a different member: %q", got)
+	}
+}
 
 func TestPrepareDescriptionScreenshotSpacing(t *testing.T) {
 	t.Parallel()

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/filesystem"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
@@ -455,10 +456,22 @@ func (m *Module) ResolveScreenshotSubject(ctx context.Context, input api.MediaPl
 			SelectedBDMVPlaylists: clonePreparedPlaylists(disc.SelectedPlaylists),
 		})
 	}
+	discType := firstNonEmpty(release.Disc.Type, release.Source.Classification.DiscType)
+	var packMembers []api.ScreenshotPackMember
+	if discType == "" {
+		files := resources.fileList
+		if len(files) == 0 {
+			files = manifestFiles(release.Source)
+		}
+		if members := mediafacts.PackScreenshotMembers(files); len(members) > 1 {
+			packMembers = members
+		}
+	}
 	return api.ScreenshotSubject{
+		PackMembers:           packMembers,
 		MediaBinding:          binding,
 		SourcePath:            release.Source.SourcePath,
-		DiscType:              firstNonEmpty(release.Disc.Type, release.Source.Classification.DiscType),
+		DiscType:              discType,
 		VideoPath:             resources.videoPath,
 		MediaInfoJSONPath:     resources.mediaInfoJSONPath,
 		MediaCategory:         string(release.Identity.Category),

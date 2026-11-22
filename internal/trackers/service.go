@@ -110,7 +110,7 @@ func (s *Service) preflightDescriptionImageHostsWithPreferences(
 ) imageHostPreflight {
 	logger := logging.FromContext(ctx, s.logger)
 
-	if len(trackers) == 0 || s.registry == nil {
+	if len(trackers) == 0 || s.registry == nil || hasExactPackScreenshotScope(meta) {
 		return nil
 	}
 
@@ -335,7 +335,7 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 		return api.PreparationPreview{SourcePath: meta.SourcePath, ContentFailures: contentFailures}, nil
 	}
 	preferredImageHosts := preparationImageHostPreferences(s.cfg, meta, resolved, logger, s.registry)
-	scopeExactReuse := meta.ExactMedia != nil && imageHostUploadSkipped(meta)
+	scopeExactReuse := meta.ExactMedia != nil && (imageHostUploadSkipped(meta) || hasExactPackScreenshotScope(meta))
 	var preflight imageHostPreflight
 	if !scopeExactReuse {
 		preflight = s.preflightDescriptionImageHostsWithPreferences(ctx, meta, resolved, preferredImageHosts, preloaded, false)
@@ -384,7 +384,8 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 		trackerMeta := meta
 		trackerPreloaded := preloaded
 		if scopeExactReuse {
-			trackerMeta.ExactMedia, err = exactMediaForTrackerHost(tracker, meta, s.cfg, trackerCfg, s.registry, preferredImageHosts[key])
+			trackerMeta = scopeExactPackMedia(trackerMeta, tracker)
+			trackerMeta.ExactMedia, err = exactMediaForTrackerHost(tracker, trackerMeta, s.cfg, trackerCfg, s.registry, preferredImageHosts[key])
 			if err == nil {
 				trackerPreloaded, err = preloadDescriptionAssetData(ctx, trackerMeta, s.repo, s.registry)
 			}

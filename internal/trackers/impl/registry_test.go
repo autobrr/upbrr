@@ -14,10 +14,65 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestPTPPackRequirementIsOwnedByPTPAndUsesOnlyEligibleFiles(t *testing.T) {
+	projector, err := trackers.NewWorkflowProjector(MustNewRegistry(), config.Config{
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 5},
+	}, api.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, disc string
+		files      []string
+		members    []string
+	}{
+		{
+			name:    "mixed targets",
+			files:   []string{"Movie.cd1.mkv", "sample.mkv", "Movie.cd2.MP4", "Movie.srt", "Movie.cd1.mkv"},
+			members: []string{mediafacts.TrackResourceID("Movie.cd1.mkv"), mediafacts.TrackResourceID("Movie.cd2.MP4")},
+		},
+		{name: "single video", files: []string{"Movie.mkv", "Movie.srt"}},
+		{
+			name:  "disc stays on normal capture",
+			disc:  "DVD",
+			files: []string{"Title1.mkv", "Title2.mkv"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, _, result, err := projector.Build(t.Context(), api.ReleaseSnapshot{}, api.UploadSubject{
+				ReleaseName: "Example.Movie.2026.1080p-GRP",
+				DiscType:    tc.disc,
+				FileList:    tc.files,
+			}, []api.TrackerID{"PTP", "AITHER"}, nil, nil, api.WorkflowExecutionModeNormal)
+			if err != nil || len(result.Projections) != 2 {
+				t.Fatalf("projection = %+v, error = %v", result, err)
+			}
+			for _, p := range result.Projections {
+				normalCount := 5
+				if p.TrackerID == "PTP" && len(tc.members) > 0 {
+					normalCount = 0
+				}
+				if p.Artifacts.ScreenshotCount != normalCount {
+					t.Errorf("normal screenshot count changed for %s: %d", p.TrackerID, p.Artifacts.ScreenshotCount)
+				}
+				pack := p.Artifacts.PackScreenshots
+				if p.TrackerID != "PTP" || len(tc.members) == 0 {
+					if pack != nil {
+						t.Errorf("unexpected pack requirement for %s: %+v", p.TrackerID, pack)
+					}
+				} else if pack == nil || pack.CountPerMember != 2 || !slices.Equal(pack.MemberIDs, tc.members) {
+					t.Errorf("PTP pack requirement = %+v, want two captures for each of %v", pack, tc.members)
+				}
+			}
+		})
+	}
+}
 
 func TestNameProvidersFollowTrackerMetadataAuthority(t *testing.T) {
 	t.Parallel()

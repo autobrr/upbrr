@@ -1433,6 +1433,7 @@ export type MediaArtifact = Readonly<{
   index?: number;
   kind: MediaArtifactKind;
   order?: number;
+  packMemberId?: string;
   processing?: ScreenshotProcessing | null;
   purpose: ScreenshotPurpose;
   selected: boolean;
@@ -1788,6 +1789,11 @@ export type OperationLifecycle = string;
 export type OperationRecovery = string;
 
 export type OverrideState = string;
+
+export type PackScreenshotRequirement = Readonly<{
+  countPerMember: number;
+  memberIds: readonly string[];
+}>;
 
 export type PackageInventory = Readonly<{
   Files?: readonly string[];
@@ -2996,6 +3002,7 @@ export type TrackerArtifactRequirements = Readonly<{
   imageHosting: boolean;
   mediaInfo: boolean;
   nfo: boolean;
+  packScreenshots?: PackScreenshotRequirement | null;
   screenshotCount: number;
   torrent: boolean;
 }>;

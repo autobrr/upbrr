@@ -229,6 +229,8 @@ Depending on the source and trackers, upbrr can:
 
 Automatic screenshot plans distribute the requested images across all prepared discs, with at least one planned image per disc. Manual frame numbers apply to every disc. Screenshot previews, captures, and DVD menu images remain grouped by disc; DVD menu capture can warn about partial coverage when its collection-wide safety cap or the available menus leave a disc uncovered.
 
+For a PTP pack of video files, upbrr automatically captures two screenshots from each eligible file for the generated PTP description. A release-level screenshot or an image from a different file cannot fill a missing spot. Other selected trackers keep their own screenshot requirements.
+
 With **Collect existing tracker images** enabled, validated tracker screenshots can supply the screenshot set and reduce the number of new captures. In the Web UI, eligible existing description images load automatically on **Screenshots**, with the same selection and deletion controls as new captures. Loading does not capture missing frames; use **Generate screenshots** when more images are needed. Existing images have unknown capture timestamps and provenance, so their chronological order relative to new captures is unknown. Imported comparison blocks remain in descriptions and are excluded from ordinary screenshot selection.
 
 In **Descriptions → Rendered Raw Preview**, open a recognized comparison to view one source per row. Move the pointer horizontally or use the left and right arrow keys to switch every row to the same source. If a linked image cannot be displayed, select **Open original link** to open its source. The preview does not change the raw description or what is sent to the tracker.

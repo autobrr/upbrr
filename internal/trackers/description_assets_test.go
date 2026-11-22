@@ -20,6 +20,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	dbsvc "github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -4656,5 +4657,56 @@ func TestResolveDescriptionAssetsDoesNotApplyScopedCanonicalGroupToOtherTracker(
 	}
 	if assets.Final || assets.Description != "" {
 		t.Fatalf("scoped canonical group escaped membership: %+v", assets)
+	}
+}
+
+func TestResolvePackDescriptionAssetsKeepsHostedVariantsBoundToEachVideo(t *testing.T) {
+	root := t.TempDir()
+	files := []string{filepath.Join(root, "Movie.cd1.mkv"), filepath.Join(root, "Movie.cd2.mkv")}
+	members := mediafacts.PackScreenshotMembers(files)
+	exact := &api.ExactMediaAssets{}
+	for index, member := range []string{members[0].ID, members[0].ID, members[1].ID, members[1].ID, ""} {
+		image := api.ScreenshotImage{
+Path: filepath.Join(root, fmt.Sprintf("screen-%d.png", index)),
+			Purpose: api.ScreenshotPurposeFinal,
+ PackMemberID: member,
+}
+		link := fmt.Sprintf("https://i.ibb.co/test/screen-%d.png", index)
+		exact.Screenshots = append(exact.Screenshots, image)
+		exact.ScreenshotUploads = append(exact.ScreenshotUploads, api.UploadedImageLink{
+			ImagePath: image.Path,
+ Host: "imgbb",
+ UsageScope: globalImageUsageScope,
+ ImgURL: link,
+ RawURL: link,
+		})
+	}
+	meta := api.UploadSubject{
+SourcePath: root,
+ FileList: files,
+ Trackers: []string{"PTP", "HHD"},
+ ExactMedia: exact,
+}
+	repo := &stubRepo{}
+	registry := descriptionAssetsTestRegistry(t)
+	ptpMeta := scopeExactPackMedia(meta, "PTP")
+	ptpExact, err := exactMediaForTrackerHost("PTP", ptpMeta, config.Config{}, config.TrackerConfig{}, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ptpMeta.ExactMedia = ptpExact
+	assets, err := ResolveDescriptionAssets(t.Context(), "PTP", ptpMeta, repo, api.NopLogger{}, registry)
+	if err != nil || len(assets.Screenshots) != 4 {
+		t.Fatalf("PTP pack description assets = %#v, err = %v", assets.Screenshots, err)
+	}
+	for index, screenshot := range assets.Screenshots {
+		if screenshot.PackMemberID != members[index/2].ID || screenshot.RawURL != exact.ScreenshotUploads[index].RawURL {
+			t.Fatalf("member binding not preserved through the hosted description slot: %#v", screenshot)
+		}
+	}
+	ordinary, err := ResolveDescriptionAssets(t.Context(), "HHD", scopeExactPackMedia(meta, "HHD"), repo, api.NopLogger{}, registry)
+	if err != nil || len(ordinary.Screenshots) != 1 || ordinary.Screenshots[0].RawURL != exact.ScreenshotUploads[4].RawURL ||
+		ordinary.Screenshots[0].PackMemberID != "" || len(meta.ExactMedia.Screenshots) != 5 || repo.uploadsCalls != 0 {
+		t.Fatalf("ordinary lane or source was changed = %#v, repository reads = %d, err = %v", ordinary.Screenshots, repo.uploadsCalls, err)
 	}
 }

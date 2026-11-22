@@ -5530,6 +5530,9 @@
           "order": {
             "type": "integer"
           },
+          "packMemberId": {
+            "type": "string"
+          },
           "processing": {
             "anyOf": [
               {
@@ -7019,6 +7022,24 @@
       },
       "OverrideState": {
         "type": "string"
+      },
+      "PackScreenshotRequirement": {
+        "type": "object",
+        "properties": {
+          "countPerMember": {
+            "type": "integer"
+          },
+          "memberIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "countPerMember",
+          "memberIds"
+        ]
       },
       "PackageInventory": {
         "type": "object",
@@ -12409,6 +12430,16 @@
           },
           "nfo": {
             "type": "boolean"
+          },
+          "packScreenshots": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PackScreenshotRequirement"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "screenshotCount": {
             "type": "integer"

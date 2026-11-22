@@ -1650,7 +1650,7 @@ func compositeUploadSelectedScreenshotExcess(artifacts []api.MediaArtifact, requ
 	excess := make([]api.PublicResourceID, 0)
 	for _, artifact := range ordered {
 		if !artifact.Selected || artifact.Kind != api.MediaArtifactScreenshot ||
-			artifact.Purpose != api.ScreenshotPurposeFinal || artifact.Source == "comparison" {
+			artifact.Purpose != api.ScreenshotPurposeFinal || artifact.Source == "comparison" || artifact.PackMemberID != "" {
 			continue
 		}
 		selected++

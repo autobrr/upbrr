@@ -41,7 +41,7 @@ Imported comparison blocks remain in the description rather than becoming ordina
 
 :::note Compatibility fields
 
-Legacy pack layout and description limit values are retained for configuration compatibility and are not exposed in Settings.
+Legacy pack layout and description limit settings in older configurations are ignored and are not exported. This does not change **Concurrent capture processes** under **Screenshots**.
 
 :::
 

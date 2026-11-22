@@ -910,3 +910,55 @@ func TestLegacyCompositeComparisonImportsRequireFreshReimport(t *testing.T) {
 		})
 	}
 }
+
+func TestPackScreenshotReadinessRequiresEachMemberOnOneEligibleHost(t *testing.T) {
+	pack := api.TrackerReleaseProjection{TrackerID: "PTP", Artifacts: api.TrackerArtifactRequirements{
+		PackScreenshots: &api.PackScreenshotRequirement{MemberIDs: []string{"first", "second"}, CountPerMember: 2},
+	}}
+	ordinary := api.TrackerReleaseProjection{TrackerID: "BETA", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1}}
+	var snapshot api.MediaArtifactSet
+	attempt := api.HostedImageAttempt{Host: "one", TrackerIDs: []api.TrackerID{"PTP", "BETA"}}
+	for _, sample := range []struct{ id, member string }{
+		{"ordinary", ""}, {"a1", "first"}, {"a2", "first"}, {"a3", "first"}, {"b1", "second"}, {"b2", "second"},
+	} {
+		local := api.MediaArtifact{
+ID: api.PublicResourceID(sample.id),
+ Kind: api.MediaArtifactScreenshot,
+			Purpose: api.ScreenshotPurposeFinal,
+ Selected: true,
+ PackMemberID: sample.member,
+}
+		hosted := api.MediaArtifact{
+ID: api.PublicResourceID("host-" + sample.id),
+ Kind: api.MediaArtifactHostedImage,
+			Purpose: api.ScreenshotPurposeFinal,
+ Selected: true,
+ Source: sample.id,
+}
+		snapshot.Artifacts = append(snapshot.Artifacts, local, hosted)
+		attempt.Results = append(attempt.Results, hosted)
+	}
+	targets := []api.TrackerReleaseProjection{pack, ordinary}
+	last := attempt.Results[len(attempt.Results)-1]
+	attempt.Results = attempt.Results[:len(attempt.Results)-1]
+	snapshot.HostAttempts = []api.HostedImageAttempt{attempt, {
+Host: "two",
+ TrackerIDs: []api.TrackerID{"PTP"},
+ Results: []api.MediaArtifact{last},
+}}
+	if HostedScreenshotRequirementsMet(snapshot, targets) {
+		t.Fatal("surplus capture on one file or a screenshot on a different host filled the missing member slot")
+	}
+	snapshot.HostAttempts[0].Results = append(snapshot.HostAttempts[0].Results, last)
+	if !LocalPackScreenshotRequirementsMet(snapshot.Artifacts, targets) || !HostedScreenshotRequirementsMet(snapshot, targets) {
+		t.Fatal("complete PTP pack and ordinary lane did not pass")
+	}
+	snapshot.Artifacts[0].Selected = false // ordinary source only
+	if HostedScreenshotRequirementsMet(snapshot, targets) || !HostedScreenshotRequirementsMet(snapshot, targets[:1]) {
+		t.Fatal("PTP pack shots filled the ordinary tracker slot or lost PTP coverage")
+	}
+	snapshot.Artifacts[len(snapshot.Artifacts)-2].Selected = false // b2 source
+	if LocalPackScreenshotRequirementsMet(snapshot.Artifacts, targets) || HostedScreenshotRequirementsMet(snapshot, targets[:1]) {
+		t.Fatal("deselected pack source still supplied readiness")
+	}
+}

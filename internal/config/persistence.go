@@ -477,7 +477,7 @@ func mergeStoredConfigMapWithReport(base map[string]any, overlay map[string]any,
 
 	overlayKeys := make([]string, 0, len(overlay))
 	for key := range overlay {
-		if isDeprecatedStoredTrackerSetting(path, key) {
+		if isDeprecatedStoredConfigSetting(path, key) {
 			deprecatedPath := configMapPath(path, key)
 			report.deprecatedPaths = append(report.deprecatedPaths, deprecatedPath)
 			report.markChanged(deprecatedPath)
@@ -693,7 +693,21 @@ func shouldDiscardStoredTrackerField(path []string, key string, values map[strin
 	return hasKnownFoldPeer
 }
 
-func isDeprecatedStoredTrackerSetting(path []string, key string) bool {
+func isDeprecatedStoredConfigSetting(path []string, key string) bool {
+	if len(path) == 1 {
+		switch path[0] {
+		case "Description":
+			switch strings.ToLower(key) {
+			case "multiscreens", "packthumbsize", "pack_thumb_size", "charlimit", "filelimit", "processlimit":
+				return true
+			}
+		case "ArrIntegration":
+			switch strings.ToLower(key) {
+			case "embydir", "emby_dir", "embytvdir", "emby_tv_dir":
+				return true
+			}
+		}
+	}
 	if usesASCIIStoredTrackerKeys(path) && isRemovedTracker(key) {
 		return true
 	}
@@ -846,7 +860,7 @@ func mergeStoredUnknownConfigValues(current, stored any, path []string) error {
 		return nil
 	}
 	for key, storedValue := range storedMap {
-		if isDeprecatedStoredTrackerSetting(path, key) {
+		if isDeprecatedStoredConfigSetting(path, key) {
 			continue
 		}
 		if shouldDiscardStoredTrackerField(path, key, storedMap) {
