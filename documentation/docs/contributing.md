@@ -20,7 +20,7 @@ Start with the [bug report template](https://github.com/autobrr/upbrr/blob/main/
 Include:
 
 1. upbrr version and build identifier;
-2. operating system and installation method;
+2. operating system, architecture, and installation method;
 3. affected surface: CLI, Web UI, API, tracker, image host, or client;
 4. shortest reproduction;
 5. expected and actual outcome;

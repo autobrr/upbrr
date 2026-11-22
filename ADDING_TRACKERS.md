@@ -181,6 +181,7 @@ Each `api.ReleaseNameComponent` has a unique semantic `Role`. The complete suppo
 | Multi-edition set label                          | `api.NameRoleEditionSet`     |
 | Cut (for example, Director’s Cut)                | `api.NameRoleCut`            |
 | Edition                                          | `api.NameRoleEdition`        |
+| Display-only edition wording                     | `api.NameRoleEditionDisplay` |
 | Presentation (IMAX / Open Matte)                 | `api.NameRolePresentation`   |
 | Hybrid marker                                    | `api.NameRoleHybrid`         |
 | Repack marker                                    | `api.NameRoleRepack`         |
@@ -431,8 +432,10 @@ owns status/import/validate/login/2FA/delete coordination across CLI, API, and W
 - `internal/cookies` remains the only encrypted cookie persistence owner.
 - Requirement results contain facts only, never credentials, cookies, OTP secrets, auth keys,
   announce URLs, or clients.
-- Tracker auth never prompts. It returns typed actions/errors. `--unattended` skips the affected
-  lane without prompting; `--unattended_confirm` may let the CLI present required manual actions.
+- Tracker auth returns typed outcomes. Upload preflight can validate and recover sessions
+  automatically, including supported credential login and configured TOTP. Unresolved auth blocks
+  the lane in every interaction mode, including `--unattended_confirm`. Dedicated Tracker Auth owns
+  explicit login and manual 2FA.
 - Hybrid modes must be explicit. For example, API-upload and cookie-form upload can resolve to
   different requirement alternatives without tracker-name branches in generic code.
 
@@ -483,14 +486,15 @@ A standalone addition normally changes:
 `trackers.UploadContentMode` tells generic preparation which tracker-scoped content object the
 adapter consumes. Choose by protocol behavior, not tracker identity:
 
-| Mode          | Use when                                                                        | Adapter input                                                    | Failure scope                                                                  |
-| ------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `none`        | The adapter builds its payload without shared descriptions or selected images   | `PreparationInput.Assets` is `nil`                               | Shared content cannot block the tracker                                        |
-| `screenshots` | The adapter consumes selected screenshots/menu images but no shared description | Ready screenshot assets, which may be empty                      | A failed screenshot object blocks only that tracker                            |
-| `description` | The adapter consumes the full shared description plus its image assets          | Ready aggregate description assets, which may contain empty text | A failed description object or required image substep blocks only that tracker |
+| Mode                   | Use when                                                                        | Adapter input                                                    | Failure scope                                                                  |
+| ---------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `none`                 | The adapter builds its payload without shared descriptions or selected images   | `PreparationInput.Assets` is `nil`                               | Shared content cannot block the tracker                                        |
+| `screenshots`          | The adapter consumes selected screenshots/menu images but no shared description | Ready screenshot assets, which may be empty                      | A failed screenshot object blocks only that tracker                            |
+| `description`          | The adapter requires the shared description and consumes its image assets       | Ready aggregate description assets with nonempty text            | A failed description object or required image substep blocks only that tracker |
+| `optional_description` | The adapter consumes shared description and image assets and accepts empty text | Ready aggregate description assets, which may contain empty text | A failed description object or required image substep blocks only that tracker |
 
-Ready-empty content is valid and differs from failed content. Generic coordinators never infer a
-failure from empty text or zero selected images.
+Empty screenshot selections are valid when screenshot preparation succeeds. Empty description text
+is valid for `optional_description` when all required preparation succeeds.
 
 Shared description assets also retain explicitly reviewed, complete comparison rows and source
 columns. Preserve their owned block when replacing ordinary screenshots; main-column screenshot
@@ -498,7 +502,8 @@ reuse shares the same image/upload identity and never flattens the other columns
 
 All Unit3D and AvistaZ-family definitions currently declare `description` once at family level.
 Standalone profiles must set `UploadContentMode` explicitly. Current protocol examples are BTN/NBL
-for `none`, RTF for `screenshots`, and ANT and most other standalone trackers for `description`.
+for `none`, RTF for `screenshots`, ANT for `optional_description`, and most other standalone
+trackers for `description`.
 Changing a standalone tracker's workflow later should require only its profile and tracker-local
 adapter implementation; do not add tracker-name branches to core or tracker orchestration.
 
@@ -1096,10 +1101,10 @@ func New() *standalone.Definition { return standalone.MustNew(Profile()) }
 
 `standalone.Definition` normalizes and defensively copies the profile, reports
 `trackers.FamilyStandalone`, and exposes declared capabilities. Required fields are name, base URL,
-upload-content mode, upload preparer, and duplicate factory. `PrepareDescription` is required only
-for `description`; omit it for `none` and `screenshots`. Omit `ValidationPolicy` only when the
-tracker has no extra constructibility or custom policy; `standalone.Definition` then supplies an
-explicit versioned no-extra-validation binding.
+upload-content mode, upload preparer, and duplicate factory. Both `description` and
+`optional_description` require `PrepareDescription`. Omit it for `none` and `screenshots`.
+Omit `ValidationPolicy` only when the tracker has no extra constructibility or custom policy.
+`standalone.Definition` then supplies an explicit versioned no-extra-validation binding.
 
 Keep rules, validation, and banned groups in their tracker-local responsibility files and pass
 their package functions into the profile. Fold unrelated one-method static policy files into
@@ -1109,7 +1114,7 @@ parser, description, data, and claim behavior in focused tracker-local files.
 
 ### 3. Prepare one immutable upload operation
 
-For `description`, implement two preparation callbacks:
+For `description` and `optional_description`, implement two preparation callbacks:
 
 - `prepareDescription`: build or pass through the description and return its group.
 - `prepareUpload`: build canonical payload/artifact state once and return a
