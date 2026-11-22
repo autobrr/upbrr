@@ -252,3 +252,57 @@ Path: filepath.Join(root, string(id)+".png"),
 		})
 	}
 }
+
+func TestWorkflowIncrementalPreservesDeselectedPackFrame(t *testing.T) {
+ root := t.TempDir()
+ subject := api.ScreenshotSubject{
+  SourcePath: root,
+ VideoPath: filepath.Join(root, "Example.cd1.mkv"),
+  PackMembers: []api.ScreenshotPackMember{{ID: "member", Path: filepath.Join(root, "Example.cd1.mkv")}},
+ }
+ capture := &workflowScreenshotFake{
+  root: root, planFor: func(s api.ScreenshotSubject, _ int) api.ScreenshotPlan {
+   if s.PackMemberID != "" {
+    return api.ScreenshotPlan{ExistingScreenshots: []api.ScreenshotImage{{
+     Index: 0,
+ Path: filepath.Join(root, "pack.png"),
+ Purpose: api.ScreenshotPurposeFinal,
+    }}}
+   }
+   return api.ScreenshotPlan{SuggestedSelections: []api.ScreenshotSelection{{Index: 1, TimestampSeconds: 60}}}
+  },
+ }
+ builder := workflowMediaBuilder{resolver: workflowMediaResolverFake{screenshotSubject: &subject}, screenshots: capture}
+ release := api.ReleaseRef{SourcePath: root, Generation: 1}
+ targets := api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{
+  {TrackerID: "PACK", Artifacts: api.TrackerArtifactRequirements{
+   PackScreenshots: &api.PackScreenshotRequirement{MemberIDs: []string{"member"}, CountPerMember: 1},
+  }},
+  {TrackerID: "ONE", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1}},
+ }}
+ now := time.Now()
+ prior, retained, err := builder.Build(t.Context(), release, targets, api.MediaCaptureInstructions{ScreenshotCount: 1}, now)
+ if err != nil { t.Fatal(err) }
+ var oldID api.PublicResourceID
+ for i, a := range prior.Artifacts {
+  if a.PackMemberID != "" {
+   oldID = a.ID
+   prior.Artifacts[i].Selected = false
+  }
+ }
+ if oldID == "" { t.Fatal("initial pack frame is missing") }
+ combined, _, err := builder.BuildIncremental(t.Context(), release, targets, api.MediaCaptureInstructions{
+  Purpose: api.ScreenshotPurposeFinal, Selections: []api.ScreenshotSelection{{Index: 2, TimestampSeconds: 120}},
+ }, &prior, retained, now)
+ if err != nil { t.Fatal(err) }
+ var packCount int
+ for _, a := range combined.Artifacts {
+  if a.PackMemberID != "" {
+   packCount++
+   if a.Selected || a.ID != oldID { t.Fatalf("pack selection was recreated: %+v", a) }
+  }
+ }
+ if packCount != 1 || len(combined.Artifacts) != 3 {
+  t.Fatalf("combined selection = %+v", combined.Artifacts)
+ }
+}

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/netip"
@@ -97,8 +98,8 @@ func scopeExactScreenshotMedia(meta api.UploadSubject, tracker string, registry 
 
 // exactMediaForTrackerHost selects reusable screenshots and excludes source-only
 // or failed-host DVD menu uploads. The workflow may contain other trackers' images.
-// Available configured-host links take precedence over other hosts' coverage.
-// Equal coverage otherwise retains the resolved host preference.
+// Complete scoped galleries outrank partial galleries. Within the same
+// completeness tier, eligible configured hosts retain their preference.
 func exactMediaForTrackerHost(
 	tracker string,
 	meta api.UploadSubject,
@@ -188,14 +189,19 @@ func exactMediaForTrackerHost(
 		}
 		pathsByHost[host][pathValue] = struct{}{}
 	}
+	complete := completeScopedScreenshotHosts(registry, tracker, meta, appCfg, exact.Screenshots, pathsByHost)
 	selectedHost := ""
 	for _, host := range orderedHosts {
+		if len(complete) > 0 && !complete[host] {
+			continue
+		}
 		if selectedHost == "" || len(pathsByHost[host]) > len(pathsByHost[selectedHost]) ||
 			(len(pathsByHost[host]) == len(pathsByHost[selectedHost]) && host == preferredHost(selectionPolicy)) {
 			selectedHost = host
 		}
 	}
-	if configuredHost := strings.ToLower(strings.TrimSpace(trackerCfg.ImageHost)); len(pathsByHost[configuredHost]) > 0 {
+	if configuredHost := strings.ToLower(strings.TrimSpace(trackerCfg.ImageHost)); len(pathsByHost[configuredHost]) > 0 &&
+		(len(complete) == 0 || complete[configuredHost]) {
 		selectedHost = configuredHost
 	}
 	if selectedHost == "" {
@@ -227,6 +233,73 @@ func exactMediaForTrackerHost(
 	exact.Screenshots = filteredImages
 	exact.ScreenshotUploads = filteredUploads
 	return exact, nil
+}
+
+// completeScopedScreenshotHosts checks each host independently against the
+// same per-source quotas used by workflow projection. An ordinary gallery
+// has no scoped quotas, so it preserves the existing host preference.
+func completeScopedScreenshotHosts(
+	registry *Registry, tracker string, meta api.UploadSubject, cfg config.Config,
+	images []api.ScreenshotImage, pathsByHost map[string]map[string]struct{},
+) map[string]bool {
+	descriptor, ok := registry.LookupDescriptor(tracker)
+	if !ok || descriptor.WorkflowMedia == nil {
+		return nil
+	}
+	var count *int
+	if meta.Options.Screens > 0 {
+		count = &meta.Options.Screens
+	}
+	var projection api.TrackerReleaseProjection
+	applyWorkflowProjectionRequirements(&projection, descriptor, count, count == nil, cfg, meta)
+	requirements := projection.Artifacts
+	remaining := make(map[string]int)
+	switch {
+	case requirements.PackScreenshots != nil:
+		for _, id := range requirements.PackScreenshots.MemberIDs {
+			remaining[id] = requirements.PackScreenshots.CountPerMember
+		}
+	case requirements.DiscScreenshots != nil:
+		for _, id := range requirements.DiscScreenshots.DiscIDs {
+			remaining[id] = requirements.DiscScreenshots.AdditionalCount
+		}
+		remaining[requirements.DiscScreenshots.DiscIDs[0]] = requirements.ScreenshotCount
+	default:
+		return nil
+	}
+	groupsByPath := make(map[string]string, len(images))
+	for _, image := range images {
+		if image.Purpose != api.ScreenshotPurposeFinal {
+			continue
+		}
+		group := image.DiscID
+		if requirements.PackScreenshots != nil {
+			group = image.PackMemberID
+		}
+		if remaining[group] > 0 {
+			groupsByPath[strings.TrimSpace(image.Path)] = group
+		}
+	}
+	complete := make(map[string]bool)
+	for host, paths := range pathsByHost {
+		quotas := maps.Clone(remaining)
+		for path := range paths {
+			if group := groupsByPath[path]; quotas[group] > 0 {
+				quotas[group]--
+			}
+		}
+		covered := true
+		for _, missing := range quotas {
+			if missing > 0 {
+				covered = false
+				break
+			}
+		}
+		if covered {
+			complete[host] = true
+		}
+	}
+	return complete
 }
 
 const (

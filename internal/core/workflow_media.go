@@ -1318,7 +1318,8 @@ func (b workflowMediaBuilder) BuildIncremental(
 	for _, artifact := range combined.Artifacts {
 		known[artifact.ID] = struct{}{}
 		maxOrder = max(maxOrder, artifact.Order)
-		if artifact.Kind == api.MediaArtifactScreenshot && (artifact.Selected || isImportedWorkflowScreenshot(artifact, retained)) {
+		if artifact.Kind == api.MediaArtifactScreenshot &&
+			(artifact.PackMemberID != "" || artifact.Selected || isImportedWorkflowScreenshot(artifact, retained)) {
 			if image, ok := retained.ArtifactImages[artifact.ID]; ok {
 				knownScreenshotPaths[strings.ToLower(normalizedUploadImagePath(image.Path))] = artifact.ID
 				if isImportedWorkflowScreenshot(artifact, retained) {
