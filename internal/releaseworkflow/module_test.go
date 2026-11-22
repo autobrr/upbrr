@@ -4784,6 +4784,49 @@ func TestRefreshMutatedMediaStatusExcludesOnlyTrackerScopedHostFailures(t *testi
 	}
 }
 
+func TestRefreshMutatedMediaStatusIgnoresObsoleteLocalImageHostFailure(t *testing.T) {
+	t.Parallel()
+
+	projections := []api.TrackerReleaseProjection{{
+		TrackerID: "LOCAL",
+		Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1, LocalScreenshotsOnly: true},
+	}}
+	retainedFailure := api.WorkflowFailure{
+		TrackerID: "local",
+		Failure: api.OperationFailure{
+			Operation: api.OperationKindImageHosting,
+			Code:      api.OperationFailureImageHostUnavailable,
+		},
+	}
+	snapshot := api.MediaArtifactSet{
+		ImageRequirementsPrepared: true,
+		Artifacts: []api.MediaArtifact{{
+			ID:       "local-screen",
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+		}},
+		Failures: []api.WorkflowFailure{retainedFailure},
+	}
+	refreshMutatedMediaStatus(&snapshot, projections, projections)
+	if snapshot.Status != api.StageStatusCompleted || len(snapshot.Failures) != 0 {
+		t.Fatalf("obsolete local image hosting failure blocked media readiness: %#v", snapshot)
+	}
+	retainedFailure.TrackerID = ""
+	snapshot.Failures = []api.WorkflowFailure{retainedFailure}
+	refreshMutatedMediaStatus(&snapshot, projections, projections)
+	if snapshot.Status != api.StageStatusBlocked {
+		t.Fatalf("unscoped hosting failure did not block media readiness: %#v", snapshot)
+	}
+	retainedFailure.TrackerID = "LOCAL"
+	retainedFailure.Failure.Code = api.OperationFailureUnknownOutcome
+	snapshot.Failures = []api.WorkflowFailure{retainedFailure}
+	refreshMutatedMediaStatus(&snapshot, projections, projections)
+	if snapshot.Status != api.StageStatusBlocked {
+		t.Fatalf("unknown local hosting outcome did not block media readiness: %#v", snapshot)
+	}
+}
+
 func waitForWorkflowOperation(
 	t *testing.T,
 	module *Module,

@@ -7045,6 +7045,9 @@ func removeOrphanedMediaPreparationActions(state *State) {
 func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, knownProjections []api.TrackerReleaseProjection) {
 	retainedFailures := make([]api.WorkflowFailure, 0, len(snapshot.Failures))
 	for _, failure := range snapshot.Failures {
+		if obsoleteLocalImageHostFailure(failure, knownProjections) {
+			continue
+		}
 		if failure.Failure.Operation == api.OperationKindImageHosting || incompleteComparisonFailure(failure) {
 			retainedFailures = append(retainedFailures, failure)
 		}
@@ -7057,7 +7060,7 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 		readinessProjections = slices.DeleteFunc(
 			append([]api.TrackerReleaseProjection(nil), projections...),
 			func(projection api.TrackerReleaseProjection) bool {
-				_, failed := TrackerImageHostFailure(*snapshot, projection.TrackerID)
+				_, failed := ProjectionImageHostFailure(*snapshot, projection)
 				return failed
 			},
 		)

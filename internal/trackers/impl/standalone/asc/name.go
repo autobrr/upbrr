@@ -4,63 +4,14 @@
 package asc
 
 import (
-	"errors"
 	"fmt"
-	"path/filepath"
-	"regexp"
 	"strings"
-
-	"github.com/autobrr/go-torrent/metainfo"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
-
-var ascContentResolution = regexp.MustCompile(`(?i)[._ ](?:2160|1440|1080|720|576|540|480)[pi][._ -]`)
-var ascContentVideo = regexp.MustCompile(`(?i)[._ ](?:H[._ ]?26[45]|x26[45]|HEVC|AVC|AV1|VP9|XviD|DivX|VC-1|MPEG-?2)(?:[._ -]|$)`)
-
-var ascContentAudio = regexp.MustCompile(
-	`(?i)(?:^|[._ -])(?:DDPA?\+?|DD\+?|AAC|E-?AC-?3|AC-?3|DTS(?:-HD|-X|-ES)?|TrueHD|FLAC|L?PCM|OPUS|MP3|Atmos)(?:\d\.?\d?)?(?:[._ -]|$)`,
-)
-
-func validateASCVideoNames(info metainfo.Info, mediaInfo, discType string) error {
-	if discType != "" {
-		return nil
-	}
-	videoNames := make(map[string]bool)
-	for _, file := range info.UpvertedFiles() {
-		name := info.BestName()
-		if path := file.BestPath(); len(path) > 0 {
-			name = path[len(path)-1]
-		}
-		switch strings.ToLower(filepath.Ext(name)) {
-		case ".mkv", ".mp4", ".m4v", ".avi", ".ts", ".m2ts", ".mpg", ".mpeg", ".wmv", ".mov", ".webm":
-		default:
-			continue
-		}
-		resolution := ascContentResolution.FindStringIndex(name)
-		if resolution == nil {
-			return errors.New("video filename must include ASC resolution, audio and video codec tokens")
-		}
-		tail := name[resolution[1]-1:]
-		video := ascContentVideo.FindStringIndex(tail)
-		if video == nil || !ascContentAudio.MatchString(tail[:video[0]]) {
-			return errors.New("video filename must include the ASC audio token before the video codec")
-		}
-		videoNames[name] = true
-	}
-	if len(videoNames) == 0 {
-		return errors.New("no video file in the prepared torrent")
-	}
-	for _, match := range ascReportedName.FindAllStringSubmatch(mediaInfo, -1) {
-		if !videoNames[strings.TrimSpace(match[1])] {
-			return errors.New("MediaInfo filename does not match the prepared torrent")
-		}
-	}
-	return nil
-}
 
 func resolveUploadTitle(meta api.UploadSubject) string {
 	base := resolveDisplayTitle(meta)

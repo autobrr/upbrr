@@ -76,8 +76,8 @@ func projectContinuationRequiredActions(
 
 // projectTrackerLaneOutcomes combines current stage evidence into per-tracker outcomes.
 // A terminal accepted in-client match clears actions retained by earlier stages.
-// Explicit image-host skip suppresses known hosting failures in successful media;
-// unknown external outcomes still contribute failure evidence.
+// Explicit image-host skip and currently local-only projections suppress terminal
+// hosting failures; unknown external outcomes still contribute failure evidence.
 func projectTrackerLaneOutcomes(current CommandResult) []api.TrackerLaneOutcome {
 	if current.Projections == nil {
 		return nil
@@ -166,7 +166,8 @@ func projectTrackerLaneOutcomes(current CommandResult) []api.TrackerLaneOutcome 
 			}
 		}
 		failures := slices.DeleteFunc(slices.Clone(current.Media.Failures), func(failure api.WorkflowFailure) bool {
-			return skippedTerminalImageHostFailure(*current.Media, failure)
+			return current.Media.ImageHostUploadSkipped && terminalImageHostFailure(failure) ||
+				obsoleteLocalImageHostFailure(failure, current.Projections.Projections)
 		})
 		applyTrackerFailures(lanes, index, failures)
 	}
@@ -305,7 +306,7 @@ func downstreamStageEligibility(
 		return api.UploadEligibilitySkipped, api.UploadSkipReasonTrackerNotApprovedInGate
 	}
 	if current.Media != nil {
-		if _, failed := TrackerImageHostFailure(*current.Media, projection.TrackerID); failed {
+		if _, failed := ProjectionImageHostFailure(*current.Media, projection); failed {
 			return api.UploadEligibilitySkipped, api.UploadSkipReasonImageHostingFailed
 		}
 	}

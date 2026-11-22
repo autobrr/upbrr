@@ -457,8 +457,12 @@ func resolveDownstreamTrackerSet(
 			return downstreamTrackerSet{}, fmt.Errorf("%w: retained media is stale", ErrInvalidTransition)
 		}
 		blocked := make([]string, 0, len(base))
-		for trackerID := range base {
-			if _, failed := TrackerImageHostFailure(media, trackerID); failed {
+		for _, projection := range eligible.Projections {
+			trackerID := normalizeDownstreamTrackerID(projection.TrackerID)
+			if _, allowed := base[trackerID]; !allowed {
+				continue
+			}
+			if _, failed := ProjectionImageHostFailure(media, projection); failed {
 				delete(base, trackerID)
 				blocked = append(blocked, string(trackerID))
 			}
@@ -529,6 +533,20 @@ func normalizeDownstreamTrackerID(value api.TrackerID) api.TrackerID {
 // in the retained media snapshot. Explicit skip ignores known failures but keeps
 // unknown external outcomes blocked until reconciliation.
 func TrackerImageHostFailure(media api.MediaArtifactSet, trackerID api.TrackerID) (api.WorkflowFailure, bool) {
+	return trackerImageHostFailure(media, trackerID, false)
+}
+
+// ProjectionImageHostFailure ignores obsolete terminal hosting failures for a
+// local-only projection while preserving unknown external outcomes.
+func ProjectionImageHostFailure(media api.MediaArtifactSet, projection api.TrackerReleaseProjection) (api.WorkflowFailure, bool) {
+	return trackerImageHostFailure(media, projection.TrackerID, projection.Artifacts.LocalScreenshotsOnly)
+}
+
+func trackerImageHostFailure(
+	media api.MediaArtifactSet,
+	trackerID api.TrackerID,
+	localScreenshotsOnly bool,
+) (api.WorkflowFailure, bool) {
 	trackerID = normalizeDownstreamTrackerID(trackerID)
 	if trackerID == "" {
 		return api.WorkflowFailure{}, false
@@ -537,7 +555,7 @@ func TrackerImageHostFailure(media api.MediaArtifactSet, trackerID api.TrackerID
 		if failure.Failure.Operation != api.OperationKindImageHosting {
 			continue
 		}
-		if skippedTerminalImageHostFailure(media, failure) {
+		if (media.ImageHostUploadSkipped || localScreenshotsOnly) && terminalImageHostFailure(failure) {
 			continue
 		}
 		if normalizeDownstreamTrackerID(failure.TrackerID) == trackerID {
@@ -547,16 +565,19 @@ func TrackerImageHostFailure(media api.MediaArtifactSet, trackerID api.TrackerID
 	return api.WorkflowFailure{}, false
 }
 
-// skippedTerminalImageHostFailure identifies retained hosting failures that an
-// explicit skip can bypass; unknown external outcomes remain authoritative.
-func skippedTerminalImageHostFailure(media api.MediaArtifactSet, failure api.WorkflowFailure) bool {
-	return media.ImageHostUploadSkipped && failure.Failure.Operation == api.OperationKindImageHosting &&
-		failure.Failure.Code != api.OperationFailureUnknownOutcome
+func terminalImageHostFailure(failure api.WorkflowFailure) bool {
+	return failure.Failure.Operation == api.OperationKindImageHosting && failure.Failure.Code != api.OperationFailureUnknownOutcome
 }
 
-// DownstreamEligibleProjectionsAfterMedia removes trackers with terminal
+func obsoleteLocalImageHostFailure(failure api.WorkflowFailure, projections []api.TrackerReleaseProjection) bool {
+	trackerID := normalizeDownstreamTrackerID(failure.TrackerID)
+	return trackerID != "" && terminalImageHostFailure(failure) && slices.ContainsFunc(projections, func(projection api.TrackerReleaseProjection) bool {
+		return projection.Artifacts.LocalScreenshotsOnly && normalizeDownstreamTrackerID(projection.TrackerID) == trackerID
+	})
+}
+
+// DownstreamEligibleProjectionsAfterMedia removes trackers with blocking
 // tracker-scoped image-host failures from the regular post-dupe eligible set.
-// Explicit skip preserves eligibility for known failures, never unknown outcomes.
 func DownstreamEligibleProjectionsAfterMedia(
 	projections api.TrackerReleaseProjectionSet,
 	dupes api.DupeAssessment,
@@ -564,7 +585,7 @@ func DownstreamEligibleProjectionsAfterMedia(
 ) api.TrackerReleaseProjectionSet {
 	eligible := DownstreamEligibleProjections(projections, dupes)
 	eligible.Projections = slices.DeleteFunc(eligible.Projections, func(projection api.TrackerReleaseProjection) bool {
-		_, failed := TrackerImageHostFailure(media, projection.TrackerID)
+		_, failed := ProjectionImageHostFailure(media, projection)
 		return failed
 	})
 	return eligible

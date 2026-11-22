@@ -55,6 +55,7 @@ func TestDownstreamEligibleProjectionsAfterMediaExcludesOnlyFailedImageHostTrack
 			TrackerID:   "ALPHA",
 			Readiness:   api.ReadinessStatusReady,
 			UploadReady: true,
+			Artifacts:   api.TrackerArtifactRequirements{LocalScreenshotsOnly: true},
 		},
 		{
 			TrackerID:   "BETA",
@@ -95,6 +96,9 @@ func TestDownstreamEligibleProjectionsAfterMediaExcludesOnlyFailedImageHostTrack
 			TrackerID: "ALPHA",
 		},
 	}}
+	staleLocalFailure := media.Failures[0]
+	staleLocalFailure.TrackerID = "ALPHA"
+	media.Failures = append(media.Failures, staleLocalFailure)
 
 	eligible := DownstreamEligibleProjectionsAfterMedia(projections, dupes, media)
 	if len(eligible.Projections) != 1 || eligible.Projections[0].TrackerID != "ALPHA" {
@@ -113,6 +117,14 @@ func TestDownstreamEligibleProjectionsAfterMediaExcludesOnlyFailedImageHostTrack
 	eligible = DownstreamEligibleProjectionsAfterMedia(projections, dupes, media)
 	if len(eligible.Projections) != 1 || eligible.Projections[0].TrackerID != "ALPHA" {
 		t.Fatalf("skip cleared unresolved image-host effect: %#v", eligible.Projections)
+	}
+	media.ImageHostUploadSkipped = false
+	unknown := staleLocalFailure
+	unknown.Failure.Code = api.OperationFailureUnknownOutcome
+	media.Failures = append(media.Failures, unknown)
+	eligible = DownstreamEligibleProjectionsAfterMedia(projections, dupes, media)
+	if len(eligible.Projections) != 0 {
+		t.Fatalf("stale local failure masked a later unresolved image-host effect: %#v", eligible.Projections)
 	}
 
 	media.Failures = nil

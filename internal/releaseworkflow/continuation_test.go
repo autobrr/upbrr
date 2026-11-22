@@ -50,6 +50,10 @@ func TestWorkflowContinuationFailsOnlyTrackerWithTerminalImageHostFailure(t *tes
 			Resource:  "pixhost",
 		}},
 	}
+	current.Projections.Projections[0].Artifacts.LocalScreenshotsOnly = true
+	staleLocalFailure := current.Media.Failures[0]
+	staleLocalFailure.TrackerID = "ALPHA"
+	current.Media.Failures = append(current.Media.Failures, staleLocalFailure)
 
 	continuation := projectWorkflowContinuation(current)
 	if len(continuation.TrackerOutcomes) != 2 ||
@@ -62,7 +66,6 @@ func TestWorkflowContinuationFailsOnlyTrackerWithTerminalImageHostFailure(t *tes
 		failed.Lifecycle != api.OperationLifecycleTerminal || !failed.Retryable || len(failed.Failures) != 1 {
 		t.Fatalf("failed image-host tracker outcome = %#v", failed)
 	}
-	current.Media.ImageHostUploadSkipped = true
 	for index := range current.Projections.Projections {
 		current.Projections.Projections[index].UploadReady = true
 	}
@@ -78,6 +81,18 @@ func TestWorkflowContinuationFailsOnlyTrackerWithTerminalImageHostFailure(t *tes
 			Status:    api.StageStatusCompleted,
 		},
 	}}
+	continuation = projectWorkflowContinuation(current)
+	if continuation.TrackerOutcomes[0].UploadEligibility != api.UploadEligibilityEligible {
+		t.Fatalf("stale image-host failure excluded local-only lane: %+v", continuation.TrackerOutcomes[0])
+	}
+	unknown := staleLocalFailure
+	unknown.Failure.Code = api.OperationFailureUnknownOutcome
+	current.Media.Failures = append(current.Media.Failures, unknown)
+	continuation = projectWorkflowContinuation(current)
+	if continuation.TrackerOutcomes[0].UploadEligibility != api.UploadEligibilitySkipped {
+		t.Fatalf("local-only lane ignored an unknown external outcome: %+v", continuation.TrackerOutcomes[0])
+	}
+	current.Media.ImageHostUploadSkipped = true
 	continuation = projectWorkflowContinuation(current)
 	if continuation.TrackerOutcomes[1].UploadEligibility != api.UploadEligibilityEligible ||
 		continuation.TrackerOutcomes[1].Disposition == api.WorkflowDispositionFailed {
