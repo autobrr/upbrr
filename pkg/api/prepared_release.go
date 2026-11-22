@@ -323,8 +323,10 @@ type MediaFacts struct {
 	TitleLanguages []string `json:",omitempty"`
 	// EditionRuntimeSeconds is the measured runtime of one presentation, or zero if unavailable.
 	EditionRuntimeSeconds float64 `json:",omitempty"`
-	// EditionRuntimePAL identifies a measured 25 fps DVD title duration.
-	EditionRuntimePAL bool `json:",omitempty"`
+	// EditionFrameRate is the measured fixed cadence for that presentation.
+	EditionFrameRate float64 `json:",omitempty"`
+	// EditionOriginalFrameRate is the original cadence when the source reports it.
+	EditionOriginalFrameRate float64 `json:",omitempty"`
 }
 
 // DiscFacts contains typed disc measurements that are safe to publish as

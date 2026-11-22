@@ -999,7 +999,7 @@ func TestEditionRuntimeRequiresOneVideoPresentation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"6000.000"},{"@type":"Video"}` + tc.extra + `]}}`)
-			if got, pal := editionRuntime(preparationstate.State{FileList: []string{"Example.mkv"}}, doc); got != tc.want || pal {
+			if got, fps, original := editionRuntime(preparationstate.State{FileList: []string{"Example.mkv"}}, doc, nil); got != tc.want || fps != 0 || original != 0 {
 				t.Fatalf("runtime = %v, want %v", got, tc.want)
 			}
 		})
@@ -1013,24 +1013,45 @@ func TestEditionRuntimeUsesSelectedDVDTitleNotIndividualVOB(t *testing.T) {
 		DVDVOBSet:           "01",
 		DVDVOBMediaInfoJSON: `{"media":{"track":[{"@type":"General","Duration":"120.000"},{"@type":"Video","FrameRate":"25.000"}]}}`,
 	}
-	if got, pal := editionRuntime(state, doc); got != 8269.760 || !pal {
-		t.Fatalf("title duration = %v, PAL = %t", got, pal)
+	if got, fps, original := editionRuntime(state, doc, nil); got != 8269.760 || fps != 25 || original != 0 {
+		t.Fatalf("title duration = %v, fps = %v, original = %v", got, fps, original)
 	}
 	for _, rate := range []string{"29.970", "23.976"} {
 		ntsc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"7920.000"},{"@type":"Video","Standard":"NTSC","FrameRate":"` +
 			rate + `","FrameRate_Original":"23.976"}]}}`)
-		if got, pal := editionRuntime(state, ntsc); got != 7920 || pal {
-			t.Fatalf("NTSC playback duration at %s = %v, PAL = %t", rate, got, pal)
+		if got, fps, original := editionRuntime(state, ntsc, nil); got != 7920 || fps != editionFrameRateText(rate) || original != 24000.0/1001 {
+			t.Fatalf("NTSC playback duration at %s = %v, fps = %v, original = %v", rate, got, fps, original)
 		}
 	}
 	state.Discs = make([]preparationstate.DiscResource, 2)
-	if got, pal := editionRuntime(state, doc); got != 0 || pal {
-		t.Fatalf("DVD collection incorrectly has one edition runtime: %v, PAL = %t", got, pal)
+	if got, fps, original := editionRuntime(state, doc, nil); got != 0 || fps != 0 || original != 0 {
+		t.Fatalf("DVD collection incorrectly has one edition runtime: %v, fps = %v, original = %v", got, fps, original)
 	}
 	state.Discs = nil
 	state.DVDVOBSet = ""
-	if got, pal := editionRuntime(state, doc); got != 0 || pal {
-		t.Fatalf("DVD without selected title incorrectly has an edition runtime: %v, PAL = %t", got, pal)
+	if got, fps, original := editionRuntime(state, doc, nil); got != 0 || fps != 0 || original != 0 {
+		t.Fatalf("DVD without selected title incorrectly has an edition runtime: %v, fps = %v, original = %v", got, fps, original)
+	}
+}
+
+func TestEditionRuntimeCollectsFrameRatesBeyondDVD(t *testing.T) {
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"6000.000"},
+        {"@type":"Video","FrameRate_Num":"24000","FrameRate_Den":"1001","FrameRate_Original":"24.000"}]}}`)
+	if duration, fps, original := editionRuntime(preparationstate.State{}, doc, nil); duration != 6000 || fps != 24000.0/1001 || original != 24 {
+		t.Fatalf("file runtime = %v, fps = %v, original = %v", duration, fps, original)
+	}
+	variable := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"6000.000"},
+        {"@type":"Video","FrameRate_Mode":"VFR","FrameRate":"25.000"}]}}`)
+	if duration, fps, original := editionRuntime(preparationstate.State{}, variable, nil); duration != 6000 || fps != 0 || original != 0 {
+		t.Fatalf("variable-rate file runtime = %v, fps = %v, original = %v", duration, fps, original)
+	}
+	bd := preparationstate.State{
+		DiscType:              "BDMV",
+		SelectedBDMVPlaylists: []api.PlaylistInfo{{Duration: 6000}},
+	}
+	report := &discparse.BDInfo{Video: []discparse.BDVideo{{FPS: "25.000 fps"}}}
+	if duration, fps, original := editionRuntime(bd, mediaInfoDoc{}, report); duration != 6000 || fps != 25 || original != 0 {
+		t.Fatalf("playlist runtime = %v, fps = %v, original = %v", duration, fps, original)
 	}
 }
 

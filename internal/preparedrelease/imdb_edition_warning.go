@@ -38,31 +38,57 @@ func imdbEditionDiagnostics(release api.PreparedRelease) []api.PreparationDiagno
 	if expected == "" {
 		expected = "Theatrical Cut"
 	}
-	comparison := duration
-	runtime := imdbRuntimeText(duration)
-	if release.Media.EditionRuntimePAL {
-		comparison *= 25 * 1001.0 / 24000
-		runtime += " PAL (about " + imdbRuntimeText(comparison) + " at 23.976 fps)"
+	reference, preferAdjusted := imdbEditionReferenceRate(release)
+	comparison, adjusted := duration, duration
+	if reference > 0 {
+		adjusted = duration * release.Media.EditionFrameRate / reference
 	}
-
+	runtime := imdbRuntimeText(duration)
 	candidates := make([]imdbRuntimeCandidate, 0, len(imdb.EditionRuntimes))
 	seen := make(map[imdbRuntimeCandidate]bool, len(imdb.EditionRuntimes))
+	expectedKey := imdbEditionKey(expected)
+	rawDistance, adjustedDistance := math.Inf(1), math.Inf(1)
+	rawMatch, adjustedMatch := false, false
+	var rawNearest imdbRuntimeCandidate
+	var rawUnlabeledMatch, adjustedUnlabeledMatch bool
 	for _, row := range imdb.EditionRuntimes {
 		if row.Seconds <= 0 {
 			continue
 		}
 		candidate := imdbRuntimeCandidate{label: imdbRuntimeLabel(row.Attributes), seconds: row.Seconds}
-		if imdbEditionKey(candidate.label) == imdbEditionKey(expected) &&
-			math.Abs(comparison-float64(candidate.seconds)) <= imdbRuntimeMatchSeconds {
-			return nil
+		rawDelta := math.Abs(duration - float64(row.Seconds))
+		adjustedDelta := math.Abs(adjusted - float64(row.Seconds))
+		if candidate.label == "" {
+			rawUnlabeledMatch = rawUnlabeledMatch || rawDelta <= imdbRuntimeMatchSeconds
+			adjustedUnlabeledMatch = adjustedUnlabeledMatch || adjustedDelta <= imdbRuntimeMatchSeconds
+			continue
+		}
+		if rawDelta < rawDistance {
+			rawDistance, rawNearest = rawDelta, candidate
+		}
+		adjustedDistance = min(adjustedDistance, adjustedDelta)
+		if imdbEditionKey(candidate.label) == expectedKey {
+			rawMatch = rawMatch || rawDelta <= imdbRuntimeMatchSeconds
+			adjustedMatch = adjustedMatch || adjustedDelta <= imdbRuntimeMatchSeconds
 		}
 		if !seen[candidate] {
 			seen[candidate] = true
 			candidates = append(candidates, candidate)
 		}
 	}
-	if len(candidates) == 0 {
+	if len(candidates) == 0 || preferAdjusted && (adjustedMatch || adjustedUnlabeledMatch) ||
+		!preferAdjusted && (rawMatch || rawUnlabeledMatch) {
 		return nil
+	}
+	useAdjusted := reference > 0 && (preferAdjusted || adjustedMatch || !adjustedUnlabeledMatch && adjustedDistance < rawDistance)
+	if useAdjusted {
+		comparison = adjusted
+		if preferAdjusted {
+			runtime += fmt.Sprintf(" PAL (about %s at %.3f fps)", imdbRuntimeText(adjusted), reference)
+		} else {
+			runtime += fmt.Sprintf(" at %.3f fps (about %s at %.3f fps if the cadence difference is a speed change)",
+				release.Media.EditionFrameRate, imdbRuntimeText(adjusted), reference)
+		}
 	}
 	sort.Slice(candidates, func(i, j int) bool {
 		a, b := candidates[i], candidates[j]
@@ -77,7 +103,23 @@ func imdbEditionDiagnostics(release api.PreparedRelease) []api.PreparationDiagno
 	})
 	closest := candidates[:min(2, len(candidates))]
 	reason := "The closest IMDb runtime does not confirm this edition."
-	if math.Abs(comparison-float64(candidates[0].seconds)) > imdbRuntimeMatchSeconds {
+	if useAdjusted && adjustedMatch {
+		reason = "The frame-rate-adjusted runtime is consistent with this edition; the measured runtime does not confirm it."
+	}
+	nearCuts := make(map[string]struct{})
+	for _, candidate := range candidates {
+		if math.Abs(comparison-float64(candidate.seconds)) > imdbRuntimeMatchSeconds {
+			break
+		}
+		nearCuts[imdbEditionKey(candidate.label)] = struct{}{}
+	}
+	if len(nearCuts) > 1 {
+		reason = "Multiple IMDb editions have this runtime; duration alone cannot distinguish them."
+	} else if useAdjusted && !preferAdjusted && rawDistance <= imdbRuntimeMatchSeconds &&
+		imdbEditionKey(rawNearest.label) != imdbEditionKey(candidates[0].label) {
+		reason += fmt.Sprintf(" At the measured runtime, IMDb is also close to %s (%s).", rawNearest.label, imdbRuntimeText(float64(rawNearest.seconds)))
+	}
+	if len(nearCuts) == 0 {
 		reason = "No listed IMDb runtime is within 2 seconds."
 		var shorter, longer imdbRuntimeCandidate
 		for _, candidate := range candidates {
@@ -109,13 +151,42 @@ func imdbEditionDiagnostics(release api.PreparedRelease) []api.PreparationDiagno
 	}}
 }
 
+// imdbEditionReferenceRate chooses a reported original cadence, or a common
+// film cadence as an explicitly labelled hypothesis. NTSC DVD pulldown is
+// cadence conversion, not a change in playback duration.
+func imdbEditionReferenceRate(release api.PreparedRelease) (reference float64, preferAdjusted bool) {
+	const filmNTSC = 24000.0 / 1001
+	fps := release.Media.EditionFrameRate
+	if fps <= 0 || math.IsNaN(fps) || math.IsInf(fps, 0) {
+		return 0, false
+	}
+	dvd := strings.EqualFold(release.Disc.Type, "DVD")
+	if dvd && (math.Abs(fps-30000.0/1001) < 0.001 || math.Abs(fps-filmNTSC) < 0.001) {
+		return 0, false
+	}
+	if dvd && fps == 25 {
+		return filmNTSC, true
+	}
+	reference = release.Media.EditionOriginalFrameRate
+	if reference <= 0 || math.IsNaN(reference) || math.IsInf(reference, 0) {
+		reference = filmNTSC
+		if math.Abs(fps-filmNTSC) < 0.001 {
+			reference = 24
+		}
+	}
+	if math.Abs(reference-fps) < 0.001 {
+		return 0, false
+	}
+	return reference, false
+}
+
 func imdbRuntimeText(seconds float64) string {
 	value := int(math.Round(seconds))
 	return fmt.Sprintf("%d:%02d:%02d", value/3600, value/60%60, value%60)
 }
 
-// Treat a plain runtime as IMDb's default theatrical candidate. Preserve
-// unknown attributes as display evidence without interpreting them as cuts.
+// imdbRuntimeLabel treats a plain row as IMDb's default theatrical candidate.
+// Presentation-only or mastering-only rows do not identify another cut.
 func imdbRuntimeLabel(attributes []string) string {
 	var label string
 	for _, attribute := range attributes {
@@ -137,7 +208,7 @@ func imdbRuntimeLabel(attributes []string) string {
 	if len(attributes) == 0 {
 		return "Theatrical Cut"
 	}
-	return strings.Join(attributes, ", ")
+	return ""
 }
 
 func imdbEditionKey(label string) string {

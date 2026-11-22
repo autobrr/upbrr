@@ -22,7 +22,8 @@ func TestIMDbEditionWarningUsesEffectiveEditionAndNearestRuntimeEvidence(t *test
 	for _, tc := range []struct {
 		name, cut, edition string
 		seconds            float64
-		pal, changedTitle  bool
+		dvd, changedTitle  bool
+		fps, originalFPS   float64
 		rows               []api.IMDBEditionDetail
 		want               []string
 	}{
@@ -72,7 +73,8 @@ func TestIMDbEditionWarningUsesEffectiveEditionAndNearestRuntimeEvidence(t *test
 			name:    "PAL DVD presentation normalizes to film timing",
 			cut:     "Extended",
 			seconds: 8269.760,
-			pal:     true,
+			dvd:     true,
+			fps:     25,
 			rows:    filmRows,
 			want:    []string{"2:17:50 PAL (about 2:23:43 at 23.976 fps)", "Extended Cut (2:24:00); Theatrical Cut (2:12:00)"},
 		},
@@ -80,8 +82,41 @@ func TestIMDbEditionWarningUsesEffectiveEditionAndNearestRuntimeEvidence(t *test
 			name:    "same title with two runtimes can use a true edition match",
 			cut:     "Extended",
 			seconds: 827.172,
-			pal:     true,
+			dvd:     true,
+			fps:     25,
 			rows:    []api.IMDBEditionDetail{row(860), row(862, "Extended")},
+		},
+		{
+			name:    "25 fps file speed-up alternative",
+			cut:     "Extended",
+			seconds: 8286.113,
+			fps:     25,
+			rows:    filmRows,
+			want:    []string{"at 25.000 fps", "at 23.976 fps", "if the cadence difference is a speed change", "consistent with this edition", "Extended Cut (2:24:00)"},
+		},
+		{
+			name:        "23.976 fps file slowdown alternative",
+			cut:         "Extended",
+			seconds:     8648.64,
+			fps:         24000.0 / 1001,
+			originalFPS: 24,
+			rows:        filmRows,
+			want:        []string{"at 23.976 fps", "at 24.000 fps", "consistent with this edition"},
+		},
+		{
+			name:    "raw matching cadence takes precedence for files",
+			cut:     "Extended",
+			seconds: 8640,
+			fps:     25,
+			rows:    filmRows,
+		},
+		{
+			name:        "NTSC pulldown must not suggest a speed change",
+			seconds:     7920,
+			fps:         30000.0 / 1001,
+			originalFPS: 24000.0 / 1001,
+			dvd:         true,
+			rows:        filmRows,
 		},
 		{
 			name:         "effective title changed",
@@ -89,6 +124,27 @@ func TestIMDbEditionWarningUsesEffectiveEditionAndNearestRuntimeEvidence(t *test
 			seconds:      7920,
 			rows:         filmRows,
 			changedTitle: true,
+		},
+		{
+			name:    "near restoration-only evidence is not another cut",
+			cut:     "Extended",
+			seconds: 6000,
+			rows:    []api.IMDBEditionDetail{row(6000, "IMAX", "4K Restoration"), row(7200)},
+		},
+		{
+			name:    "equal runtimes are explicitly ambiguous",
+			cut:     "Unrated",
+			seconds: 6000,
+			rows:    []api.IMDBEditionDetail{row(6000, "extended"), row(6000, "Director's Cut"), row(6000, "extended")},
+			want:    []string{"Multiple IMDb editions have this runtime", "Director's Cut (1:40:00); Extended Cut (1:40:00)"},
+		},
+		{
+			name:    "measured and adjusted timings can point to different cuts",
+			cut:     "Extended",
+			seconds: 8286.113,
+			fps:     25,
+			rows:    []api.IMDBEditionDetail{row(8286), row(8640, "Extended")},
+			want:    []string{"consistent with this edition", "At the measured runtime, IMDb is also close to Theatrical Cut"},
 		},
 		{
 			name: "runtime unavailable",
@@ -109,15 +165,19 @@ func TestIMDbEditionWarningUsesEffectiveEditionAndNearestRuntimeEvidence(t *test
 			release := api.PreparedRelease{
 				Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie, IMDBID: id},
 				Media: api.MediaFacts{
-					Cut:                   tc.cut,
-					Edition:               tc.edition,
-					EditionRuntimeSeconds: tc.seconds,
-					EditionRuntimePAL:     tc.pal,
+					Cut:                      tc.cut,
+					Edition:                  tc.edition,
+					EditionRuntimeSeconds:    tc.seconds,
+					EditionFrameRate:         tc.fps,
+					EditionOriginalFrameRate: tc.originalFPS,
 				},
 				ProviderMetadata: api.SourceScopedMetadata{IMDB: &api.IMDBMetadata{
 					IMDBID:          1234567,
 					EditionRuntimes: tc.rows,
 				}},
+			}
+			if tc.dvd {
+				release.Disc.Type = "DVD"
 			}
 			data, err := json.Marshal(release)
 			if err != nil {

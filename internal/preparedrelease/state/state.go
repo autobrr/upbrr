@@ -187,7 +187,8 @@ type State struct {
 	BlurayDetails              *api.BlurayDetailRequest
 	LookupWarnings             []string
 	EditionRuntimeSeconds      float64
-	EditionRuntimePAL          bool
+	EditionFrameRate           float64
+	EditionOriginalFrameRate   float64
 	Paths                      []string
 	DiscType                   string
 	Discs                      []DiscResource

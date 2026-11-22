@@ -1528,7 +1528,8 @@ export type MediaFacts = Readonly<{
   DistributorProvenance: FactProvenance;
   Edition: string;
   EditionDisplay: readonly EditionDisplayPart[];
-  EditionRuntimePAL?: boolean;
+  EditionFrameRate?: number;
+  EditionOriginalFrameRate?: number;
   EditionRuntimeSeconds?: number;
   EditionSet: string;
   HDR: string;
