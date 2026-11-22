@@ -5888,6 +5888,9 @@
               "$ref": "#/components/schemas/EditionDisplayPart"
             }
           },
+          "EditionRuntimePAL": {
+            "type": "boolean"
+          },
           "EditionRuntimeSeconds": {
             "type": "number"
           },

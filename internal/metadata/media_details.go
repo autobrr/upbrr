@@ -339,7 +339,7 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	// clears win over derived evidence and the final name cannot diverge from
 	// the facts every downstream projection consumes.
 	applyReleaseNameValueOverrides(&meta)
-	meta.EditionRuntimeSeconds = editionRuntimeSeconds(meta, miDoc)
+	meta.EditionRuntimeSeconds, meta.EditionRuntimePAL = editionRuntime(meta, miDoc)
 	if meta.TVPack {
 		seasonKnown := meta.SeasonInt > 0 || meta.HasExplicitSeasonZero()
 		meta.EpisodeCoverage = seasonep.Coverage(meta.SeasonInt, seasonKnown, meta.SourcePath, meta.PackageInventory.Files, meta.PackageInventory.Status)
@@ -2252,19 +2252,47 @@ func resolveIMDbEditionFromMediaDuration(meta preparationstate.State, doc mediaI
 
 // editionRuntimeSeconds measures one identifiable presentation; a container
 // with multiple video tracks, multi-playlist disc or DVD VOB cannot prove it.
-func editionRuntimeSeconds(meta preparationstate.State, doc mediaInfoDoc) float64 {
+// editionRuntime returns the complete presentation duration, not the
+// duration of an individual VOB or one track in a multi-edition source.
+func editionRuntime(meta preparationstate.State, doc mediaInfoDoc) (seconds float64, pal bool) {
+	_, videos, _ := splitMediaInfoTracks(doc)
 	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
 	case "":
-		_, videos, _ := splitMediaInfoTracks(doc)
 		if len(meta.FileList) <= 1 && len(videos) == 1 {
-			return mediaDurationSeconds(doc)
+			return mediaDurationSeconds(doc), false
 		}
+	case "DVD":
+		// The primary MediaInfo document describes the selected title set's
+		// IFO. The matching VOB can fill in frame rate, never title duration.
+		if len(meta.Discs) > 1 || meta.DVDVOBSet == "" || len(videos) > 1 {
+			break
+		}
+		seconds = mediaDurationSeconds(doc)
+		if seconds <= 0 {
+			break
+		}
+		var rate string
+		if len(videos) == 1 {
+			rate = trackString(videos[0], "FrameRate")
+		}
+		if rate == "" && meta.DVDVOBMediaInfoJSON != "" {
+			if vob, err := loadMediaInfoDocFromJSONPayload(meta.DVDVOBMediaInfoJSON); err == nil {
+				_, vobVideos, _ := splitMediaInfoTracks(vob)
+				if len(vobVideos) == 1 {
+					rate = trackString(vobVideos[0], "FrameRate")
+				}
+			}
+		}
+		// NTSC pulldown changes frame/field cadence, not elapsed playback time.
+		// Only a 25 fps PAL transfer uses the film-speed duration comparison.
+		fps, _ := strconv.ParseFloat(rate, 64)
+		return seconds, fps == 25
 	case "BDMV":
 		if len(meta.Discs) <= 1 && len(meta.SelectedBDMVPlaylists) == 1 {
-			return meta.SelectedBDMVPlaylists[0].Duration
+			return meta.SelectedBDMVPlaylists[0].Duration, false
 		}
 	}
-	return 0
+	return 0, false
 }
 
 func mediaDurationSeconds(doc mediaInfoDoc) float64 {

@@ -11,38 +11,113 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestIMDbEditionWarningUsesCurrentSelectionAndCertainRuntimeEvidence(t *testing.T) {
+func TestIMDbEditionWarningUsesEffectiveEditionAndNearestRuntimeEvidence(t *testing.T) {
+	row := func(seconds int, attributes ...string) api.IMDBEditionDetail {
+		return api.IMDBEditionDetail{
+			Seconds:    seconds,
+			Attributes: attributes,
+		}
+	}
+	filmRows := []api.IMDBEditionDetail{row(7920), row(8640, "extended")}
 	for _, tc := range []struct {
-		name, selected string
-		rows           []api.IMDBEditionDetail
-		changedIMDbID  int
-		want           bool
+		name, cut, edition string
+		seconds            float64
+		pal, changedTitle  bool
+		rows               []api.IMDBEditionDetail
+		want               []string
 	}{
-		{"mismatch survives restore", "Extended", nil, 0, true},
-		{"equivalent punctuation", "DIRECTOR’S-CUT", nil, 0, false},
-		{"selection cleared", "", nil, 0, false},
-		{"effective title changed", "Extended", nil, 1234568, false},
-		{"supported Uncut selection", "Uncut", []api.IMDBEditionDetail{{Seconds: 6500, Attributes: []string{"Uncut"}}}, 0, true},
-		{"supported Unrated selection", "Unrated", []api.IMDBEditionDetail{{Seconds: 6500, Attributes: []string{"Unrated"}}}, 0, true},
-		{"conflicting labels in a row", "Extended", []api.IMDBEditionDetail{{Seconds: 6000, Attributes: []string{"Director's Cut", "Theatrical"}}}, 0, false},
-		{"unknown qualifier is not another cut", "IMAX", nil, 0, false},
-		{"another cut in same minute", "Extended", []api.IMDBEditionDetail{{Seconds: 6006, Attributes: []string{"Theatrical"}}}, 0, false},
-		{"unlabeled near match is ambiguous", "Extended", []api.IMDBEditionDetail{{Seconds: 6000}}, 0, false},
+		{
+			name:    "unmarked theatrical matches IMDb default",
+			seconds: 7920,
+			rows:    filmRows,
+		},
+		{
+			name:    "unmarked theatrical still checks extended runtime",
+			seconds: 8640,
+			rows:    filmRows,
+			want:    []string{"Theatrical Cut", "Extended Cut (2:24:00)"},
+		},
+		{
+			name:    "filename cut matches equivalent provider wording",
+			cut:     "DIRECTOR’S-CUT",
+			seconds: 6001,
+			rows:    []api.IMDBEditionDetail{row(6000, "Director's Cut", "4K Restoration", "IMAX")},
+		},
+		{
+			name:    "filename edition absent from IMDb still warns",
+			edition: "Unrated",
+			seconds: 7920,
+			rows:    filmRows,
+			want:    []string{"Unrated", "Theatrical Cut (2:12:00)"},
+		},
+		{
+			name:    "prefer nearest shorter and longer",
+			seconds: 8010,
+			rows:    []api.IMDBEditionDetail{row(7920), row(7800, "TV Cut"), row(8640, "extended")},
+			want:    []string{"No listed IMDb runtime is within 2 seconds", "Theatrical Cut (2:12:00); Extended Cut (2:24:00)"},
+		},
+		{
+			name:    "when all longer use two closest and discard duplicate",
+			seconds: 7500,
+			rows:    []api.IMDBEditionDetail{row(8640, "extended"), row(7920), row(7920), row(8040, "Director's Cut")},
+			want:    []string{"Theatrical Cut (2:12:00); Director's Cut (2:14:00)"},
+		},
+		{
+			name:    "when all shorter use two closest",
+			seconds: 9000,
+			rows:    []api.IMDBEditionDetail{row(7920), row(8040, "Director's Cut"), row(8640, "extended")},
+			want:    []string{"Extended Cut (2:24:00); Director's Cut (2:14:00)"},
+		},
+		{
+			name:    "PAL DVD presentation normalizes to film timing",
+			cut:     "Extended",
+			seconds: 8269.760,
+			pal:     true,
+			rows:    filmRows,
+			want:    []string{"2:17:50 PAL (about 2:23:43 at 23.976 fps)", "Extended Cut (2:24:00); Theatrical Cut (2:12:00)"},
+		},
+		{
+			name:    "same title with two runtimes can use a true edition match",
+			cut:     "Extended",
+			seconds: 827.172,
+			pal:     true,
+			rows:    []api.IMDBEditionDetail{row(860), row(862, "Extended")},
+		},
+		{
+			name:         "effective title changed",
+			cut:          "Extended",
+			seconds:      7920,
+			rows:         filmRows,
+			changedTitle: true,
+		},
+		{
+			name: "runtime unavailable",
+			cut:  "Extended",
+			rows: filmRows,
+		},
+		{
+			name:    "IMDb data unavailable",
+			cut:     "Extended",
+			seconds: 7920,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			release := api.PreparedRelease{
-				Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie, IMDBID: 1234567},
-				Media:    api.MediaFacts{EditionRuntimeSeconds: 6000.5},
-				ProviderMetadata: api.SourceScopedMetadata{IMDB: &api.IMDBMetadata{
-					IMDBID: 1234567,
-					EditionRuntimes: append([]api.IMDBEditionDetail{
-						{Seconds: 6000, Attributes: []string{"Director's Cut", "4K Restoration", "IMAX"}},
-						{Seconds: 6350, Attributes: []string{"extended version"}},
-					}, tc.rows...),
-				}},
+			id := 1234567
+			if tc.changedTitle {
+				id++
 			}
-			if tc.changedIMDbID > 0 {
-				release.Identity.IMDBID = tc.changedIMDbID
+			release := api.PreparedRelease{
+				Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie, IMDBID: id},
+				Media: api.MediaFacts{
+					Cut:                   tc.cut,
+					Edition:               tc.edition,
+					EditionRuntimeSeconds: tc.seconds,
+					EditionRuntimePAL:     tc.pal,
+				},
+				ProviderMetadata: api.SourceScopedMetadata{IMDB: &api.IMDBMetadata{
+					IMDBID:          1234567,
+					EditionRuntimes: tc.rows,
+				}},
 			}
 			data, err := json.Marshal(release)
 			if err != nil {
@@ -52,10 +127,8 @@ func TestIMDbEditionWarningUsesCurrentSelectionAndCertainRuntimeEvidence(t *test
 			if err := json.Unmarshal(data, &restored); err != nil {
 				t.Fatal(err)
 			}
-			input := api.PrepareInput{}
-			input.Instructions.ReleaseName.Edition = new(tc.selected)
-			warnings := envelopeFromPersisted(restored, input).result.Diagnostics
-			if !tc.want {
+			warnings := envelopeFromPersisted(restored, api.PrepareInput{}).result.Diagnostics
+			if len(tc.want) == 0 {
 				if len(warnings) != 0 {
 					t.Fatalf("unexpected warning: %+v", warnings)
 				}
@@ -64,7 +137,7 @@ func TestIMDbEditionWarningUsesCurrentSelectionAndCertainRuntimeEvidence(t *test
 			if len(warnings) != 1 || warnings[0].Code != "imdb_edition_mismatch" || warnings[0].Severity != api.DiagnosticSeverityWarning {
 				t.Fatalf("missing advisory: %+v", warnings)
 			}
-			for _, value := range []string{tc.selected, "Director's Cut", "https://www.imdb.com/title/tt1234567/technical/", "https://www.imdb.com/title/tt1234567/alternateversions/"} {
+			for _, value := range append(tc.want, "https://www.imdb.com/title/tt1234567/technical/", "https://www.imdb.com/title/tt1234567/alternateversions/") {
 				if !strings.Contains(warnings[0].Message, value) {
 					t.Fatalf("warning missing %q: %s", value, warnings[0].Message)
 				}

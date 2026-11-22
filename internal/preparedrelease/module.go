@@ -26,7 +26,7 @@ import (
 
 // ContractVersion changes whenever prepared fact semantics or the private seed
 // contract become incompatible, forcing persisted generations to be recomputed.
-const ContractVersion = "prepared-release-v86-tentative-imdb"
+const ContractVersion = "prepared-release-v87-imdb-edition-runtime"
 
 // Store is the prepared-release persistence port. Implementations must commit
 // facts, identity, and provider metadata as one generation transaction.
@@ -308,7 +308,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 		}
 		m.logPreparedFacts(ctx, current, cache, resolved.Corrections.Revision)
 		return cloneResult(api.PrepareResult{
-			Diagnostics:           append(preparedMetadataDiagnostics(current, input.Instructions), sourceSeasonDiagnostics(owned)...),
+			Diagnostics:           append(preparedMetadataDiagnostics(current), sourceSeasonDiagnostics(owned)...),
 			Release:               current,
 			EffectiveInstructions: input.Instructions,
 			Corrections:           resolved.Corrections,
@@ -495,7 +495,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 
 	diagnostics := append([]api.PreparationDiagnostic(nil), collected.Diagnostics...)
 	diagnostics = append(diagnostics, identityResult.Diagnostics...)
-	diagnostics = append(diagnostics, imdbEditionDiagnostics(release, input.Instructions)...)
+	diagnostics = append(diagnostics, imdbEditionDiagnostics(release)...)
 	owned := envelope{
 		completeFacts: true,
 		result: api.PrepareResult{
@@ -1065,15 +1065,15 @@ func resourcesFromManifest(manifest api.SourceManifest, input api.PrepareInput) 
 	}
 }
 
-func preparedMetadataDiagnostics(release api.PreparedRelease, instructions api.ReleaseFactInstructions) []api.PreparationDiagnostic {
-	return append(externalidentity.CandidateDiagnostics(release.ProviderMetadata.IdentityCandidates), imdbEditionDiagnostics(release, instructions)...)
+func preparedMetadataDiagnostics(release api.PreparedRelease) []api.PreparationDiagnostic {
+	return append(externalidentity.CandidateDiagnostics(release.ProviderMetadata.IdentityCandidates), imdbEditionDiagnostics(release)...)
 }
 
 func envelopeFromPersisted(release api.PreparedRelease, input api.PrepareInput) envelope {
 	return envelope{
 		result: api.PrepareResult{
 			Release:               release,
-			Diagnostics:           preparedMetadataDiagnostics(release, input.Instructions),
+			Diagnostics:           preparedMetadataDiagnostics(release),
 			EffectiveInstructions: input.Instructions,
 		},
 		resources: resourcesFromManifest(release.Source, input),

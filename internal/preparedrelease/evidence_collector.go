@@ -282,6 +282,7 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 		},
 		Media: api.MediaFacts{
 			EditionRuntimeSeconds:                meta.EditionRuntimeSeconds,
+			EditionRuntimePAL:                    meta.EditionRuntimePAL,
 			MediaFileFacts:                       meta.MediaFileFacts.Clone(),
 			AudioAbsent:                          meta.AudioAbsent,
 			AudioLanguages:                       append([]string(nil), meta.AudioLanguages...),
