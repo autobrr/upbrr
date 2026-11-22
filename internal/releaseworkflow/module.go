@@ -7153,7 +7153,7 @@ func LocalScreenshotSourceRequirementsMet(artifacts []api.MediaArtifact, project
 					counts[artifact.DiscID]++
 				}
 			}
-			if !discScreenshotCountsCover(counts, discs, projection.Artifacts.ScreenshotCount) {
+			if !DiscScreenshotCountsCover(counts, discs, projection.Artifacts.ScreenshotCount) {
 				return false
 			}
 		}
@@ -7183,7 +7183,8 @@ func LocalScreenshotSourceRequirementsMet(artifacts []api.MediaArtifact, project
 	return true
 }
 
-func discScreenshotCountsCover(counts map[string]int, discs *api.DiscScreenshotRequirement, primaryCount int) bool {
+// DiscScreenshotCountsCover checks the projected quota independently for each prepared disc.
+func DiscScreenshotCountsCover(counts map[string]int, discs *api.DiscScreenshotRequirement, primaryCount int) bool {
 	if len(discs.DiscIDs) < 2 || counts[discs.DiscIDs[0]] < primaryCount {
 		return false
 	}
@@ -7280,7 +7281,7 @@ func HostedScreenshotRequirementsMet(snapshot api.MediaArtifactSet, projections 
 				} else if final && (!source.AdditionalDisc || discs != nil) ||
 					source.Kind == api.MediaArtifactComparison && reusedComparison && !comparisonHostFailed {
 					sources[source.ID] = struct{}{}
-					if discs != nil && final && !comparisonHostFailed && host != "" {
+					if discs != nil && final && !comparisonHostFailed && attempt.Status != api.StageStatusFailed && host != "" {
 						if discSources[host] == nil {
 							discSources[host] = make(map[api.PublicResourceID]string)
 						}
@@ -7310,7 +7311,7 @@ func HostedScreenshotRequirementsMet(snapshot api.MediaArtifactSet, projections 
 				for _, discID := range ids {
 					counts[discID]++
 				}
-				if discScreenshotCountsCover(counts, discs, projection.Artifacts.ScreenshotCount) {
+				if DiscScreenshotCountsCover(counts, discs, projection.Artifacts.ScreenshotCount) {
 					complete = true
 					break
 				}

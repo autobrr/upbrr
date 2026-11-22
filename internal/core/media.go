@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -22,6 +23,7 @@ import (
 	"github.com/autobrr/upbrr/internal/logging"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
+	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -69,14 +71,15 @@ type mediaImageHostingService interface {
 // mediaModule owns screenshot, disc-menu, and image-host workflow policy. It
 // borrows its services, repository, and prepared-release state from Core.
 type mediaModule struct {
-	cfg           config.Config
-	logger        api.Logger
-	dvdMenus      mediaDVDMenuService
-	images        mediaImageHostingService
-	repo          mediaRepository
-	mediaReuse    api.MediaReuseRepository
-	registry      *trackers.Registry
-	preparedFacts *preparedrelease.Module
+	cfg               config.Config
+	logger            api.Logger
+	dvdMenus          mediaDVDMenuService
+	images            mediaImageHostingService
+	repo              mediaRepository
+	mediaReuse        api.MediaReuseRepository
+	registry          *trackers.Registry
+	preparedFacts     *preparedrelease.Module
+	uploadProjections []api.TrackerReleaseProjection
 }
 
 func newMediaModule(
@@ -472,6 +475,8 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 			failedHosts[normalized] = struct{}{}
 		}
 	}
+	failedByTracker := make(map[string]map[string]struct{})
+	successfulHosts := make(map[string]struct{})
 	coveredTrackers := make(map[string]struct{})
 	results := make(chan completedAttempt)
 	pending := 0
@@ -587,6 +592,7 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 		attempt.done = true
 		if completed.err == nil {
 			markCovered(attempt.target)
+			successfulHosts[attempt.target.Host] = struct{}{}
 		}
 		if imageUploadOutcomeUnresolved(ctx, completed.err) {
 			schedulerErr = completed.err
@@ -597,7 +603,12 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 		}
 		failedHost := strings.ToLower(strings.TrimSpace(attempt.target.Host))
 		if failedHost != "" {
-			failedHosts[failedHost] = struct{}{}
+			for _, tracker := range attempt.target.Trackers {
+				if failedByTracker[tracker] == nil {
+					failedByTracker[tracker] = make(map[string]struct{})
+				}
+				failedByTracker[tracker][failedHost] = struct{}{}
+			}
 		}
 		if !allowFallback {
 			continue
@@ -606,21 +617,25 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 		if len(blockedTrackers) == 0 {
 			continue
 		}
-		fallbackTargets, err := m.resolveFallbackImageUploadTargets(host, blockedTrackers, sortedMapKeys(failedHosts), meta)
-		if err != nil {
-			schedulerErr = err
-			continue
-		}
-		startedTargets := make([]trackers.ImageUploadTarget, 0, len(fallbackTargets))
-		for _, fallbackTarget := range fallbackTargets {
-			if launch(fallbackTarget, true) {
-				startedTargets = append(startedTargets, fallbackTarget)
+		var startedTargets []trackers.ImageUploadTarget
+		for _, tracker := range blockedTrackers {
+			trackerExcluded := maps.Clone(failedHosts)
+			maps.Copy(trackerExcluded, failedByTracker[tracker])
+			fallbackTargets, err := m.resolveFallbackImageUploadTargets(host, []string{tracker}, sortedMapKeys(trackerExcluded), meta)
+			if err != nil {
+				schedulerErr = err
+				break
+			}
+			for _, fallbackTarget := range fallbackTargets {
+				if launch(fallbackTarget, true) {
+					startedTargets = append(startedTargets, fallbackTarget)
+				}
 			}
 		}
 		if len(startedTargets) > 0 {
 			m.logger.Infof(
 				"core: starting image upload fallback because the previous hosts could not provide the required images: failed_hosts=%s fallback_hosts=%s trackers=%v",
-				strings.Join(sortedMapKeys(failedHosts), ","),
+				failedHost,
 				strings.Join(uploadTargetHosts(startedTargets), ","),
 				uploadTargetTrackers(startedTargets),
 			)
@@ -670,6 +685,15 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 			Trackers:   remainingTrackers,
 			Message:    logging.SanitizeMessage(uploadFailureMessage(attempt.err)),
 		})
+	}
+	// Keep host-wide exclusions only when no independent lane succeeded there.
+	// Individual failures remain attached to their attempts and tracker IDs.
+	for _, hosts := range failedByTracker {
+		for failed := range hosts {
+			if _, ok := successfulHosts[failed]; !ok {
+				failedHosts[failed] = struct{}{}
+			}
+		}
 	}
 	return api.UploadImagesResult{
 		Links:       allLinks,
@@ -806,7 +830,13 @@ func (m *mediaModule) uploadImagesToTarget(
 		return image.Purpose.IsAnalysis()
 	})
 	progressCtx = api.WithImageUploadProgressTarget(ctx, progressTarget)
-	if len(missing) == 0 || (meta.ExactMedia != nil && meta.ExactMedia.ImageHostUploadSkipped) {
+	skipUpload := meta.ExactMedia != nil && meta.ExactMedia.ImageHostUploadSkipped
+	if len(missing) == 0 && !skipUpload && !m.hostedDiscQuotasMet(target, images, results) {
+		err := errors.New("per-disc screenshot uploads are incomplete")
+		emitCoreImageUploadResult(progressCtx, progressTarget, 0, err)
+		return results, err
+	}
+	if len(missing) == 0 || skipUpload {
 		message := fmt.Sprintf("Using %d already hosted images; no new upload is needed.", len(results))
 		if len(missing) > 0 {
 			message = fmt.Sprintf("New image uploads were skipped by request; %d of %d selected images are already hosted.", len(results), len(images))
@@ -862,13 +892,7 @@ func (m *mediaModule) uploadImagesToTarget(
 		}
 	}
 	packCovered := uploadedImageLinksCoverTarget(results, target, packImages)
-	discCovered := true
-	if uploadWantsAdditionalDiscScreenshots(m.registry, target.Trackers, meta) {
-		discImages := slices.DeleteFunc(slices.Clone(images), func(image api.ScreenshotImage) bool {
-			return image.DiscID == "" || image.Purpose != api.ScreenshotPurposeFinal
-		})
-		discCovered = uploadedImageLinksCoverTarget(results, target, discImages)
-	}
+	discCovered := m.hostedDiscQuotasMet(target, images, results)
 	if err != nil && packCovered && discCovered && !strictAnalysisBatch && m.partialHostUploadIsUsable(ctx, target, len(images), len(results), err) {
 		emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), err)
 		return results, nil
@@ -888,6 +912,36 @@ func (m *mediaModule) uploadImagesToTarget(
 		return results, fmt.Errorf("core: %w", err)
 	}
 	return results, nil
+}
+
+// hostedDiscQuotasMet checks the exact approved projection for this target,
+// not the number of extra frames the user opted to select.
+func (m *mediaModule) hostedDiscQuotasMet(target trackers.ImageUploadTarget, images []api.ScreenshotImage, links []api.UploadedImageLink) bool {
+	var counts map[string]int
+	for _, projection := range m.uploadProjections {
+		discs := projection.Artifacts.DiscScreenshots
+		if discs == nil || !slices.Contains(target.Trackers, string(projection.TrackerID)) {
+			continue
+		}
+		if counts == nil {
+			byPath := uploadedImagesByPathForTarget(links, target)
+			counts = make(map[string]int, len(discs.DiscIDs))
+			for _, image := range images {
+				if image.Purpose != api.ScreenshotPurposeFinal || image.DiscID == "" {
+					continue
+				}
+				path := normalizedUploadImagePath(image.Path)
+				if _, hosted := byPath[path]; hosted {
+					counts[image.DiscID]++
+					delete(byPath, path)
+				}
+			}
+		}
+		if !releaseworkflow.DiscScreenshotCountsCover(counts, discs, projection.Artifacts.ScreenshotCount) {
+			return false
+		}
+	}
+	return true
 }
 
 func uploadedImageLinksCoverTarget(

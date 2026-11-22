@@ -970,6 +970,117 @@ Host: "imgbb",
 	}
 }
 
+func TestDiscUploadUsesProjectedQuotasRatherThanEverySelectedFrame(t *testing.T) {
+	t.Parallel()
+	images := make([]api.ScreenshotImage, 0, 8)
+	for index, disc := range []string{"first", "first", "first", "second", "second", "third", "third", "first"} {
+		images = append(images, api.ScreenshotImage{
+			Path:    fmt.Sprintf("frame-%d.png", index),
+			DiscID:  disc,
+			Purpose: api.ScreenshotPurposeFinal,
+		})
+	}
+	target := trackers.ImageUploadTarget{
+Host: "imgbb",
+ UsageScope: "global",
+ Trackers: []string{"PTP"},
+}
+	for _, published := range []int{7, 6} {
+		module := &mediaModule{
+			cfg: config.Config{ScreenshotHandling: config.ScreenshotHandlingConfig{MinSuccessfulUploads: 3}},
+			images: &partialImageHostingService{published: published},
+			logger: api.NopLogger{},
+			uploadProjections: []api.TrackerReleaseProjection{{
+				TrackerID: "PTP",
+				Artifacts: api.TrackerArtifactRequirements{
+					ScreenshotCount: 3,
+					DiscScreenshots: &api.DiscScreenshotRequirement{DiscIDs: []string{"first", "second", "third"}, AdditionalCount: 2},
+				},
+			}},
+		}
+		links, err := module.uploadImagesToTarget(t.Context(), api.UploadSubject{}, target, images, nil, nil, "test", false)
+		if len(links) != published || (err == nil) != (published == 7) {
+			t.Fatalf("published=%d; got %d results and error %v", published, len(links), err)
+		}
+	}
+}
+
+type ordinaryLaneFailingImageHost struct{ partialImageHostingService }
+
+func (s ordinaryLaneFailingImageHost) Upload(
+	ctx context.Context, subject api.ImageHostingSubject, host, scope string, images []api.ScreenshotImage,
+) ([]api.UploadedImageLink, error) {
+	target, _ := api.ImageUploadProgressTargetFromContext(ctx)
+	if host == "pixhost" && slices.Contains(target.Trackers, "ONE") {
+		return nil, errors.New("ordinary host request failed")
+	}
+	s.published = len(images)
+	return s.partialImageHostingService.Upload(ctx, subject, host, scope, images)
+}
+
+func TestOrdinaryHostFailureDoesNotInvalidateSuccessfulDiscLane(t *testing.T) {
+	t.Parallel()
+	registry := mediaImageHostRegistry(t)
+	if err := registry.RegisterDescriptor(trackers.Descriptor{
+		Name:              "DISC",
+		Definition:        mediaImageHostDefinition("DISC"),
+		Family:            trackers.FamilyStandalone,
+		BaseURL:           "https://disc.example.invalid",
+		UploadContentMode: trackers.UploadContentModeScreenshots,
+		ImageHost:         &trackers.ImageHostPolicy{AllowedHosts: []string{"pixhost"}},
+		WorkflowMedia:     &trackers.WorkflowMediaRequirements{AdditionalDiscScreenshots: 2},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	module := &mediaModule{
+		cfg:      config.Config{ImageHosting: config.ImageHostingConfig{Host1: "pixhost", Host2: "imgbb"}},
+		images:   &ordinaryLaneFailingImageHost{},
+		logger:   api.NopLogger{},
+		registry: registry,
+	}
+	subject := api.UploadSubject{Trackers: []string{"ONE", "DISC"}, Discs: []api.DiscEvidenceResource{{ID: "first"}, {ID: "second"}}}
+	images := []api.ScreenshotImage{
+		{
+Path: "main.png",
+ DiscID: "first",
+ Purpose: api.ScreenshotPurposeFinal,
+},
+		{
+Path: "extra-1.png",
+ DiscID: "second",
+ Purpose: api.ScreenshotPurposeFinal,
+ AdditionalDisc: true,
+},
+		{
+Path: "extra-2.png",
+ DiscID: "second",
+ Purpose: api.ScreenshotPurposeFinal,
+ AdditionalDisc: true,
+},
+	}
+	result, err := module.uploadImagesToTargetsWithFallback(t.Context(), subject, "", nil,
+		[]trackers.ImageUploadTarget{
+			{
+Host: "pixhost",
+ UsageScope: "global",
+ Trackers: []string{"DISC"},
+},
+			{
+Host: "pixhost",
+ UsageScope: "global",
+ Trackers: []string{"ONE"},
+},
+		}, images, nil, nil)
+	if err != nil || len(result.Attempts) != 3 {
+		t.Fatalf("lane recovery = %+v, err = %v", result, err)
+	}
+	disc, ordinary, fallback := result.Attempts[0], result.Attempts[1], result.Attempts[2]
+	if disc.Failure != nil || len(disc.Links) != 3 || ordinary.Failure == nil || fallback.Host != "imgbb" || fallback.Failure != nil ||
+		len(fallback.Links) != 1 || len(result.FailedHosts) != 0 || len(result.Failures) != 0 {
+		t.Fatalf("ordinary lane contaminated successful disc coverage: %+v", result)
+	}
+}
+
 func TestPackScreenshotIncompleteUploadFallsBackDespiteOrdinaryMinimum(t *testing.T) {
 	t.Parallel()
 	registry := mediaImageHostRegistry(t)

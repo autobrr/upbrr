@@ -2717,7 +2717,9 @@ func (b workflowMediaBuilder) UploadImages(
 			Recovery:  api.OperationRecoveryConfirm,
 		}, api.ErrReleaseWorkflowEffectAlreadySucceeded)
 	}
-	result, err := b.media.uploadImagesToTargetsWithFallback(
+	uploader := *b.media
+	uploader.uploadProjections = projections.Projections
+	result, err := uploader.uploadImagesToTargetsWithFallback(
 		ctx,
 		subject,
 		imageInput.Host,
