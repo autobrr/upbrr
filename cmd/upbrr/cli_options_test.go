@@ -1977,6 +1977,39 @@ func TestPrintMetadataPreviewShowsSourceSeasonEvidence(t *testing.T) {
 	}
 }
 
+func TestCLIWorkflowMetadataPreviewReplacesIMDbEditionWarning(t *testing.T) {
+	const title = "https://www.imdb.com/title/tt1234567"
+	const message = "Selected edition Extended differs from IMDb's Director's Cut.\n" + title + "/technical/\n" + title + "/alternateversions/"
+	current := api.ReleaseWorkflowCurrent{Release: &api.ReleaseSnapshot{
+		Release: api.PreparedRelease{
+			Generation: 1,
+			Identity:   api.ExternalIdentity{IMDBID: 1234567},
+		},
+		Diagnostics: []api.PreparationDiagnostic{{
+			Code:     "imdb_edition_mismatch",
+			Severity: api.DiagnosticSeverityWarning,
+			Message:  message,
+		}},
+	}}
+	render := func(state api.ReleaseWorkflowCurrent) string {
+		var output bytes.Buffer
+		printMetadataPreview(&output, cliWorkflowMetadataPreview(state), state.Release.Release, false)
+		return output.String()
+	}
+	if got := render(current); !strings.Contains(got, message) {
+		t.Fatalf("warning or plain-title URLs missing: %s", got)
+	}
+	for _, imdbID := range []int{1234567, 1234568} {
+		refreshed := api.ReleaseWorkflowCurrent{Release: &api.ReleaseSnapshot{Release: api.PreparedRelease{
+			Generation: 2,
+			Identity:   api.ExternalIdentity{IMDBID: imdbID},
+		}}}
+		if got := render(refreshed); strings.Contains(got, "/alternateversions/") || strings.Contains(got, "Selected edition") {
+			t.Fatalf("stale warning remained in the next generation: %s", got)
+		}
+	}
+}
+
 func TestCLIRejectsProviderOwnedTitleFlags(t *testing.T) {
 	for _, name := range []string{"title", "original-title"} {
 		t.Run(name, func(t *testing.T) {
