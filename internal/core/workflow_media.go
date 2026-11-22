@@ -611,10 +611,12 @@ func (b workflowMediaBuilder) build(
 		}
 	}
 	var pack *api.PackScreenshotRequirement
+	var packTracker api.TrackerID
 	if final {
 		for _, projection := range projections.Projections {
-			if projection.TrackerID == "PTP" {
+			if projection.Artifacts.PackScreenshots != nil {
 				pack = projection.Artifacts.PackScreenshots
+				packTracker = projection.TrackerID
 				break
 			}
 		}
@@ -864,8 +866,8 @@ func (b workflowMediaBuilder) build(
 			if ctx.Err() != nil || errors.Is(captureErr, internalerrors.ErrFrameCorruption) {
 				return api.MediaArtifactSet{}, nil, captureErr
 			}
-			failure := mediaFailure("PTP pack screenshots are incomplete. Retry media capture.")
-			failure.TrackerID = "PTP"
+			failure := mediaFailure(fmt.Sprintf("%s pack screenshots are incomplete. Retry media capture.", packTracker))
+			failure.TrackerID = packTracker
 			snapshot.Failures = append(snapshot.Failures, failure)
 			snapshot.Status = api.StageStatusPartial
 		}

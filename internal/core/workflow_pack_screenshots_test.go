@@ -10,7 +10,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestWorkflowPackCaptureUsesEachPTPMemberWithoutChangingOtherTrackerCapture(t *testing.T) {
+func TestWorkflowPackCaptureUsesProjectedRequirementWithoutChangingOtherTrackerCapture(t *testing.T) {
+	const packTracker api.TrackerID = "PACK"
 	primary, secondary := "Movie.cd1.mkv", "Movie.cd2.mkv"
 	subject := api.ScreenshotSubject{
 		SourcePath:        "Example.Movie.2026",
@@ -40,7 +41,7 @@ func TestWorkflowPackCaptureUsesEachPTPMemberWithoutChangingOtherTrackerCapture(
 			api.ReleaseRef{SourcePath: subject.SourcePath, Generation: 1},
 			api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{
 				{TrackerID: "AITHER", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1}},
-				{TrackerID: "PTP", Artifacts: api.TrackerArtifactRequirements{
+				{TrackerID: packTracker, Artifacts: api.TrackerArtifactRequirements{
 					PackScreenshots: &api.PackScreenshotRequirement{MemberIDs: []string{"first", "second"}, CountPerMember: 2},
 				}},
 			}},
@@ -62,8 +63,8 @@ func TestWorkflowPackCaptureUsesEachPTPMemberWithoutChangingOtherTrackerCapture(
 			t.Fatalf("normal release screenshots = %d, want 1", counts[""])
 		}
 		if short {
-			if len(snapshot.Artifacts) != 1 || len(snapshot.Failures) != 1 || snapshot.Failures[0].TrackerID != "PTP" {
-				t.Fatalf("short second file changed unrelated screenshots or lost PTP failure: %+v", snapshot)
+			if len(snapshot.Artifacts) != 1 || len(snapshot.Failures) != 1 || snapshot.Failures[0].TrackerID != packTracker {
+				t.Fatalf("short second file changed unrelated screenshots or lost pack tracker failure: %+v", snapshot)
 			}
 		} else if counts["first"] != 2 || counts["second"] != 2 || len(snapshot.Failures) != 0 {
 			t.Fatalf("pack captures = %+v, failures = %+v", counts, snapshot.Failures)
