@@ -756,15 +756,15 @@ func TestEvaluateCompoundDirectionalRule(t *testing.T) {
 		Resolution: "1080p",
 		Provider:   "Example Provider",
 	}}, policy, SearchEvidence{Complete: true})
-	if got := evaluation.Candidates[0].Relation; got != api.DupeRelationProposedTrumps {
-		t.Fatalf("compound relation = %q", got)
+	if got := evaluation.Candidates[0]; got.Relation != api.DupeRelationProposedTrumps || got.Reasons[0].Code != "proposed_webdl_over_webrip" {
+		t.Fatalf("matched compound explanation = %#v", got.Reasons)
 	}
 
 	evaluation = Evaluate(target, []TrackerCandidate{{
 		Type: "WEBRip", Resolution: "1080p",
 	}}, policy, SearchEvidence{Complete: true})
-	if got := evaluation.Candidates[0].Relation; got != api.DupeRelationInsufficientEvidence {
-		t.Fatalf("incomplete compound relation = %q", got)
+	if got := evaluation.Candidates[0]; got.Relation != api.DupeRelationInsufficientEvidence || got.Reasons[0].Code != "candidate_provider_missing" {
+		t.Fatalf("incomplete compound explanation = %#v", got.Reasons)
 	}
 }
 

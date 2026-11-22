@@ -567,6 +567,7 @@ func evaluateTrackerRule(
 		finding.Status = RuleFindingDisproved
 	case len(finding.Missing) > 0 || len(finding.Contradictions) > 0:
 		finding.Status = RuleFindingIndeterminate
+		finding.ReasonCode = missingReasonCode(finding.Missing, finding.Contradictions)
 		if finding.OverridesGeneral {
 			finding.Priority = max(finding.Priority, findingPriorityTrackerMissing)
 		} else {

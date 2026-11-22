@@ -204,9 +204,8 @@ func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
 			FactOriginTargetMedia,
 			FactOriginContentName,
 		),
-		Source: mergeStructuredAndTitleFact(
-			canonicalSource(target.Source),
-			"source",
+		Source: mergeSourceFact(
+			target.Source,
 			title.Source,
 			FactOriginTargetMedia,
 			FactOriginContentName,
@@ -336,9 +335,8 @@ func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 			FactOriginTrackerAPI,
 			FactOriginTrackerTitle,
 		),
-		Source: mergeStructuredAndTitleFact(
-			canonicalSource(candidate.Source),
-			"source",
+		Source: mergeSourceFact(
+			candidate.Source,
 			title.Source,
 			FactOriginTrackerAPI,
 			FactOriginTrackerTitle,
@@ -1337,6 +1335,21 @@ func contentSeasonKnown(scope contentScope) bool {
 	return false
 }
 
+func mergeSourceFact(structured, title string, structuredOrigin, titleOrigin FactOrigin) Fact {
+	structured = canonicalSource(structured)
+	// Blu-ray identifies the source family; a UHD qualifier in either form
+	// does not contradict the family's name in the other. Keep the structured
+	// value so a title does not upgrade authoritative source evidence.
+	if compatibleBluRaySources(structured, title) {
+		title = structured
+	}
+	return mergeStructuredAndTitleFact(structured, "source", title, structuredOrigin, titleOrigin)
+}
+
+func compatibleBluRaySources(left, right string) bool {
+	return left == "bluray" && right == "uhd_bluray" || left == "uhd_bluray" && right == "bluray"
+}
+
 func mergeStructuredAndTitleFact(
 	structured string,
 	sourceField string,
@@ -1457,7 +1470,12 @@ func compareDimensionFacts(dimension trackerspkg.DupeDimension, target Fact, can
 		return DimensionUnknown
 	}
 	if dimension != trackerspkg.DupeDimensionResolution {
-		return compareFacts(target, candidate)
+		comparison := compareFacts(target, candidate)
+		if dimension == trackerspkg.DupeDimensionSource && comparison == DimensionDifferent &&
+			compatibleBluRaySources(target.Value, candidate.Value) {
+			return DimensionEqual
+		}
+		return comparison
 	}
 	if target.Status == FactMissing && candidate.Status == FactMissing {
 		return DimensionNotApplicable
