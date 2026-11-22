@@ -131,12 +131,18 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 						continue
 					}
 				}
+				name := tlString(row["name"])
+				if name == "" {
+					// Count the ID for pagination, but a nameless candidate cannot be evaluated.
+					evidence.Complete = false
+					continue
+				}
 				if seen[id] {
 					continue
 				}
 				seen[id] = true
 				entry := api.DupeEntry{
-					Name: tlString(row["name"]),
+					Name: name,
 					ID:   id,
 					Link: torrentURL + url.PathEscape(id),
 				}

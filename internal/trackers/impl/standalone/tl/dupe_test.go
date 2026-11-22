@@ -37,33 +37,33 @@ func TestDuplicateSearchUsesTLSessionInEitherUploadMode(t *testing.T) {
 		want                 dupe.Disposition
 	}{
 		{
-name: "API upload",
- apiUpload: true,
- hasCookie: true,
- want: dupe.DispositionResolved,
-},
+			name:      "API upload",
+			apiUpload: true,
+			hasCookie: true,
+			want:      dupe.DispositionResolved,
+		},
 		{
-name: "form upload",
- hasCookie: true,
- want: dupe.DispositionResolved,
-},
+			name:      "form upload",
+			hasCookie: true,
+			want:      dupe.DispositionResolved,
+		},
 		{
-name: "no session",
- apiUpload: true,
- want: dupe.DispositionNotRun,
-},
+			name:      "no session",
+			apiUpload: true,
+			want:      dupe.DispositionNotRun,
+		},
 		{
-name: "login redirect",
- hasCookie: true,
- redirect: "/user/login",
- want: dupe.DispositionFailed,
-},
+			name:      "login redirect",
+			hasCookie: true,
+			redirect:  "/user/login",
+			want:      dupe.DispositionFailed,
+		},
 		{
-name: "other site redirect",
- hasCookie: true,
- redirect: "https://unrelated.invalid/capture",
- want: dupe.DispositionFailed,
-},
+			name:      "other site redirect",
+			hasCookie: true,
+			redirect:  "https://unrelated.invalid/capture",
+			want:      dupe.DispositionFailed,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -91,10 +91,10 @@ name: "other site redirect",
 					status = http.StatusFound
 				}
 				return &http.Response{
-StatusCode: status,
- Header: headers,
-					Body: io.NopCloser(strings.NewReader(`{"numFound":0,"page":1,"perPage":100,"torrentList":[]}`)),
-}, nil
+					StatusCode: status,
+					Header:     headers,
+					Body:       io.NopCloser(strings.NewReader(`{"numFound":0,"page":1,"perPage":100,"torrentList":[]}`)),
+				}, nil
 			})}
 			adapter := New().NewDuplicateAdapter(dupe.NewDependencies(
 				"TL", config.TrackerConfig{Passkey: "synthetic", APIUpload: tc.apiUpload}, dbPath, client, api.NopLogger{},
@@ -386,6 +386,17 @@ func TestIMDbSearchBindingAndFailures(t *testing.T) {
 			name:  "wrong work excluded",
 			body:  `{"numFound":1,"page":1,"perPage":100,"torrentList":[{"fid":"1","name":"Other.Movie.2026","imdbID":"tt0000999"}]}`,
 			wrong: 1,
+		},
+		{
+			name: "blank name prevents a complete result",
+			body: `{"numFound":1,"page":1,"perPage":100,"torrentList":[{"fid":"1","name":"  ","imdbID":"tt0000456"}]}`,
+		},
+		{
+			name: "blank name does not hide a later usable row with the same ID",
+			body: `{"numFound":2,"page":1,"perPage":100,"torrentList":[
+				{"fid":"1","imdbID":"tt0000456"},{"fid":"1","name":"Example.Movie.2026","imdbID":"tt0000456"},
+				{"fid":"2","name":"Example.Movie.2026.Remux","imdbID":"tt0000456"}]}`,
+			entries: 2,
 		},
 		{
 			name:    "missing identity retained",

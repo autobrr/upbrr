@@ -26,7 +26,7 @@ func Profile() standalone.Profile {
 		ReleaseNamePolicy:   trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/tl/v2", resolveName, resolveSearchName),
 		NewDuplicateAdapter: newDuplicateAdapter,
 		DupePolicy: &trackers.DupePolicy{
-			ID:          "standalone/tl/authenticated-search/v2",
+			ID:          "standalone/tl/authenticated-search/v3",
 			SearchScope: trackers.DupeSearchScope{MaxPages: 100},
 		},
 		ValidationPolicy: validationPolicy(),
