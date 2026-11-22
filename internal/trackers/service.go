@@ -547,6 +547,7 @@ func uploadSubjectForDescription(subject api.DescriptionSubject) api.UploadSubje
 		HardcodedSubtitleCoverage:            append([]api.SubtitleLanguageCoverage(nil), subject.HardcodedSubtitleCoverage...),
 		MediaBinding:                         subject.MediaBinding,
 		SourcePath:                           subject.SourcePath,
+		FileList:                             slices.Clone(subject.FileList),
 		DiscType:                             subject.DiscType,
 		MediaInfoTextPath:                    subject.MediaInfoTextPath,
 		DVDVOBMediaInfoText:                  subject.DVDVOBMediaInfoText,

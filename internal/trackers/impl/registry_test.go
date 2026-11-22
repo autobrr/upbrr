@@ -20,6 +20,49 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestPTPPackDescriptionPreviewUsesEachPreparedFile(t *testing.T) {
+	root := t.TempDir()
+	files := []string{filepath.Join(root, "Movie.cd1.mkv"), filepath.Join(root, "Movie.cd2.mkv")}
+	exact := &api.ExactMediaAssets{}
+	for index, file := range []string{files[0], files[0], files[1], files[1], ""} {
+		imagePath := filepath.Join(root, fmt.Sprintf("frame-%d.png", index))
+		url := fmt.Sprintf("https://i.ibb.co/synthetic/frame-%d.png", index)
+		image := api.ScreenshotImage{Path: imagePath, Purpose: api.ScreenshotPurposeFinal}
+		if file != "" {
+			image.PackMemberID = mediafacts.TrackResourceID(file)
+		}
+		exact.Screenshots = append(exact.Screenshots, image)
+		exact.ScreenshotUploads = append(exact.ScreenshotUploads, api.UploadedImageLink{
+			ImagePath: imagePath,
+ Host: "imgbb",
+ UsageScope: "global",
+ RawURL: url,
+ ImgURL: url,
+ WebURL: url,
+		})
+	}
+	meta := api.UploadSubject{
+SourcePath: root,
+ FileList: files,
+ Trackers: []string{"PTP"},
+ ExactMedia: exact,
+		ImageHostOverrides: api.ImageHostOverrides{SkipUpload: new(true)},
+}
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "upbrr.db")},
+		ImageHosting: config.ImageHostingConfig{Host1: "imgbb"}}
+	service := trackers.NewServiceWithRegistry(cfg, api.NopLogger{}, descriptionPreviewPersistence{}, MustNewRegistry())
+	preview, err := service.BuildPreparation(t.Context(), api.NewDescriptionSubject(meta), []string{"PTP"})
+	if err != nil || len(preview.ContentFailures) != 0 || len(preview.Descriptions) != 1 {
+		t.Fatalf("pack preview = %+v, err = %v", preview, err)
+	}
+	body := preview.Descriptions[0].RawDescription
+	for index, image := range exact.ScreenshotUploads {
+		if got := strings.Contains(body, image.RawURL); got != (index < 4) {
+			t.Errorf("PTP description used wrong screenshot set: frame %d present=%t; %s", index, got, body)
+		}
+	}
+}
+
 func TestPTPPackRequirementIsOwnedByPTPAndUsesOnlyEligibleFiles(t *testing.T) {
 	projector, err := trackers.NewWorkflowProjector(MustNewRegistry(), config.Config{
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 5},

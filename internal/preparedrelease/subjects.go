@@ -536,7 +536,12 @@ func (m *Module) ResolveDescriptionSubject(ctx context.Context, input api.Descri
 	if len(selectedPlaylists) == 0 {
 		selectedPlaylists = clonePreparedPlaylists(release.Source.SelectedPlaylists)
 	}
+	files := append([]string(nil), resources.fileList...)
+	if len(files) == 0 {
+		files = manifestFiles(release.Source)
+	}
 	return api.DescriptionSubject{
+		FileList:                    files,
 		VideoCodec:                  release.Media.VideoCodec,
 		HasEncodeSettings:           release.Media.HasEncodeSettings,
 		TrackerQuestionnaireAnswers: cloneAnswers(input.QuestionnaireData),
