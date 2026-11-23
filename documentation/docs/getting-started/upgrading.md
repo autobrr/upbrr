@@ -64,11 +64,9 @@ Startup automatically removes identifiable leftovers from previously deleted His
 
 Saving effective settings reuses the running process's startup maintenance. It does not repeat the startup-wide History and provisional-file cleanup; expiry cleanup continues while the server runs.
 
-After prior-process input and work leases expire, startup retains completed checkpoints and marks unfinished operations interrupted. It preserves unresolved external attempts as uncertain and retains their retry protection. An interrupted local operation does not prove that the tracker upload or client operation failed remotely. Check the tracker or torrent client before retrying an interrupted stage.
+After prior-process input and work leases expire, startup retains completed checkpoints and marks unfinished operations interrupted. Before activating changed configuration, it automatically records interrupted external attempts without saved success as not completed. This is the same in the Web UI and all CLI interaction modes; recovery does not prompt or resubmit anything.
 
-Startup recovers interrupted attempts automatically before activating changed configuration. It preserves recorded successes and does not resubmit anything. Check the remote result before retrying if the previous attempt may have completed without a saved receipt.
-
-The CLI presents the same confirmation for a remaining recovery action when run interactively or with `--unattended_confirm`. Strict `--unattended` exits without prompting. Deleting the associated release from History removes its local workflow and effect records; it does not establish whether the external operation completed.
+A remote service may have accepted an action before upbrr saved its receipt. Check the tracker, image host, or client before retrying if that could have happened. Deleting the release from History removes local evidence; it does not establish whether the action completed.
 
 :::caution Downgrades
 

@@ -301,7 +301,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		return api.ActiveInputRecord{}, errors.New("release workflow: complete active input request is required")
 	}
 	if request.RecoverInterrupted {
-		revision, err := m.recoverSourceBeforeOpen(ctx, owner, request.Input.SourcePath, request.ExpectedRevision)
+		revision, err := m.recoverSourceBeforeOpen(ctx, owner, request.Input.SourcePath, request.IdempotencyKey, request.ExpectedRevision)
 		if err != nil {
 			return api.ActiveInputRecord{}, err
 		}

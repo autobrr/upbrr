@@ -22,12 +22,24 @@ func TestOpenInputScopesDetachedUncertaintyToItsSource(t *testing.T) {
 		ambiguous bool
 		blocked   bool
 		automatic bool
+		stillOpen bool
+		otherOpen bool
 		foreign   bool
 		unfenced  bool
 		kind      api.WorkflowExternalEffectKind
 	}{
 		{name: "same source", blocked: true},
 		{name: "reopen automatically", automatic: true},
+		{
+			name:      "reopen automatically while Input is still open",
+			automatic: true,
+			stillOpen: true,
+		},
+		{
+			name:      "reopen automatically while another source is open",
+			automatic: true,
+			otherOpen: true,
+		},
 		{
 			name:      "unrelated source",
 			other:     true,
@@ -134,8 +146,10 @@ func TestOpenInputScopesDetachedUncertaintyToItsSource(t *testing.T) {
 			if err := persistent.MarkOperationEffectsUnknown(authority, testOwnerID, opened.WorkflowID, effect.OperationID, time.Now().UTC()); err != nil {
 				t.Fatal(err)
 			}
-			if err := module.ReleaseInput(ctx, testOwnerID, opened.Revision); err != nil {
-				t.Fatal(err)
+			if !test.stillOpen {
+				if err := module.ReleaseInput(ctx, testOwnerID, opened.Revision); err != nil {
+					t.Fatal(err)
+				}
 			}
 			nextOwner := testOwnerID
 			if test.foreign {
@@ -148,8 +162,18 @@ func TestOpenInputScopesDetachedUncertaintyToItsSource(t *testing.T) {
 				}
 			}
 			closed, err := repo.LoadActiveInput(ctx)
-			if err != nil || closed.State != api.ActiveInputEmpty {
+			if err != nil || (!test.stillOpen && closed.State != api.ActiveInputEmpty) {
 				t.Fatalf("input was not detached: slot=%+v err=%v", closed, err)
+			}
+			if test.otherOpen {
+				closed, err = module.OpenInput(ctx, nextOwner, OpenInputRequest{
+					ExpectedRevision: closed.Revision,
+					Input:            api.PrepareInput{SourcePath: sourceB},
+					IdempotencyKey:   "open-other",
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
 			}
 			source := sourceA
 			if test.other {

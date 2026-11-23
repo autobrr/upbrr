@@ -65,7 +65,18 @@ func (r *Recovery) Recover(ctx context.Context, scope api.WorkflowScope) (Recove
 
 // RecoverAutomatically applies the restart policy to one retained workflow.
 // It uses the existing fenced disposition and never runs an external operation.
-func (r *Recovery) RecoverAutomatically(ctx context.Context, scope api.WorkflowScope, logger api.Logger) error {
+func (r *Recovery) RecoverAutomatically(ctx context.Context, scope api.WorkflowScope, logger api.Logger) (result error) {
+	defer func() {
+		if result != nil {
+			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			slot, err := r.module.ActiveInput(cleanup, scope.OwnerID)
+			if err == nil {
+				err = r.module.releaseInterruptedOpenClaim(cleanup, scope, slot)
+			}
+			result = errors.Join(result, err)
+		}
+	}()
 	retained, err := r.Recover(ctx, scope)
 	if err != nil {
 		return err
@@ -92,15 +103,26 @@ func (r *Recovery) resolveInterruptedActions(ctx context.Context, scope api.Work
 }
 
 // recoverSourceBeforeOpen settles retained attempts under the caller's exact
-// empty-slot revision. It never adopts an intervening caller's slot change.
-func (m *Module) recoverSourceBeforeOpen(ctx context.Context, owner, source string, revision uint64) (uint64, error) {
+// slot revision. Only the caller's idle input can be detached for the requested open.
+func (m *Module) recoverSourceBeforeOpen(ctx context.Context, owner, source, key string, revision uint64) (uint64, error) {
 	prior, err := m.ActiveInput(ctx, owner)
-	if err != nil || prior.State != api.ActiveInputEmpty || prior.Revision != revision {
+	if err != nil || prior.Revision != revision {
 		return revision, err
 	}
+	detach := prior.State == api.ActiveInputActive && m.OwnsActiveInput(prior) &&
+		prior.IdempotencyKey != key
+	if prior.State != api.ActiveInputEmpty && !detach {
+		return revision, nil
+	}
 	ids, err := m.LegacyRecoveryWorkflowIDsForSource(ctx, owner, source)
-	if err != nil {
+	if err != nil || len(ids) == 0 {
 		return revision, err
+	}
+	if detach {
+		if err := m.ReleaseInput(ctx, owner, revision); err != nil {
+			return revision, err
+		}
+		revision++
 	}
 	for _, id := range ids {
 		scope := api.WorkflowScope{OwnerID: owner, WorkflowID: id}

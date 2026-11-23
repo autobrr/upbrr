@@ -44,10 +44,17 @@ func RecoverInterruptedWorkflows(ctx context.Context, repo *db.SQLiteRepository,
 		defer cancel()
 		result = errors.Join(result, recovery.Shutdown(cleanup))
 	}()
+	var recoveryErr error
 	for _, scope := range scopes {
-		if err := recovery.RecoverAutomatically(ctx, scope, logger); err != nil {
-			return fmt.Errorf("recover interrupted workflow %s: %w", scope.WorkflowID, err)
+		if err := ctx.Err(); err != nil {
+			return errors.Join(recoveryErr, err)
 		}
+		if err := recovery.RecoverAutomatically(ctx, scope, logger); err != nil {
+			recoveryErr = errors.Join(recoveryErr, fmt.Errorf("recover interrupted workflow %s: %w", scope.WorkflowID, err))
+		}
+	}
+	if recoveryErr != nil {
+		return recoveryErr
 	}
 	scopes, err = repo.ListReleaseWorkflowRecoveryScopes(ctx)
 	if err != nil {

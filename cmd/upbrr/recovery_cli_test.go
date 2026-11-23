@@ -111,7 +111,7 @@ func checkStartupAutomaticRecovery(t *testing.T, web bool) {
 func TestStartupRecoveryAfterInterruptedCommitDoesNotRepeatSettledEffects(t *testing.T) {
 	t.Parallel()
 	repo, cfg, _ := newRecoveryCLIFixture(t)
-	for _, workflow := range []string{"first", "second"} {
+	for _, workflow := range []string{"first", "second", "third"} {
 		insertRecoveryCLIWorkflow(t, repo, "cli", workflow, "tracker_submission", api.WorkflowEffectStatusUnknown)
 	}
 	if _, err := repo.RawDB().ExecContext(t.Context(), `CREATE TRIGGER interrupt_auto_recovery
@@ -123,6 +123,9 @@ func TestStartupRecoveryAfterInterruptedCommitDoesNotRepeatSettledEffects(t *tes
 	first := &cliProgressTestLogger{}
 	if _, _, err := cliConfigActivation(t.Context(), cfg, repo.DBPath(), first); err == nil || !strings.Contains(err.Error(), "workflow second") {
 		t.Fatalf("startup did not report the affected workflow: %v", err)
+	}
+	if logs := strings.Join(first.snapshot(), "\n"); strings.Count(logs, "marked not completed") != 2 || !strings.Contains(logs, "workflow=third") {
+		t.Fatalf("an independent workflow was not recovered after the failure: %s", logs)
 	}
 	scopes, err := repo.ListReleaseWorkflowRecoveryScopes(t.Context())
 	if err != nil || len(scopes) != 1 || scopes[0].WorkflowID != "second" {
@@ -137,6 +140,35 @@ func TestStartupRecoveryAfterInterruptedCommitDoesNotRepeatSettledEffects(t *tes
 	}
 	if logs := strings.Join(next.snapshot(), "\n"); strings.Count(logs, "marked not completed") != 1 || !strings.Contains(logs, "workflow=second") {
 		t.Fatalf("restart repeated a settled effect or missed the pending one: %s", logs)
+	}
+}
+
+func TestStartupClearsPendingActionAfterSavedSubmission(t *testing.T) {
+	t.Parallel()
+	repo, cfg, _ := newRecoveryCLIFixture(t)
+	insertRecoveryCLIWorkflow(t, repo, "cli", "confirmed", "tracker_submission", api.WorkflowEffectStatusSucceeded)
+	if _, err := repo.RawDB().ExecContext(t.Context(), `UPDATE release_workflow_states
+		SET state_json = json_set(state_json, '$.state.Workflow.requiredActions', json(?))
+		WHERE owner_id = 'cli' AND workflow_id = 'confirmed'`,
+		`[{"id":"stale-action","kind":"reconcile_submission","status":"pending","effectKind":"tracker_submission","effectScopeId":"ANT","effectId":"effect","effectOperationId":"operation"}]`); err != nil {
+		t.Fatal(err)
+	}
+	logger := &cliProgressTestLogger{}
+	if _, _, err := cliConfigActivation(t.Context(), cfg, repo.DBPath(), logger); err != nil {
+		t.Fatal(err)
+	}
+	var actions int
+	var effect, fence string
+	if err := repo.RawDB().QueryRowContext(t.Context(), `SELECT
+		coalesce(json_array_length(state_json, '$.state.Workflow.requiredActions'), 0),
+		(SELECT status FROM release_workflow_effects WHERE workflow_id = 'confirmed'),
+		(SELECT status FROM submission_fences WHERE workflow_id = 'confirmed')
+		FROM release_workflow_states WHERE owner_id = 'cli' AND workflow_id = 'confirmed'`).Scan(&actions, &effect, &fence); err != nil {
+		t.Fatal(err)
+	}
+	if actions != 0 || effect != "succeeded" || fence != "succeeded" ||
+		strings.Contains(strings.Join(logger.snapshot(), "\n"), "marked not completed") {
+		t.Fatalf("stale action was not cleared without changing success: actions=%d effect=%s fence=%s", actions, effect, fence)
 	}
 }
 
