@@ -7,6 +7,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { historyClient } from "../../api/app";
 import type { HistoryEntry, HistoryOverview, HistoryRuleFailure } from "../../types";
 import { cn } from "../../utils/cn";
+import InputLogs from "./InputLogs";
 
 const emptyHistory: HistoryEntry[] = [];
 
@@ -76,9 +77,35 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
     queryKey: ["history", "list"],
     queryFn: ({ signal }) => historyClient.list(signal),
   });
-  const entries = historyQuery.data ?? emptyHistory;
+  const logSourcesQuery = useQuery({
+    queryKey: ["history", "log-sources"],
+    queryFn: ({ signal }) => historyClient.logSources(signal),
+  });
+  const storedEntries = historyQuery.data ?? emptyHistory;
+  const entries = useMemo(() => {
+    const seen = new Set(storedEntries.map((entry) => entry.SourcePath));
+    return [
+      ...storedEntries,
+      ...(logSourcesQuery.data ?? [])
+        .filter((path) => !seen.has(path))
+        .map((path) => ({
+          SourcePath: path,
+          ReleaseTitle: path.split(/[\\/]/).pop() || path,
+          ReleaseSource: "",
+          ReleaseResolution: "",
+          MetadataUpdatedAt: "",
+          LatestUploadStatus: "Processing logs only",
+          LatestUploadAt: "",
+          RuleFailureCount: 0,
+        })),
+    ];
+  }, [storedEntries, logSourcesQuery.data]);
   const loading = historyQuery.isPending;
   const [selectedPath, setSelectedPath] = useState("");
+  const [logsPath, setLogsPath] = useState("");
+  const logOnly =
+    selectedPath !== "" && !storedEntries.some((entry) => entry.SourcePath === selectedPath);
+  const showingLogs = logOnly || logsPath === selectedPath;
   const [searchQuery, setSearchQuery] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [opening, setOpening] = useState(false);
@@ -114,10 +141,10 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
   const overviewQuery = useQuery({
     queryKey: ["history", "overview", selectedPath],
     queryFn: ({ signal }) => historyClient.getOverview(selectedPath, signal),
-    enabled: selectedPath !== "",
+    enabled: selectedPath !== "" && !logOnly,
   });
   const overview: HistoryOverview | null = overviewQuery.data ?? null;
-  const detailLoading = selectedPath !== "" && overviewQuery.isPending;
+  const detailLoading = selectedPath !== "" && !logOnly && overviewQuery.isPending;
 
   const selectedEntry = useMemo(
     () => entries.find((entry) => entry.SourcePath === selectedPath) || null,
@@ -149,7 +176,10 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
       await deleteHistoryRelease(deletedPath);
       onReleaseDeleted?.(deletedPath);
       queryClient.removeQueries({ queryKey: ["history", "overview", deletedPath] });
-      await queryClient.invalidateQueries({ queryKey: ["history", "list"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["history", "list"] }),
+        queryClient.invalidateQueries({ queryKey: ["history", "log-sources"] }),
+      ]);
       const refreshed = queryClient.getQueryData<HistoryEntry[]>(["history", "list"]) ?? [];
       if (!refreshed.length) {
         setSelectedPath("");
@@ -252,10 +282,20 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
         <div className="overflow-y-auto rounded-lg border border-border bg-card p-3">
           {selectedPath ? (
             <div className="mb-3 flex justify-end gap-2">
+              {!logOnly && (
+                <button
+                  type="button"
+                  className="ghost"
+                  aria-expanded={showingLogs}
+                  onClick={() => setLogsPath(showingLogs ? "" : selectedPath)}
+                >
+                  Logs
+                </button>
+              )}
               <button
                 type="button"
                 className="ghost"
-                disabled={opening || deleting || !overview || !onOpenInput}
+                disabled={opening || deleting || (!logOnly && !overview) || !onOpenInput}
                 onClick={() => void handleOpenInput()}
               >
                 {opening ? "Opening..." : "Open input"}
@@ -272,6 +312,11 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
               </button>
             </div>
           ) : null}
+
+          {selectedPath && showingLogs && (
+            <InputLogs key={selectedPath} sourcePath={selectedPath} />
+          )}
+          {logOnly && <p className="break-words text-muted-foreground">{selectedPath}</p>}
 
           {detailLoading ? <p className="text-muted-foreground">Loading overview...</p> : null}
 

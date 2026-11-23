@@ -452,8 +452,26 @@ export const trackerAuthClient = {
     requestApp<TrackerAuthStatus>("DeleteTrackerAuth", { Tracker: tracker }),
 };
 
+export type InputLogAttempt = {
+  ID: string;
+  Kind: string;
+  Outcome: string;
+  StartedAt: string;
+};
+export type InputLogDetails = {
+  Text: string;
+  Coverage: "complete" | "partial" | "memory" | "expired";
+};
+
 /** Persisted release history operations. */
 export const historyClient = {
+  logSources: (signal?: AbortSignal) => requestAppGet<string[]>("ListInputLogSources", { signal }),
+  logAttempts: (sourcePath: string, signal?: AbortSignal) =>
+    requestApp<InputLogAttempt[]>("ListInputLogs", { SourcePath: sourcePath }, { signal }),
+  log: (id: string, signal?: AbortSignal) =>
+    requestAppGet<InputLogDetails>(`InputLog/${encodeURIComponent(id)}`, { signal }),
+  logDownload: (id: string) =>
+    withBasePath(`/api/app/InputLog/${encodeURIComponent(id)}?download=1`),
   list: (signal?: AbortSignal) => requestApp<HistoryEntry[]>("ListHistory", undefined, { signal }),
   getOverview: (sourcePath: string, signal?: AbortSignal) =>
     requestApp<HistoryOverview>("GetHistoryOverview", { SourcePath: sourcePath }, { signal }),

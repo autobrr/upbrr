@@ -16,8 +16,9 @@ type operationLoggerKey struct{}
 // logger. Entries use the root logger's sanitized outputs, buffer, and
 // subscribers without changing its configured application or console threshold.
 type OperationLogger struct {
-	root  *Logger
-	level Level
+	root    *Logger
+	level   Level
+	capture *inputCapture
 }
 
 // NewOperationLogger creates a non-owning logger view. An empty override uses
@@ -44,6 +45,13 @@ func WithOperationLogger(ctx context.Context, logger api.Logger) context.Context
 	if ctx == nil || logger == nil {
 		return ctx
 	}
+	if view, ok := logger.(*OperationLogger); ok {
+		if previous, ok := ctx.Value(operationLoggerKey{}).(*OperationLogger); ok && previous.root == view.root && view.capture == nil {
+			scoped := *view
+			scoped.capture = previous.capture
+			logger = &scoped
+		}
+	}
 	return context.WithValue(ctx, operationLoggerKey{}, logger)
 }
 
@@ -59,6 +67,11 @@ func FromContext(ctx context.Context, fallback api.Logger) api.Logger {
 		return api.NopLogger{}
 	}
 	return fallback
+}
+
+// ConsoleEnabled reports the root console threshold without changing it.
+func (l *OperationLogger) ConsoleEnabled(level Level) bool {
+	return l != nil && l.root.ConsoleEnabled(level)
 }
 
 // Tracef logs a trace entry when enabled by this operation view.
@@ -90,7 +103,7 @@ func (l *OperationLogger) logf(level Level, label string, format string, args ..
 	if l == nil || l.root == nil {
 		return
 	}
-	l.root.writefAtLevel(l.level, level, label, format, args...)
+	l.root.writefAtLevel(l.level, level, label, l.capture, format, args...)
 }
 
 var _ api.Logger = (*OperationLogger)(nil)

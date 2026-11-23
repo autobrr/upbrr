@@ -20,7 +20,7 @@ These edits require **Save** before they become active.
 | **Total log-file budget (MB)** | `20 MB` | Sets the approximate total file budget. The per-file rotation threshold is this value divided by **Retained log files**. |
 | **Retained log files**         | `3`     | Sets the file-rotation depth used with the total-size budget.                                                            |
 
-File logging requires positive **Total log-file budget (MB)** and **Retained log files** values. The log path is `<database directory>/logs/upbrr.log`; displaying a path does not mean file logging is enabled.
+File logging requires positive **Total log-file budget (MB)** and **Retained log files** values. The log path is `<database directory>/logs/upbrr.log`; displaying a path does not mean file logging is enabled. When enabled, files receive every level through TRACE. Runtime and per-run levels still control the live viewer and recent entries; they do not reduce what is written to disk.
 
 ## Choosing a level
 
@@ -31,9 +31,15 @@ File logging requires positive **Total log-file budget (MB)** and **Retained log
 
 ## Upload run verbosity
 
-On **Upload**, choose **Run options → Log level** before starting a dry run or upload. The selected level applies to that run's application logs, including background work and resumed work. It reaches the live viewer, retained log entries, and file output when enabled.
+On **Upload**, choose **Run options → Log level** before starting a dry run or upload. The selected level applies to that run's application logs, including background work and resumed work. It reaches the live viewer and recent entries. An enabled log file already records TRACE.
 
 This choice does not save the global logging setting or change another operation's verbosity. The server console keeps its configured threshold. The live viewer's level checkboxes still control which retained entries are displayed.
+
+## View or download one input's logs
+
+In **History**, select the input, choose **Logs**, then choose a processing attempt by time and outcome. An attempt is one Web UI operation, such as opening, preparing or uploading, or one complete CLI input run. **Download log** hands a text `.log` file to your browser's normal download handling. Attempts that failed before metadata was stored can appear as entries with processing logs only.
+
+upbrr reads matching entries from the active and rotated application logs. When no matching disk entries remain, it can show entries still in the current session's recent buffer. The page labels memory-only, partial and expired logs; it cannot attribute older, untagged records to an input. Removing a History entry removes its log association, not the lines already written to the shared rotating files. Inspect and sanitize exports before sharing them.
 
 ## Live viewer
 

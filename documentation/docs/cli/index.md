@@ -210,6 +210,12 @@ The terminal log view bounds each line to 4,096 bytes. Oversized raw diagnostic 
 
 Log levels ignore case and surrounding whitespace; `warning` aliases `warn`. An explicit empty log-level value selects `info`; omission inherits the applicable application/console threshold.
 
+With file logging enabled, disk logs always include TRACE even if the terminal or recent entries use a quieter level.
+
+Use `--export-log` with a normal CLI input or queue run to save a separate `.log` for each processed input. With file logging off, this exports only matching entries still in memory. Use `--export-last-log <input>` to export the most recent attempt without processing the input or contacting trackers. If that attempt had no disk log or its entries have rotated away, a later CLI process cannot recover it from memory.
+
+Exports default to the application's existing `logs` folder. Add `--log-export-dir <directory>` to use a different existing folder. Exports report when retained coverage is partial. Inspect them before sharing.
+
 `--live-test` and `--live-test-max-images` are development options described under [`live-test`](#live-test). There is no `--dry-run` option; use `--debug --no-seed` for preparation without tracker submission or client injection.
 
 ## Tracker selection and IDs

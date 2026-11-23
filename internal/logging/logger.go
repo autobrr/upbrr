@@ -74,8 +74,8 @@ func ParseLevel(value string) (Level, error) {
 }
 
 // Logger writes sanitized, threshold-filtered entries to console and optional
-// file outputs. An optional console threshold can differ from the application
-// threshold used by file output, snapshots, and subscribers. Close releases the
+// file outputs. The file receives every level through TRACE; the optional
+// console threshold can differ from the threshold for snapshots and subscribers. Close releases the
 // optional file output.
 type Logger struct {
 	level           Level
@@ -100,6 +100,7 @@ type Entry struct {
 	Time    time.Time `json:"time" ts_type:"string"`
 	Level   string    `json:"level"`
 	Message string    `json:"message"`
+	attempt string
 }
 
 var (
@@ -287,10 +288,10 @@ func (l *Logger) logf(level Level, label string, format string, args ...any) {
 		return
 	}
 	formatted := SanitizeMessage(fmt.Sprintf(format, args...))
-	l.writeSanitized(level, label, formatted, applicationEnabled, consoleLevel)
+	l.writeSanitized(level, label, formatted, nil, applicationEnabled, consoleLevel)
 }
 
-func (l *Logger) writefAtLevel(applicationLevel Level, level Level, label string, format string, args ...any) {
+func (l *Logger) writefAtLevel(applicationLevel Level, level Level, label string, capture *inputCapture, format string, args ...any) {
 	if l == nil {
 		return
 	}
@@ -298,7 +299,7 @@ func (l *Logger) writefAtLevel(applicationLevel Level, level Level, label string
 	if !enabled {
 		return
 	}
-	l.writeSanitized(level, label, SanitizeMessage(fmt.Sprintf(format, args...)), applicationEnabled, consoleLevel)
+	l.writeSanitized(level, label, SanitizeMessage(fmt.Sprintf(format, args...)), capture, applicationEnabled, consoleLevel)
 }
 
 func (l *Logger) enabledLevels(applicationLevel Level, level Level) (bool, Level, bool) {
@@ -307,10 +308,10 @@ func (l *Logger) enabledLevels(applicationLevel Level, level Level) (bool, Level
 		consoleLevel = l.consoleLevel
 	}
 	applicationEnabled := level <= applicationLevel
-	return applicationEnabled, consoleLevel, applicationEnabled || level <= consoleLevel
+	return applicationEnabled, consoleLevel, l.file != nil || applicationEnabled || level <= consoleLevel
 }
 
-func (l *Logger) writeSanitized(level Level, label string, formatted string, applicationEnabled bool, consoleLevel Level) {
+func (l *Logger) writeSanitized(level Level, label, formatted string, capture *inputCapture, applicationEnabled bool, consoleLevel Level) {
 	prefix := label + ": "
 	if level <= consoleLevel {
 		console := l.consoleOut
@@ -323,11 +324,16 @@ func (l *Logger) writeSanitized(level Level, label string, formatted string, app
 			console.Print(prefix + formatted)
 		}
 	}
+	var attempt string
+	if capture != nil {
+		attempt = capture.id
+		capture.write(label, "record", formatted)
+	} else if l.file != nil {
+		// Indent multiline continuations so they cannot introduce a record.
+		l.file.Print(prefix + diskLogMessage(formatted))
+	}
 	if applicationEnabled {
-		if l.file != nil {
-			l.file.Print(prefix + formatted)
-		}
-		l.record(label, formatted)
+		l.record(label, formatted, attempt)
 	}
 }
 
@@ -355,7 +361,7 @@ func DBRelativePathLabel(value string) (string, bool) {
 	return "", false
 }
 
-func (l *Logger) record(label string, message string) {
+func (l *Logger) record(label, message, attempt string) {
 	if l == nil {
 		return
 	}
@@ -364,6 +370,7 @@ func (l *Logger) record(label string, message string) {
 		Time:    time.Now(),
 		Level:   strings.ToLower(label),
 		Message: message,
+		attempt: attempt,
 	}
 
 	l.mu.Lock()

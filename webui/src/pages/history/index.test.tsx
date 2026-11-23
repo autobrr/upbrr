@@ -7,11 +7,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HistoryEntry, HistoryOverview } from "../../types";
-import { installAppOperationMocks } from "../../test/appRequestMock";
+import { installAppOperationMocks, type AppOperationMocks } from "../../test/appRequestMock";
 import { emptyExternalIdentity } from "../../utils/canonicalIdentity";
 import HistoryPage from ".";
 
 afterEach(cleanup);
+
+const installHistoryMocks = (operations: AppOperationMocks) =>
+  installAppOperationMocks({ ListInputLogSources: async () => [], ...operations });
 
 const renderHistory = (props: ComponentProps<typeof HistoryPage> = {}) => {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -64,10 +67,33 @@ const overview = (sourcePath: string, title: string): HistoryOverview => ({
 });
 
 describe("HistoryPage", () => {
+  it("finds a failed input before metadata and offers a browser download for its attempt", async () => {
+    const sourcePath = "/media/Missing.Release.2026-GRP.mkv";
+    const id = "00000000000000000000001a";
+    const loadOverview = vi.fn();
+    installHistoryMocks({
+      ListHistory: async () => [],
+      ListInputLogSources: async () => [sourcePath],
+      ListInputLogs: async () => [
+        { ID: id, StartedAt: "2026-08-05T00:00:00Z", Kind: "open input", Outcome: "failed" },
+      ],
+      [`InputLog/${id}`]: async () => ({ Coverage: "memory", Text: "Input validation failed." }),
+      GetHistoryOverview: loadOverview,
+    });
+
+    renderHistory();
+    expect(await screen.findByText("Input validation failed.")).toBeInTheDocument();
+    expect(screen.getByText(/Recent entries from this session only/)).toBeInTheDocument();
+    const download = screen.getByRole("link", { name: "Download log" });
+    expect(download).toHaveAttribute("download");
+    expect(download).toHaveAttribute("href", `/api/app/InputLog/${id}?download=1`);
+    expect(loadOverview).not.toHaveBeenCalled();
+  });
+
   it("opens a stored source through the shared active-input callback", async () => {
     const sourcePath = "C:\\media\\Stored.Release.2026.1080p-GRP.mkv";
     const onOpenInput = vi.fn(async () => true);
-    installAppOperationMocks({
+    installHistoryMocks({
       ListHistory: async () => [entry(sourcePath, "Stored Release 2026")],
       GetHistoryOverview: async () => overview(sourcePath, "Stored Release 2026"),
     });
@@ -83,7 +109,7 @@ describe("HistoryPage", () => {
     const sourcePath = "C:\\media\\Stored.Release.2026.1080p-GRP.mkv";
     let allowed = false;
     const onOpenInput = vi.fn(async () => allowed);
-    installAppOperationMocks({
+    installHistoryMocks({
       ListHistory: async () => [entry(sourcePath, "Stored Release 2026")],
       GetHistoryOverview: async () => overview(sourcePath, "Stored Release 2026"),
     });
@@ -117,7 +143,7 @@ describe("HistoryPage", () => {
         };
       });
       const onOpenInput = vi.fn(() => pending);
-      installAppOperationMocks({
+      installHistoryMocks({
         ListHistory: async () => [
           entry(firstPath, "First Release"),
           entry(secondPath, "Second Release"),
@@ -148,7 +174,7 @@ describe("HistoryPage", () => {
     const firstResponse = new Promise<HistoryOverview>((resolve) => {
       resolveFirst = resolve;
     });
-    installAppOperationMocks({
+    installHistoryMocks({
       ListHistory: async () => [
         entry(firstPath, "Example Release 2026"),
         entry(secondPath, "Second Example 2026"),
@@ -178,7 +204,7 @@ describe("HistoryPage", () => {
   it("does not retain another release's details after a failed selection", async () => {
     const unavailablePath = "C:\\media\\Example.Release.2026.1080p-GRP.mkv";
     const storedPath = "C:\\media\\Second.Example.2026.1080p-GRP.mkv";
-    installAppOperationMocks({
+    installHistoryMocks({
       ListHistory: async () => [
         entry(unavailablePath, "Example Release 2026"),
         entry(storedPath, "Second Example 2026"),
@@ -217,7 +243,7 @@ describe("HistoryPage", () => {
         stored = [];
         return {};
       });
-      installAppOperationMocks({
+      installHistoryMocks({
         ListHistory: list,
         GetHistoryOverview: async () => {
           if (overviewState === "failed") throw new Error("stored preparation unavailable");
@@ -257,7 +283,7 @@ describe("HistoryPage", () => {
   it("still requires confirmation when stored details cannot be loaded", async () => {
     const sourcePath = "C:\\media\\Stored.Release.2026.1080p-GRP.mkv";
     const remove = vi.fn(async () => ({}));
-    installAppOperationMocks({
+    installHistoryMocks({
       ListHistory: async () => [entry(sourcePath, "Stored Release 2026")],
       GetHistoryOverview: async () => {
         throw new Error("stored preparation unavailable");
@@ -289,7 +315,7 @@ describe("HistoryPage", () => {
       failDelete = () => reject(new Error("database unavailable"));
     });
     const remove = vi.fn(() => pendingDelete);
-    installAppOperationMocks({
+    installHistoryMocks({
       ListHistory: async () => [entry(sourcePath, "Stored Release 2026")],
       GetHistoryOverview: async () => {
         throw new Error("stored preparation unavailable");

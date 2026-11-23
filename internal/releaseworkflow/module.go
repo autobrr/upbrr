@@ -884,7 +884,7 @@ func (m *Module) Start(ctx context.Context, ownerID string, command Command) (ap
 		return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow append queued operation event: %w", err)
 	}
 	status.Events = events
-	m.dispatchOperationWorker(ctx, ownerID, command, record, release)
+	m.dispatchOperationWorker(ctx, ownerID, state.SourcePath, command, record, release)
 	transferredLifetime = true
 	return cloneWorkflowOperationStatus(status, "start operation")
 }
@@ -895,6 +895,7 @@ func (m *Module) Start(ctx context.Context, ownerID string, command Command) (ap
 func (m *Module) dispatchOperationWorker(
 	ctx context.Context,
 	ownerID string,
+	sourcePath string,
 	command Command,
 	record api.ReleaseWorkflowOperationRecord,
 	release func(),
@@ -928,7 +929,15 @@ func (m *Module) dispatchOperationWorker(
 			close(workerDone)
 			m.operationWorkersMu.Unlock()
 		}()
-		m.runOperation(context.WithValue(workerCtx, operationLifetimeContextKey{}, struct{}{}), ownerID, command, record)
+		runCtx, finishLogs := m.beginInputLog(workerCtx, sourcePath, string(record.Status.Operation))
+		logging.FromContext(runCtx, m.logger).Debugf("input: running operation kind=%s", record.Status.Operation)
+		m.runOperation(context.WithValue(runCtx, operationLifetimeContextKey{}, struct{}{}), ownerID, command, record)
+		outcome := ""
+		if current, err := m.operations.LoadOperation(context.WithoutCancel(runCtx), ownerID, record.WorkflowID, record.OperationID); err == nil &&
+			isTerminalProgressStatus(current.Status.Status) {
+			outcome = string(current.Status.Status)
+		}
+		finishLogs("", outcome)
 	}()
 }
 
@@ -2063,9 +2072,14 @@ func (m *Module) recoverOperationAfterLease(
 	if !ok {
 		return errors.New("release workflow: runtime generation retired")
 	}
+	source := ""
+	if retained, loadErr := m.repository.Load(ctx, current.OwnerID, current.WorkflowID); loadErr == nil {
+		source = retained.SourcePath
+	}
 	m.dispatchOperationWorker(
 		context.WithValue(ctx, recoveredOperationContextKey{}, true),
 		current.OwnerID,
+		source,
 		capsule.command,
 		current,
 		release,

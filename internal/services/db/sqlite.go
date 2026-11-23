@@ -3705,6 +3705,8 @@ func (r *SQLiteRepository) ListStoredReleasePaths(ctx context.Context) ([]string
 			SELECT source_path FROM media_reusable_commits
 			UNION
 			SELECT source_path FROM media_reusable_tombstones
+			UNION
+			SELECT source_path FROM input_log_attempts
 		)
 		WHERE TRIM(source_path) <> ''
 		ORDER BY source_path ASC
@@ -4013,6 +4015,7 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 		{sql: `DELETE FROM media_reusable_commits WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM input_records WHERE canonical_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM upload_records WHERE source_path = ?`, args: []any{trimmedPath}},
+		{sql: `DELETE FROM input_log_attempts WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM file_metadata WHERE path = ?`, args: []any{trimmedPath}},
 	}
 
