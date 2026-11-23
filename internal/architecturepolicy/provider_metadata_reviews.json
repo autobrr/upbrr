@@ -1244,8 +1244,8 @@
     "sha256": "6c40c69a16ef1a281261dd99b061e1fb5cda33989ef618c0983da4f65e711498"
   },
   "internal/trackers/impl/standalone/tl/dupe.go:*dupeSearcher.Search": {
-    "reason": "Selected canonical IMDb authority is preserved on every page without sibling cross-links or title prerequisites. Returned positive mismatches are excluded; missing identity cannot prove whole-work binding. Session refresh retries the same search page and leaves manual-title and canonical IMDb precedence unchanged. Nameless matches mark the search incomplete without claiming an evaluable candidate or overriding provider selection.",
-    "sha256": "404aae2ccd68e3f5aa6b11b02214d9a627ea6710a010d23cf7ffecf5c1c8ce27"
+    "reason": "Selected canonical IMDb authority is preserved on every page without sibling cross-links or title prerequisites. Returned positive mismatches are excluded; missing identity cannot prove whole-work binding. Session refresh retries the same page but cannot certify mixed-session coverage. Cancellation aborts without returning duplicate evidence. Manual-title and canonical IMDb precedence are unchanged. Nameless matches mark the search incomplete without claiming an evaluable candidate or overriding provider selection.",
+    "sha256": "95e3a94b30e00efbf3785bc00261b02ce048ef922900c870eaf9a6aea89e0212"
   },
   "internal/trackers/impl/standalone/tl/dupe.go:searchQueries": {
     "reason": "Canonical IMDb, including a manual selection, wins independently of conflicting sibling provider IDs. Title fallback retains explicit manual title/year/language clears, uses finalized category and media facts, and broadens TV searches to include ranges and packs.",

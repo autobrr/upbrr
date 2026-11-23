@@ -74,12 +74,14 @@ func (f *tlLoginFixture) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		if f.needsOTP {
 			response := testAuthResponse(http.StatusFound, "", "otp_session=fixture; Path=/")
-			response.Header.Set("Location", loginPath)
+			response.Header.Set("Location", otpPath)
 			return response, nil
 		}
 		return testAuthSuccess(), nil
-	case req.Method == http.MethodGet && req.URL.Path == loginPath:
-		return testAuthResponse(http.StatusOK, testOTPForm), nil
+	case req.Method == http.MethodGet && req.URL.Path == otpPath:
+		response := testAuthResponse(http.StatusOK, strings.Replace(testOTPForm, otpPath, "./", 1))
+		response.Request = req
+		return response, nil
 	case req.Method == http.MethodPost && req.URL.Path == otpPath:
 		defer req.Body.Close()
 		f.otpPosts++
@@ -401,12 +403,14 @@ func TestTLCheckAuthAllowsFreshFolderImportAfterSignOut(t *testing.T) {
 }
 
 func TestTLCheckAuthPreservesSessionMigratedDuringValidation(t *testing.T) {
-	t.Parallel()
+	// The fixture runs an actual SQLite migration inside the bounded auth
+	// request; do not queue it behind the other tests using TL's session gate.
 	for _, scenario := range []struct {
 		name, page string
 		setCookie  []string
 	}{
 		{name: "signed-out", page: testLoginForm},
+		{name: "unchanged", page: testLoggedIn},
 		{
 			name:      "rotated",
 			page:      testLoggedIn,
@@ -414,7 +418,6 @@ func TestTLCheckAuthPreservesSessionMigratedDuringValidation(t *testing.T) {
 		},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			t.Parallel()
 			ctx := t.Context()
 			dbPath := tlAuthTestDB(t)
 			cfg := config.TrackerConfig{Passkey: "fixture-passkey"}
@@ -449,7 +452,7 @@ func TestTLCheckAuthPreservesSessionMigratedDuringValidation(t *testing.T) {
 			}))
 			status, err := service.Validate(ctx, "TL")
 			if err != nil || !strings.Contains(status.LastError, "session changed") {
-				t.Fatal("validation did not report that its session was replaced")
+				t.Fatalf("validation did not report that its session was replaced: status=%s error=%s call=%v", status.State, status.LastError, err)
 			}
 			if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 				t.Fatal("replacement export was not migrated")
@@ -531,25 +534,66 @@ func TestTLCheckAuthPersistsRotatedCookie(t *testing.T) {
 	}
 }
 
-func TestTLCanceledLoginRefreshStopsDuplicateSearch(t *testing.T) {
+func TestTLCanceledSignInStopsDuplicateSearch(t *testing.T) {
+	t.Parallel()
+	for _, refresh := range []bool{false, true} {
+		name := "initial sign-in"
+		if refresh {
+			name = "mid-search refresh"
+		}
+		t.Run(name, func(t *testing.T) {
+			dbPath := tlAuthTestDB(t)
+			if refresh {
+				writeTLSearchCookie(t, dbPath)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+
+			transport := tlRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+				switch {
+				case req.URL.Path == "/":
+					cancel()
+					return nil, ctx.Err()
+				case strings.HasSuffix(req.URL.Path, "/page/2"):
+					response := testAuthResponse(http.StatusFound, "")
+					response.Header.Set("Location", loginPath)
+					return response, nil
+				default:
+					return testAuthResponse(http.StatusOK, `{"numFound":2,"page":1,"perPage":1,"torrentList":[{"fid":1,"imdbID":"tt1234567","name":"Example.Release.2026"}]}`), nil
+				}
+			})
+			cfg := config.TrackerConfig{
+				Passkey:  "fixture-passkey",
+				Username: "fixture-user",
+				Password: "fixture-password",
+			}
+			adapter := New().NewDuplicateAdapter(dupe.NewDependencies("TL", cfg, dbPath, &http.Client{Transport: transport}, api.NopLogger{}))
+			result := adapter.Search(ctx, api.DuplicateSubject{Identity: api.ExternalIdentity{IMDBID: 1234567}})
+			if result.Disposition() != dupe.DispositionFailed || result.Code() != dupe.FailureRequest || !errors.Is(result.Cause(), context.Canceled) {
+				t.Fatalf("canceling authentication returned disposition=%v code=%s", result.Disposition(), result.Code())
+			}
+		})
+	}
+}
+
+func TestTLRefreshAfterAcceptedPageKeepsOnlyPartialEvidence(t *testing.T) {
 	t.Parallel()
 	dbPath := tlAuthTestDB(t)
 	writeTLSearchCookie(t, dbPath)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-
+	fixture := &tlLoginFixture{t: t}
 	transport := tlRoundTripFunc(func(req *http.Request) (*http.Response, error) {
-		switch {
-		case req.URL.Path == "/":
-			cancel()
-			return nil, ctx.Err()
-		case strings.HasSuffix(req.URL.Path, "/page/2"):
-			response := testAuthResponse(http.StatusFound, "")
-			response.Header.Set("Location", loginPath)
-			return response, nil
-		default:
-			return testAuthResponse(http.StatusOK, `{"numFound":2,"page":1,"perPage":1,"torrentList":[{"fid":1,"imdbID":"tt1234567","name":"Example.Release.2026"}]}`), nil
+		if !strings.HasPrefix(req.URL.Path, "/torrents/browse/list/") {
+			return fixture.RoundTrip(req)
 		}
+		if !strings.HasSuffix(req.URL.Path, "/page/2") {
+			return testAuthResponse(http.StatusOK, `{"numFound":2,"page":1,"perPage":1,"torrentList":[{"fid":1,"imdbID":"tt1234567","name":"Example.Release.2026.First"}]}`), nil
+		}
+		if session, _ := req.Cookie("tl_session"); session != nil && session.Value == "active" {
+			return testAuthResponse(http.StatusOK, `{"numFound":2,"page":2,"perPage":1,"torrentList":[{"fid":2,"imdbID":"tt1234567","name":"Example.Release.2026.Second"}]}`), nil
+		}
+		response := testAuthResponse(http.StatusFound, "")
+		response.Header.Set("Location", loginPath)
+		return response, nil
 	})
 	cfg := config.TrackerConfig{
 		Passkey:  "fixture-passkey",
@@ -557,9 +601,10 @@ func TestTLCanceledLoginRefreshStopsDuplicateSearch(t *testing.T) {
 		Password: "fixture-password",
 	}
 	adapter := New().NewDuplicateAdapter(dupe.NewDependencies("TL", cfg, dbPath, &http.Client{Transport: transport}, api.NopLogger{}))
-	result := adapter.Search(ctx, api.DuplicateSubject{Identity: api.ExternalIdentity{IMDBID: 1234567}})
-	if result.Disposition() != dupe.DispositionFailed || result.Code() != dupe.FailureRequest || !errors.Is(result.Cause(), context.Canceled) {
-		t.Fatal("canceled login refresh reported a completed duplicate search")
+	result := adapter.Search(t.Context(), api.DuplicateSubject{Identity: api.ExternalIdentity{IMDBID: 1234567}})
+	if result.Disposition() != dupe.DispositionResolved || result.SearchEvidence().EffectiveComplete() || result.SearchEvidence().Pages != 3 ||
+		len(result.Entries()) != 2 || fixture.passwordPosts != 1 {
+		t.Fatalf("expected two retained candidates without complete coverage: disposition=%v evidence=%+v", result.Disposition(), result.SearchEvidence())
 	}
 }
 

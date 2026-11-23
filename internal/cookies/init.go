@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -124,9 +123,7 @@ func HasLegacyCookieFiles(cookiesDir string) bool {
 			continue
 		}
 
-		name := entry.Name()
-		ext := filepath.Ext(name)
-		if ext == ".txt" || ext == ".json" {
+		if stem, _ := legacyCookieFilename(entry.Name()); stem != "" {
 			return true
 		}
 	}

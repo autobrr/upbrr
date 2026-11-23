@@ -187,7 +187,7 @@ func loginAndSaveCookies(
 
 func persistRotatedCookies(ctx context.Context, session *cookies.TrackerHTTPSession, current []*http.Cookie) error {
 	if slices.EqualFunc(session.Cookies, current, func(a, b *http.Cookie) bool { return a.Name == b.Name && a.Value == b.Value }) {
-		return nil
+		return storedSessionResult(session.CheckCurrent(ctx))
 	}
 	if len(current) == 0 {
 		return unavailableAuth("TL validation cleared the session cookies")
@@ -196,11 +196,15 @@ func persistRotatedCookies(ctx context.Context, session *cookies.TrackerHTTPSess
 }
 
 func replaceAuthCookies(ctx context.Context, session *cookies.TrackerHTTPSession, values []*http.Cookie, accountBound bool) error {
-	if err := session.Replace(ctx, values, accountBound); err != nil {
-		if errors.Is(err, cookies.ErrTrackerSessionChanged) {
-			return unavailableAuth("TL session changed during authentication; retry")
-		}
-		return fmt.Errorf("TL update stored session: %w", err)
+	return storedSessionResult(session.Replace(ctx, values, accountBound))
+}
+
+func storedSessionResult(err error) error {
+	if errors.Is(err, cookies.ErrTrackerSessionChanged) {
+		return unavailableAuth("TL session changed during authentication; retry")
+	}
+	if err != nil {
+		return fmt.Errorf("TL check stored session: %w", err)
 	}
 	return nil
 }
@@ -261,6 +265,9 @@ func requestAuthPage(ctx context.Context, client *http.Client, origin *url.URL, 
 	requestMethod := method
 	if resp.Request != nil {
 		requestMethod = resp.Request.Method
+		if resp.Request.URL != nil {
+			endpoint = resp.Request.URL
+		}
 	}
 	page := authPage{fromGET: requestMethod == http.MethodGet}
 	for node := range doc.Descendants() {

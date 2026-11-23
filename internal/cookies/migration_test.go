@@ -52,7 +52,7 @@ func TestMigrateFromFilesToDBReturnsFailedCookies(t *testing.T) {
 	if len(failedCookies) != 1 {
 		t.Fatalf("expected 1 failed cookie, got %d", len(failedCookies))
 	}
-	if failedCookies[0].TrackerID != "tracker" || failedCookies[0].CookieName != "session" {
+	if failedCookies[0].TrackerID != "TRACKER" || failedCookies[0].CookieName != "session" {
 		t.Fatalf("unexpected failed cookie entry: %+v", failedCookies[0])
 	}
 }
@@ -124,7 +124,7 @@ func TestEnsureCookieMigrationKeepsAllLegacyFilesOnMixedParseResult(t *testing.T
 	}
 
 	var storedCount int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tracker_cookies WHERE tracker_id = ?`, "valid").Scan(&storedCount); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tracker_cookies WHERE tracker_id = ?`, "VALID").Scan(&storedCount); err != nil {
 		t.Fatalf("count migrated cookies: %v", err)
 	}
 	if storedCount != 1 {
@@ -243,5 +243,80 @@ func TestLegacyCookieMigrationPreservesManagedSessions(t *testing.T) {
 				t.Fatal("migration reinstalled the retained legacy session")
 			}
 		})
+	}
+}
+
+func TestCookieMigrationRetainsNewerExport(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	store, err := NewCookieStore(newTestCookieDB(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := make([]byte, 32)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tl.JSON")
+	if err := os.WriteFile(path, []byte(`{"session":"old"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := MigrateFromFilesToDB(ctx, dir, store, key, api.NopLogger{})
+	if err != nil || result.Count != 1 || len(result.Failures) != 0 {
+		t.Fatalf("migration count=%d failures=%d error=%v", result.Count, len(result.Failures), err)
+	}
+	if err := os.Rename(path, filepath.Join(dir, "old-export")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"session":"new"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := result.Cleanup(dir, api.NopLogger{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("new export was removed: %v", err)
+	}
+	value, err := store.GetCookie(ctx, "TL", "session", key)
+	if err != nil || value != "old" {
+		t.Fatal("migration did not store the old export using the canonical tracker ID")
+	}
+}
+
+func TestCookieMigrationPrefersTheSameExportAsLegacyLoading(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	dbPath := writeWebAuthFile(t, "tester", "password-hash")
+	initTestCookieDBSchema(t, dbPath)
+	path, err := servicedb.CookiePath(dbPath, "TL.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(path)
+	if err := os.WriteFile(path, []byte(".torrentleech.org\tTRUE\t/\tTRUE\t0\tsession\tpreferred\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(dir, "tl.JSON")
+	if err := os.WriteFile(alias, []byte(`{"session":"fallback"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := servicedb.OpenContext(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	for _, phase := range []string{"before", "after"} {
+		if phase == "after" {
+			if err := EnsureCookieMigration(ctx, repo.RawDB(), dbPath, dir, api.NopLogger{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		values, err := LoadTrackerCookieMap(ctx, dbPath, "TL")
+		if err != nil || values["session"] != "preferred" {
+			t.Fatalf("%s migration: a lower-priority export won: %v", phase, err)
+		}
+	}
+	for _, exported := range []string{path, alias} {
+		if _, err := os.Stat(exported); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("migration left an imported export available for replay: %v", err)
+		}
 	}
 }

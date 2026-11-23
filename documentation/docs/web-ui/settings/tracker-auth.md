@@ -76,7 +76,7 @@ Use this route when you can access upbrr's application-state directory, includin
 
 For a standard Docker installation, the active database is normally `/config/upbrr/db.sqlite`, so the destination is `/config/upbrr/cookies/<tracker-id>.txt` **inside the container**. With the example bind mount `/path/to/config:/config`, copy the file to `/path/to/config/upbrr/cookies/<tracker-id>.txt` **on the host**. An older installation using `/config/.upbrr/db.sqlite` instead needs `/path/to/config/.upbrr/cookies/<tracker-id>.txt`. Check your actual Compose volume mapping and existing database before copying; `/data` is normally the media mount, not application state. See [Docker installation](../../getting-started/installation.md#docker-compose).
 
-On startup, eligible top-level cookie files are migrated into encrypted database storage. If no file has a parse or storage failure, upbrr removes the files it successfully migrated. Any parse or storage failure keeps all source files. Cleanup permission failures can also leave files behind. Verify the result using the cookie count and status on the tracker card.
+On startup, eligible top-level cookie files are migrated into encrypted database storage. The tracker ID and file extension are matched without regard to case. If no file has a parse or storage failure, upbrr removes the unchanged files it successfully migrated. Changed exports and files that cannot be removed remain in the folder. Any parse or storage failure keeps all source files. Verify the result using the cookie count and status on the tracker card.
 
 For trackers that manage website sessions, upbrr can retain a superseded export and skip it during migration. See the tracker card for session handling. To replace a managed session or retained export through the folder, select **Delete Auth** before placing the new export there. **Import Cookies** can replace them directly.
 
@@ -121,7 +121,7 @@ Inspect the file locally without sharing its values. Check the actual [format](#
 
 ### Folder import is not detected
 
-Check the active database directory, exact tracker-ID filename, lowercase `.txt` extension, and top-level `cookies` placement. Enable filename extensions in your file manager to catch names such as `<tracker-id>.txt.txt`. Verify process read/write permissions, the Docker host-to-container volume mapping, and that the intended instance restarted. If files remain, review migration/cleanup messages; if they disappear, check the stored count. See [Storage recovery](#storage-recovery) if encryption could not initialize.
+Check the active database directory, tracker-ID filename, `.txt` or `.json` extension, and top-level `cookies` placement. Enable filename extensions in your file manager to catch names such as `<tracker-id>.txt.txt`. Verify process read/write permissions, the Docker host-to-container volume mapping, and that the intended instance restarted. If files remain, review migration/cleanup messages; if they disappear, check the stored count. See [Storage recovery](#storage-recovery) if encryption could not initialize.
 
 ### Import Cookies is missing
 

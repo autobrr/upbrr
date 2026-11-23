@@ -189,6 +189,18 @@ func (session *TrackerHTTPSession) Replace(ctx context.Context, values []*http.C
 	return saveTrackerCookieMap(ctx, session.dbPath, session.trackerID, httpCookiesToMap(values), owner, session)
 }
 
+// CheckCurrent reports if the observed session changed, without replacing it.
+func (session *TrackerHTTPSession) CheckCurrent(ctx context.Context) error {
+	current, err := LoadTrackerHTTPSession(ctx, session.dbPath, session.trackerID, session.domain, session.owner)
+	if err != nil && !errors.Is(err, ErrTrackerCookiesNotFound) {
+		return err
+	}
+	if !maps.Equal(current.storedValues, session.storedValues) || !maps.Equal(current.fileValues, session.fileValues) {
+		return ErrTrackerSessionChanged
+	}
+	return nil
+}
+
 func (session *TrackerHTTPSession) verifyCurrent(ctx context.Context, tx *sql.Tx, key []byte) error {
 	if err := lockCookieWrites(ctx, tx); err != nil {
 		return err
@@ -298,12 +310,38 @@ func SaveTrackerHTTPCookies(ctx context.Context, dbPath string, trackerID string
 }
 
 func hasLegacyCookieCandidate(dbPath, trackerID string) bool {
-	for _, candidate := range commonhttp.CookiePathCandidates(dbPath, trackerID, ".txt", ".json") {
-		if _, err := os.Lstat(candidate); !errors.Is(err, fs.ErrNotExist) {
-			return true
+	candidates, err := legacyTrackerCookiePaths(dbPath, trackerID)
+	return err != nil || len(candidates) > 0
+}
+
+// legacyTrackerCookiePaths shares migration's case-insensitive filename rule.
+// Prefer Netscape exports and exact names, as before, when several exist.
+func legacyTrackerCookiePaths(dbPath, trackerID string) ([]string, error) {
+	if strings.TrimSpace(dbPath) == "" {
+		return nil, nil
+	}
+	canonical, err := servicedb.CookiePath(dbPath, trackerID+".txt")
+	if err != nil {
+		return nil, fmt.Errorf("cookies: locate legacy cookie directory: %w", err)
+	}
+	dir := filepath.Dir(canonical)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("cookies: list legacy cookie files: %w", err)
+	}
+	var names []string
+	for _, entry := range entries {
+		stem, _ := legacyCookieFilename(entry.Name())
+		if strings.EqualFold(stem, trackerID) {
+			names = append(names, entry.Name())
 		}
 	}
-	return false
+	slices.SortFunc(names, compareLegacyCookieNames)
+	paths := make([]string, 0, len(names))
+	for _, name := range names {
+		paths = append(paths, filepath.Join(dir, name))
+	}
+	return paths, nil
 }
 
 // DeleteTrackerCookies removes the encrypted rows and matching legacy files.
@@ -320,7 +358,11 @@ func DeleteTrackerCookies(ctx context.Context, dbPath string, trackerID string, 
 
 	var removedLegacy []legacyCookieCandidateSnapshot
 	removeFiles := func() error {
-		for _, candidate := range commonhttp.CookiePathCandidates(dbPath, normalizedTrackerID, ".txt", ".json") {
+		candidates, err := legacyTrackerCookiePaths(dbPath, normalizedTrackerID)
+		if err != nil {
+			return err
+		}
+		for _, candidate := range candidates {
 			snapshot, removed, err := removeLegacyCookieCandidate(candidate)
 			if err != nil {
 				deleteErr := fmt.Errorf("cookies: delete tracker %s legacy cookie file %s: %w", normalizedTrackerID, candidate, err)
@@ -549,8 +591,12 @@ func openTrackerCookieStore(ctx context.Context, dbPath string) (*CookieStore, [
 }
 
 func loadTrackerCookieMapFromFiles(dbPath string, trackerID string) (map[string]string, error) {
+	candidates, err := legacyTrackerCookiePaths(dbPath, trackerID)
+	if err != nil {
+		return nil, err
+	}
 	var firstLoadErr error
-	for _, candidate := range commonhttp.CookiePathCandidates(dbPath, trackerID, ".txt", ".json") {
+	for _, candidate := range candidates {
 		switch strings.ToLower(filepath.Ext(candidate)) {
 		case ".txt":
 			cookies, err := commonhttp.LoadNetscapeCookies(candidate, "")
@@ -585,8 +631,12 @@ func loadTrackerCookieMapFromFiles(dbPath string, trackerID string) (map[string]
 }
 
 func loadTrackerHTTPCookiesFromFiles(ctx context.Context, dbPath string, trackerID string, domain string) ([]*http.Cookie, error) {
+	candidates, err := legacyTrackerCookiePaths(dbPath, trackerID)
+	if err != nil {
+		return nil, err
+	}
 	var firstLoadErr error
-	for _, candidate := range commonhttp.CookiePathCandidates(dbPath, trackerID, ".txt", ".json") {
+	for _, candidate := range candidates {
 		if err := ctx.Err(); err != nil {
 			return nil, fmt.Errorf("cookies: legacy files: %w", err)
 		}

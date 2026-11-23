@@ -79,6 +79,9 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		client, err = refresh()
 	}
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return dupe.Failed(dupe.FailureRequest, "TL search canceled", ctxErr)
+		}
 		return tlSearchAuthFailure(err)
 	}
 	logger := logging.FromContext(ctx, s.logger)
@@ -128,6 +131,10 @@ searches:
 					break searches
 				}
 				client = refreshed
+				// Results accepted under the old session cannot certify the refreshed search.
+				if page > 1 {
+					evidence.Complete = false
+				}
 				evidence.Pages++
 				payload, pageFailure = fetchSearchPage(ctx, client, endpoint)
 			}
