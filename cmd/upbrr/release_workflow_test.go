@@ -59,6 +59,7 @@ type cliWorkflowCoreFake struct {
 	recoveryInput          api.ActiveInputSnapshot
 	recoverCalls           int
 	reconcileRequests      []api.ReconcileActiveInputRequest
+	reconcileError         error
 	audioResult            *api.AudioAnalysisResult
 }
 
@@ -128,6 +129,9 @@ func (f *cliWorkflowCoreFake) RecoverLegacyActiveInput(context.Context, string, 
 
 func (f *cliWorkflowCoreFake) ReconcileActiveInput(_ context.Context, _ string, request api.ReconcileActiveInputRequest) (api.ActiveInputSnapshot, error) {
 	f.reconcileRequests = append(f.reconcileRequests, request)
+	if f.reconcileError != nil {
+		return api.ActiveInputSnapshot{}, f.reconcileError
+	}
 	f.activeInput = api.ActiveInputSnapshot{State: api.ActiveInputEmpty}
 	return f.activeInput, nil
 }
