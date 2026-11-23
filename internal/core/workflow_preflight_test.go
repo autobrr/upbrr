@@ -38,7 +38,7 @@ type workflowPreflightAuthFake struct {
 	validatedIDs    *[]string
 }
 
-// TL uses user-imported cookies for browsing, but has no tracker-owned login resolver.
+// TL API upload and cookie-only form upload can check credentials without a login.
 func TestTLPreflightChecksLocalAuthRequirements(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -46,6 +46,7 @@ func TestTLPreflightChecksLocalAuthRequirements(t *testing.T) {
 		apiUpload, passkey, storedCookie, ready bool
 		noCookieStorage, badCookieStorage       bool
 		blockedReason                           string
+		credentials                             bool
 	}{
 		{
 			name:      "API upload with passkey",
@@ -61,11 +62,12 @@ func TestTLPreflightChecksLocalAuthRequirements(t *testing.T) {
 			noCookieStorage: true,
 		},
 		{
-			name:             "API upload with unreadable optional cookies",
+			name:             "API upload with credentials and unreadable optional cookies",
 			apiUpload:        true,
 			passkey:          true,
 			badCookieStorage: true,
 			ready:            true,
+			credentials:      true,
 		},
 		{
 			name:             "form upload with unreadable required cookies",
@@ -123,6 +125,10 @@ func TestTLPreflightChecksLocalAuthRequirements(t *testing.T) {
 			}
 
 			trackerConfig := config.TrackerConfig{APIUpload: tc.apiUpload}
+			if tc.credentials {
+				trackerConfig.Username = "fixture-user"
+				trackerConfig.Password = "fixture-password"
+			}
 			if tc.passkey {
 				trackerConfig.Passkey = "synthetic"
 			}

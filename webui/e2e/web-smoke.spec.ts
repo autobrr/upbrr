@@ -499,6 +499,49 @@ test("embedded tracker settings use the catalog for entries, reset, and unsuppor
   }
 });
 
+test("embedded TorrentLeech settings expose login and session authentication", async ({ page }) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await page.goto(new URL("settings", app.url).toString());
+    await page.getByRole("button", { name: "Trackers", exact: true }).click();
+    const entryControls = page.locator(".settings-map__header .settings-map__controls");
+    await entryControls.getByRole("combobox").selectOption("TL");
+    await entryControls.getByRole("button", { name: "Add entry" }).click();
+
+    const tracker = page.locator("details.settings-card").filter({
+      has: page.getByText("TL", { exact: true }),
+    });
+    const password = tracker.getByLabel("Account password", { exact: true });
+    const setupURI = tracker.getByLabel("Authenticator setup URI", { exact: true });
+    await expect(password).toHaveAttribute("type", "password");
+    await expect(setupURI).toHaveAttribute("type", "password");
+    await tracker.getByLabel("Account username", { exact: true }).fill("fixture-user");
+    await tracker.getByLabel("Account passkey", { exact: true }).fill("fixture-passkey");
+    await password.fill("fixture-password");
+    await setupURI.fill("otpauth://totp/fixture?secret=JBSWY3DPEHPK3PXP");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.getByText("Settings saved and applied.")).toBeVisible();
+    await page.getByRole("button", { name: "Reload", exact: true }).click();
+    await expect(password).toHaveValue("[REDACTED]");
+    await expect(setupURI).toHaveValue("[REDACTED]");
+
+    await page.getByRole("button", { name: "Tracker authentication", exact: true }).click();
+    const auth = page.locator(".tracker-auth-card").filter({
+      has: page.getByRole("heading", { name: "TL", exact: true }),
+    });
+    await expect(auth.getByRole("button", { name: "Check Auth — TL" })).toBeEnabled();
+    await expect(auth.getByRole("button", { name: "Import Cookies — TL" })).toBeEnabled();
+    await expect(auth.getByText("auto relogin", { exact: true })).toBeVisible();
+    await expect(auth.getByText("TOTP", { exact: true })).toBeVisible();
+    await expect(auth.getByText("manual 2FA", { exact: true })).toBeVisible();
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 for (const rootCount of [1, 2]) {
   test(`host browser searches ${rootCount} allowed roots and selects exact nested paths`, async ({
     page,

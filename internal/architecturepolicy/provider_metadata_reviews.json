@@ -1244,8 +1244,8 @@
     "sha256": "6c40c69a16ef1a281261dd99b061e1fb5cda33989ef618c0983da4f65e711498"
   },
   "internal/trackers/impl/standalone/tl/dupe.go:*dupeSearcher.Search": {
-    "reason": "Selected canonical IMDb authority is preserved on every page without sibling cross-links or title prerequisites. Returned positive mismatches are excluded; missing identity cannot prove whole-work binding. Authenticated transport leaves manual-title and canonical IMDb precedence unchanged. Nameless matches mark the search incomplete without claiming an evaluable candidate or overriding provider selection.",
-    "sha256": "7b1c0077e7bbeaaf933b6e13a404fc38f4bbb45eaa9268542d905ad1cb78af0d"
+    "reason": "Selected canonical IMDb authority is preserved on every page without sibling cross-links or title prerequisites. Returned positive mismatches are excluded; missing identity cannot prove whole-work binding. Session refresh retries the same search page and leaves manual-title and canonical IMDb precedence unchanged. Nameless matches mark the search incomplete without claiming an evaluable candidate or overriding provider selection.",
+    "sha256": "404aae2ccd68e3f5aa6b11b02214d9a627ea6710a010d23cf7ffecf5c1c8ce27"
   },
   "internal/trackers/impl/standalone/tl/dupe.go:searchQueries": {
     "reason": "Canonical IMDb, including a manual selection, wins independently of conflicting sibling provider IDs. Title fallback retains explicit manual title/year/language clears, uses finalized category and media facts, and broadens TV searches to include ranges and packs.",
@@ -1260,8 +1260,8 @@
     "sha256": "2ca1da4e4d7c90689a175fe2b58d23026a7a4e2ff090644138cc61bcea361e3d"
   },
   "internal/trackers/impl/standalone/tl/upload.go:prepareUploadState": {
-    "reason": "Consumes the reviewed category and canonical-identity mappers. Anime API payload uses the current MAL-bound AniList mapping; movie IMDb and TVmaze fields preserve their selected canonical IDs. Screenshot protocol selection does not rewrite final reviewed descriptions.",
-    "sha256": "e7e786662876472fb6e9bf766ea128e9125dc07b1c88f0ed0e793dda3641da15"
+    "reason": "Consumes the reviewed category and canonical-identity mappers. Anime API payload uses the current MAL-bound AniList mapping; movie IMDb and TVmaze fields preserve their selected canonical IDs. Screenshot protocol selection does not rewrite final reviewed descriptions. Form authentication selects cookies for the same tracker configuration used by the upload.",
+    "sha256": "be82baac481ac082a0c349955d1904a1effd3aa2f5791f9a713c89de74297188"
   },
   "internal/trackers/impl/standalone/tl/validation.go:validationPolicy": {
     "reason": "Side-effect-free API anime validation uses the reviewed current MAL-bound AniList mapper. Cookie mode retains existing canonical provider prerequisites, while manual identity replacement, clear and stale snapshots fail API constructibility before downstream work.",

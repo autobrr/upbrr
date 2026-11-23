@@ -416,6 +416,9 @@ trackers:
     link_dir_name: ""
     api_upload: true
     passkey: ""
+    username: ""
+    password: ""
+    otp_uri: ""
     anon: false
     img_rehost: false
     full_mediainfo: false

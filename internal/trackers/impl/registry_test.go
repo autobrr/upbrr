@@ -990,9 +990,9 @@ func TestNewRegistryIncludesAuthResolvers(t *testing.T) {
 		case "TL":
 			wantMode = "form_upload"
 		}
-		wantLogin := slices.Contains([]string{"AR", "BTN", "FF", "FL", "PTP", "RTF"}, tracker)
-		wantResolver := slices.Contains([]string{"AR", "AZ", "BTN", "CZ", "FF", "FL", "HDB", "HDT", "PHD", "PTP", "RTF"}, tracker)
-		want2FA := tracker == "BTN" || tracker == "PTP"
+		wantLogin := slices.Contains([]string{"AR", "BTN", "FF", "FL", "PTP", "RTF", "TL"}, tracker)
+		wantResolver := slices.Contains([]string{"AR", "AZ", "BTN", "CZ", "FF", "FL", "HDB", "HDT", "PHD", "PTP", "RTF", "TL"}, tracker)
+		want2FA := tracker == "BTN" || tracker == "PTP" || tracker == "TL"
 		capability, ok := registry.LookupAuthCapability(tracker)
 		if !ok || capability.TrackerID != tracker || capability.SupportsLogin != wantLogin {
 			t.Errorf("%s auth capability = %#v, %t", tracker, capability, ok)
@@ -1075,6 +1075,7 @@ func TestNewRegistryResolvesHybridAuthRequirements(t *testing.T) {
 			name:     "TL form upload",
 			tracker:  "TL",
 			wantMode: "form_upload",
+			want2FA:  true,
 			wantFirst: []trackers.AuthRequirement{
 				trackers.AuthRequirementStoredCookie,
 				trackers.AuthRequirementPasskey,

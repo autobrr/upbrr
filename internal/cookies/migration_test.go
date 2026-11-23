@@ -7,12 +7,14 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	_ "modernc.org/sqlite"
 
+	servicedb "github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -39,7 +41,8 @@ func TestMigrateFromFilesToDBReturnsFailedCookies(t *testing.T) {
 
 	ctx := context.Background()
 	key := []byte("short")
-	migratedCount, failedCookies, err := MigrateFromFilesToDB(ctx, cookiesDir, store, key, api.NopLogger{})
+	result, err := MigrateFromFilesToDB(ctx, cookiesDir, store, key, api.NopLogger{})
+	migratedCount, failedCookies := result.Count, result.Failures
 	if err != nil {
 		t.Fatalf("migrate cookies: %v", err)
 	}
@@ -126,5 +129,119 @@ func TestEnsureCookieMigrationKeepsAllLegacyFilesOnMixedParseResult(t *testing.T
 	}
 	if storedCount != 1 {
 		t.Fatalf("expected valid cookie to migrate, got count=%d", storedCount)
+	}
+}
+
+func TestLegacyCookieMigrationWaitsForCookieDeletion(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	dbPath := filepath.Join(t.TempDir(), "test.sqlite")
+	repo, err := servicedb.OpenContext(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.MigrateContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	deleting, err := NewCookieStore(repo.RawDB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrationDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = migrationDB.Close() })
+	migrationDB.SetMaxOpenConns(1)
+	if _, err := migrationDB.ExecContext(ctx, `PRAGMA busy_timeout = 0`); err != nil {
+		t.Fatal(err)
+	}
+	migrating, err := NewCookieStore(migrationDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "TL.json")
+	if err := os.WriteFile(path, []byte(`{"session":"old"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	key := make([]byte, 32)
+	if err := deleting.RunInTransaction(ctx, func(tx *sql.Tx) error {
+		if err := deleting.DeleteAllTrackerCookiesTx(ctx, tx, "TL"); err != nil {
+			return err
+		}
+		result, err := MigrateFromFilesToDB(ctx, dir, migrating, key, api.NopLogger{})
+		if !servicedb.IsBusyError(err) || result.Count != 0 || len(result.Failures) != 0 {
+			return errors.New("migration began processing the export before deletion finished")
+		}
+		return os.Remove(path)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := MigrateFromFilesToDB(ctx, dir, migrating, key, api.NopLogger{})
+	if err != nil || result.Count != 0 || len(result.Failures) != 0 {
+		t.Fatalf("migration after deletion: count=%d failures=%d error=%v", result.Count, len(result.Failures), err)
+	}
+}
+
+func TestLegacyCookieMigrationPreservesManagedSessions(t *testing.T) {
+	t.Parallel()
+	for _, transactional := range []bool{false, true} {
+		name := "startup"
+		if transactional {
+			name = "config activation"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx := t.Context()
+			db := newTestCookieDB(t)
+			store, err := NewCookieStore(db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			key := make([]byte, 32)
+			if err := store.SaveCookie(ctx, "TL", trackerCookieOwnerKey, "fixture-owner", key); err != nil {
+				t.Fatal(err)
+			}
+			dir := t.TempDir()
+			path := filepath.Join(dir, "tl.json")
+			if err := os.WriteFile(path, []byte(`{"session":"expired"}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			sibling := filepath.Join(dir, "`N.json")
+			if err := os.WriteFile(sibling, []byte(`{"session":"fixture-active"}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var result MigrationResult
+			if transactional {
+				err = store.RunInTransaction(ctx, func(tx *sql.Tx) error {
+					var migrationErr error
+					result, migrationErr = MigrateFromFilesToDBTx(ctx, dir, store, tx, key, api.NopLogger{})
+					return migrationErr
+				})
+			} else {
+				result, err = MigrateFromFilesToDB(ctx, dir, store, key, api.NopLogger{})
+			}
+			if err != nil || result.Count != 1 || len(result.Failures) != 0 {
+				t.Fatalf("legacy migration count=%d failures=%d error=%v", result.Count, len(result.Failures), err)
+			}
+			if err := result.Cleanup(dir, api.NopLogger{}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(sibling); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("the successfully migrated sibling file remained eligible for import")
+			}
+			if _, err := os.Stat(path); err != nil {
+				t.Fatal("the retained managed session file was removed")
+			}
+			stored, err := store.GetAllTrackerCookies(ctx, "TL", key)
+			if err != nil || len(stored) != 1 || stored[trackerCookieOwnerKey] != "fixture-owner" {
+				t.Fatal("migration changed the invalidated managed session")
+			}
+			if _, err := store.GetCookie(ctx, "tl", "session", key); !errors.Is(err, ErrCookieNotFound) {
+				t.Fatal("migration reinstalled the retained legacy session")
+			}
+		})
 	}
 }

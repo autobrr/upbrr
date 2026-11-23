@@ -241,7 +241,7 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 			Content:   []byte(description),
 		},
 	}
-	client, err := cookieClient(ctx, req.Runtime.DBPath)
+	client, err := cookieClient(ctx, req.Runtime.DBPath, req.TrackerConfig)
 	if err != nil {
 		return uploadState{}, nil, err
 	}

@@ -267,10 +267,24 @@ func (s *Service) ImportCookies(ctx context.Context, trackerID string, fileName 
 	if err != nil {
 		return api.TrackerAuthStatus{}, err
 	}
-	if err := cookies.SaveTrackerCookieMap(ctx, s.cfg.MainSettings.DBPath, spec.id, values); err != nil {
+	if spec.policy.LockCookieSession != nil {
+		release, err := spec.policy.LockCookieSession(ctx)
+		if err != nil {
+			return api.TrackerAuthStatus{}, fmt.Errorf("tracker auth: lock %s session: %w", spec.id, err)
+		}
+		defer release()
+	}
+	save := cookies.SaveTrackerCookieMap
+	if spec.policy.CookieOwner != nil {
+		save = cookies.SaveImportedTrackerCookieMap
+	}
+	if err := save(ctx, s.cfg.MainSettings.DBPath, spec.id, values); err != nil {
 		return api.TrackerAuthStatus{}, fmt.Errorf("tracker auth: import %s cookies: %w", spec.id, err)
 	}
 	status = s.statusForSpec(ctx, spec)
+	if spec.hasPasskeyOrCookieRequirements() {
+		return status, nil
+	}
 	if status.State != StateLoginRequired || spec.policy.MissingAPIKeyMessage == "" || status.Message != spec.policy.MissingAPIKeyMessage {
 		status.State = StateHasCookies
 		status.Message = "cookies imported"
@@ -284,7 +298,11 @@ func (s *Service) ImportCookies(ctx context.Context, trackerID string, fileName 
 // success remains login-required until the API token needed for torrent
 // resolution is configured. Returned cookie counts and RFC3339 timestamps are
 // rebuilt after login or deletion side effects complete.
-func (s *Service) Validate(ctx context.Context, trackerID string) (status api.TrackerAuthStatus, err error) {
+func (s *Service) Validate(ctx context.Context, trackerID string) (api.TrackerAuthStatus, error) {
+	return s.validate(ctx, trackerID, false)
+}
+
+func (s *Service) validate(ctx context.Context, trackerID string, uploadPreflight bool) (status api.TrackerAuthStatus, err error) {
 	view := *s
 	view.logger = logging.FromContext(ctx, s.logger)
 	s = &view
@@ -303,9 +321,8 @@ func (s *Service) Validate(ctx context.Context, trackerID string) (status api.Tr
 	}
 	status = s.statusForSpec(ctx, spec)
 
-	// Imported-cookie or passkey requirements can be checked locally when
-	// the tracker has no session resolver. Retain any local read errors.
-	if s.localPasskeyOrCookieRequirements(spec) {
+	cfg := mustTrackerConfig(s.cfg, spec.id)
+	if s.useLocalRequirements(spec, cfg, uploadPreflight) {
 		s.logLocalValidation(spec, status)
 		return status, nil
 	}
@@ -316,7 +333,7 @@ func (s *Service) Validate(ctx context.Context, trackerID string) (status api.Tr
 		defer cancel()
 		session, ensureErr := s.EnsureSession(validationCtx, EnsureRequest{
 			TrackerID: spec.id,
-			Config:    mustTrackerConfig(s.cfg, spec.id),
+			Config:    cfg,
 			DBPath:    s.cfg.MainSettings.DBPath,
 			AutoLogin: true,
 		})
@@ -329,7 +346,10 @@ func (s *Service) Validate(ctx context.Context, trackerID string) (status api.Tr
 			return status, nil
 		}
 		status = s.statusForSpec(ctx, spec)
-		if spec.policy.MissingAPIKeyMessage != "" && s.effectiveAPIKey(spec, mustTrackerConfig(s.cfg, spec.id)) == "" {
+		if spec.hasPasskeyOrCookieRequirements() {
+			return status, nil
+		}
+		if spec.policy.MissingAPIKeyMessage != "" && s.effectiveAPIKey(spec, cfg) == "" {
 			status.State = StateLoginRequired
 			status.Message = spec.policy.MissingAPIKeyMessage
 			return status, nil
@@ -342,7 +362,7 @@ func (s *Service) Validate(ctx context.Context, trackerID string) (status api.Tr
 	return status, nil
 }
 
-// ValidateMany validates every tracker concurrently and returns statuses in
+// ValidateMany checks upload authentication concurrently and returns statuses in
 // input order. It waits for the full batch with bounded concurrency; if any
 // validation fails, it returns the first input-ordered error and no statuses.
 func (s *Service) ValidateMany(ctx context.Context, trackerIDs []string) ([]api.TrackerAuthStatus, error) {
@@ -353,7 +373,7 @@ func (s *Service) ValidateMany(ctx context.Context, trackerIDs []string) ([]api.
 	group.SetLimit(maxConcurrentValidations)
 	for i, trackerID := range trackerIDs {
 		group.Go(func() error {
-			statuses[i], errs[i] = s.Validate(ctx, trackerID)
+			statuses[i], errs[i] = s.validate(ctx, trackerID, true)
 			return nil
 		})
 	}
@@ -436,13 +456,16 @@ func (s *Service) Login(ctx context.Context, trackerID string, req api.TrackerAu
 			Login:     req,
 		}, ensureExplicitLogin)
 		if ensureErr != nil {
+			if spec.hasPasskeyOrCookieRequirements() {
+				status = s.statusForSpec(ctx, spec)
+			}
 			applyEnsureErrorToStatus(&status, ensureErr)
 			if session.ChallengeID != "" {
 				status.ChallengeID = session.ChallengeID
 			}
 			return status, nil
 		}
-		if spec.policy.MissingAPIKeyMessage != "" && s.effectiveAPIKey(spec, trackerCfg) == "" {
+		if spec.hasPasskeyOrCookieRequirements() || (spec.policy.MissingAPIKeyMessage != "" && s.effectiveAPIKey(spec, trackerCfg) == "") {
 			return s.statusForSpec(ctx, spec), nil
 		}
 		status.State = StateConfigured
@@ -521,6 +544,9 @@ func (s *Service) Submit2FA(ctx context.Context, challengeID string, code string
 		return api.TrackerAuthStatus{}, specErr
 	}
 	missingAPIKey := spec.policy.MissingAPIKeyMessage != "" && s.effectiveAPIKey(spec, mustTrackerConfig(s.cfg, spec.id)) == ""
+	if spec.hasPasskeyOrCookieRequirements() {
+		return status, nil
+	}
 	if (strings.TrimSpace(session.State) == "" || session.State == SessionStateReady) && !missingAPIKey {
 		status.State = StateConfigured
 	}
@@ -566,6 +592,13 @@ func (s *Service) Delete(ctx context.Context, trackerID string) (status api.Trac
 	if err != nil {
 		return api.TrackerAuthStatus{}, err
 	}
+	if spec.policy.LockCookieSession != nil {
+		release, err := spec.policy.LockCookieSession(ctx)
+		if err != nil {
+			return api.TrackerAuthStatus{}, fmt.Errorf("tracker auth: lock %s session: %w", spec.id, err)
+		}
+		defer release()
+	}
 	stateManager, hasStateManager := s.registry.LookupAuthStateManager(spec.id)
 	var authSnapshot trackerscatalog.AuthStateSnapshot
 	if hasStateManager {
@@ -585,7 +618,8 @@ func (s *Service) Delete(ctx context.Context, trackerID string) (status api.Trac
 		}
 		return api.TrackerAuthStatus{}, deleteErr
 	}
-	if err := cookies.DeleteTrackerCookies(ctx, s.cfg.MainSettings.DBPath, spec.id); err != nil {
+	owner := spec.cookieOwner(mustTrackerConfig(s.cfg, spec.id))
+	if err := cookies.DeleteTrackerCookies(ctx, s.cfg.MainSettings.DBPath, spec.id, owner); err != nil {
 		restoreErr := restoreAuthStateSnapshot(ctx, authSnapshot)
 		deleteErr := fmt.Errorf("tracker auth: delete %s cookies: %w", spec.id, err)
 		if restoreErr != nil {
@@ -630,15 +664,15 @@ func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.Track
 	hasPasskey := strings.TrimSpace(cfg.Passkey) != ""
 	hasCredentials := spec.login && hasCfg && hasUsableLoginConfig(spec, cfg)
 	var satisfiesWithoutCookies bool
-	if s.localPasskeyOrCookieRequirements(spec) {
+	if spec.hasPasskeyOrCookieRequirements() {
 		satisfiesWithoutCookies, _ = requirementsSatisfied(spec.requirements, cfg, hasAPIKey, 0)
 	}
 	if spec.cookies {
-		values, err := cookies.LoadTrackerCookieMap(ctx, s.cfg.MainSettings.DBPath, spec.id)
+		values, err := cookies.LoadTrackerCookieMap(ctx, s.cfg.MainSettings.DBPath, spec.id, spec.cookieOwner(cfg))
 		if err == nil && len(values) > 0 {
 			status.CookieCount = len(values)
 			status.State = StateHasCookies
-		} else if err != nil && !satisfiesWithoutCookies && !strings.Contains(strings.ToLower(err.Error()), "no cookies found") {
+		} else if err != nil && !satisfiesWithoutCookies && !errors.Is(err, cookies.ErrTrackerCookiesNotFound) {
 			status.LastError = redact(err.Error())
 		}
 	}
@@ -670,9 +704,7 @@ func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.Track
 			status.State = StateLoginRequired
 		}
 	}
-	if spec.authKind == "passkey_or_cookies" &&
-		len(spec.requirements.Alternatives) > 0 &&
-		status.State != StateEncryptedStorageUnavailable {
+	if spec.hasPasskeyOrCookieRequirements() && status.State != StateEncryptedStorageUnavailable {
 		satisfied, storedCookieOnly := requirementsSatisfied(spec.requirements, cfg, hasAPIKey, status.CookieCount)
 		if satisfied {
 			if storedCookieOnly {
@@ -692,6 +724,9 @@ func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.Track
 		status.State = StateEncryptedStorageUnavailable
 	}
 	status.Message = validationMessage(spec, status)
+	if status.State == StateLoginRequired && spec.hasPasskeyOrCookieRequirements() && spec.passkey && !hasPasskey {
+		status.Message = "configure the tracker passkey under Trackers for uploads"
+	}
 	if status.State != StateEncryptedStorageUnavailable && spec.policy.APIKeyRequiresUploadSession && hasAPIKey && status.CookieCount == 0 && !hasCredentials {
 		status.Message = spec.policy.UploadSessionMissingMessage
 	}
@@ -701,14 +736,33 @@ func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.Track
 	return status
 }
 
-// Local-only hybrid auth preserves the exact effective mode requirements
-// without skipping validation for trackers with a real session resolver.
-func (s *Service) localPasskeyOrCookieRequirements(spec trackerSpec) bool {
-	if spec.authKind != "passkey_or_cookies" || len(spec.requirements.Alternatives) == 0 {
+func (spec trackerSpec) cookieOwner(cfg config.TrackerConfig) string {
+	if spec.policy.CookieOwner == nil {
+		return ""
+	}
+	return spec.policy.CookieOwner(cfg)
+}
+
+func (spec trackerSpec) hasPasskeyOrCookieRequirements() bool {
+	return spec.authKind == "passkey_or_cookies" && len(spec.requirements.Alternatives) > 0
+}
+
+func (s *Service) useLocalRequirements(spec trackerSpec, cfg config.TrackerConfig, uploadPreflight bool) bool {
+	if !spec.hasPasskeyOrCookieRequirements() {
 		return false
 	}
-	_, remote := s.registry.LookupAuthSessionResolver(spec.id)
-	return !remote
+	if _, remote := s.registry.LookupAuthSessionResolver(spec.id); !remote {
+		return true
+	}
+	if !uploadPreflight {
+		return false
+	}
+	// An upload that uses only a passkey has no browser-session prerequisite.
+	// With no configured login, keep the existing local check of imported cookies.
+	return !hasUsableLoginConfig(spec, cfg) || strings.TrimSpace(cfg.Passkey) == "" ||
+		slices.ContainsFunc(spec.requirements.Alternatives, func(requirements trackerscatalog.AuthRequirementAlternative) bool {
+			return len(requirements.AllOf) == 1 && requirements.AllOf[0] == trackerscatalog.AuthRequirementPasskey
+		})
 }
 
 // currentTime returns the service clock, falling back to the wall clock for

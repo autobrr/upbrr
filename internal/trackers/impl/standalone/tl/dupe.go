@@ -18,11 +18,14 @@ import (
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/providerid"
+	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 const maxSearchPages = 100
+
+var errTLSessionRejected = errors.New("TL search requires a current session")
 
 type dupeSearcher struct {
 	cfg      config.Config
@@ -51,19 +54,32 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	if err := ctx.Err(); err != nil {
 		return dupe.Failed(dupe.FailureRequest, "TL search canceled", err)
 	}
-	if !tlConfigured(s.cfg) {
+	cfg, _ := config.TrackerConfigByName(s.cfg.Trackers.Trackers, "TL")
+	if announceKey(cfg) == "" {
 		return dupe.NotRun(dupe.NotRunMissingCredentials, "missing passkey for tracker", nil)
 	}
 	queries := searchQueries(meta)
 	if len(queries) == 0 {
 		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing title for TL dupe search", nil)
 	}
-	client, err := cookieClientWithTransport(ctx, s.cfg.MainSettings.DBPath, s.http.Timeout, s.http.Transport)
+	dbPath := s.cfg.MainSettings.DBPath
+	client, err := cookieClientWithTransport(ctx, dbPath, cfg, s.http.Timeout, s.http.Transport)
+	mayLogin := canLogIn(cfg)
+	refresh := func() (*http.Client, error) {
+		mayLogin = false
+		if err := ensureCookieSession(ctx, cfg, dbPath, api.TrackerAuthLoginRequest{}, s.http.Transport); err != nil {
+			return nil, err
+		}
+		return cookieClientWithTransport(ctx, dbPath, cfg, s.http.Timeout, s.http.Transport)
+	}
 	if errors.Is(err, cookies.ErrTrackerCookiesNotFound) {
-		return dupe.NotRun(dupe.NotRunMissingCredentials, "import TorrentLeech cookies before searching for duplicates", nil)
+		if !mayLogin {
+			return dupe.NotRun(dupe.NotRunMissingCredentials, "import TorrentLeech cookies or configure login before searching for duplicates", nil)
+		}
+		client, err = refresh()
 	}
 	if err != nil {
-		return dupe.Failed(dupe.FailureAuthentication, "TorrentLeech search could not load stored cookies", err)
+		return tlSearchAuthFailure(err)
 	}
 	logger := logging.FromContext(ctx, s.logger)
 	providerBound := meta.Identity.IMDBID > 0
@@ -85,6 +101,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	seen := make(map[string]bool)
 	usable := false
 	failure := dupe.Failed(dupe.FailureResponseParse, "TL search returned no usable response", nil)
+searches:
 	for _, query := range queries {
 		queryIDs := make(map[string]bool)
 		total, perPage := -1, 0
@@ -98,6 +115,22 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 			dupe.TraceSearchRequest(logger, "TL", http.MethodGet, query, map[string]any{"page": page})
 			evidence.Pages++
 			payload, pageFailure := fetchSearchPage(ctx, client, endpoint)
+			if mayLogin && evidence.Pages < pageLimit && errors.Is(pageFailure.Cause(), errTLSessionRejected) {
+				refreshed, refreshErr := refresh()
+				if refreshErr != nil {
+					if err := ctx.Err(); err != nil {
+						return dupe.Failed(dupe.FailureRequest, "TL search canceled", err)
+					}
+					if !usable {
+						return tlSearchAuthFailure(refreshErr)
+					}
+					evidence.Complete = false
+					break searches
+				}
+				client = refreshed
+				evidence.Pages++
+				payload, pageFailure = fetchSearchPage(ctx, client, endpoint)
+			}
 			if err := ctx.Err(); err != nil {
 				return dupe.Failed(dupe.FailureRequest, "TL search canceled", err)
 			}
@@ -199,8 +232,11 @@ func fetchSearchPage(ctx context.Context, client *http.Client, endpoint string) 
 		return searchPage{}, dupe.Failed(dupe.FailureRequest, "TL search failed", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return searchPage{}, dupe.Failed(dupe.FailureAuthentication, "TorrentLeech did not accept the stored session", nil)
+	if resp.StatusCode == http.StatusUnauthorized || redirectedToTLLogin(req, resp) {
+		return searchPage{}, dupe.Failed(dupe.FailureAuthentication, "TorrentLeech did not accept the stored session", errTLSessionRejected)
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return searchPage{}, dupe.Failed(dupe.FailureAuthentication, "TorrentLeech denied duplicate search access", nil)
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return searchPage{}, dupe.Failed(dupe.FailureResponseStatus, "TL search failed", nil)
@@ -215,6 +251,21 @@ func fetchSearchPage(ctx context.Context, client *http.Client, endpoint string) 
 		return searchPage{}, dupe.Failed(dupe.FailureResponseParse, "TL search returned no torrent list", nil)
 	}
 	return payload, dupe.AdapterResult{}
+}
+
+func redirectedToTLLogin(req *http.Request, resp *http.Response) bool {
+	if resp.StatusCode < http.StatusMultipleChoices || resp.StatusCode >= http.StatusBadRequest {
+		return false
+	}
+	location, err := req.URL.Parse(resp.Header.Get("Location"))
+	return err == nil && sameAuthOrigin(location, req.URL) && location.Path == loginPath
+}
+
+func tlSearchAuthFailure(err error) dupe.AdapterResult {
+	if _, needs2FA := errors.AsType[*trackerauth.Needs2FAError](err); needs2FA {
+		return dupe.Failed(dupe.FailureAuthentication, "complete TorrentLeech 2FA in Tracker authentication before searching for duplicates", nil)
+	}
+	return dupe.Failed(dupe.FailureAuthentication, "TorrentLeech search could not establish a session", err)
 }
 
 func searchQueries(meta api.DuplicateSubject) []string {
@@ -266,11 +317,6 @@ func searchQueries(meta api.DuplicateSubject) []string {
 		}
 	}
 	return paths
-}
-
-func tlConfigured(cfg config.Config) bool {
-	entry, _ := config.TrackerConfigByName(cfg.Trackers.Trackers, "TL")
-	return strings.TrimSpace(entry.Passkey) != ""
 }
 
 func tlString(value any) string {

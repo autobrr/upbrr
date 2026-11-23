@@ -33,7 +33,7 @@ Capability chips show whether the tracker supports cookie import, login, automat
 | **Submit 2FA**     | Completes an active manual 2FA challenge when the code field appears.                                            |
 | **Delete Auth**    | Deletes stored cookies and tracker-managed auth state; tracker configuration remains.                            |
 
-Automatic relogin uses saved tracker credentials only when the backend capability supports it. Upload preflight and **Check Auth** can reuse or refresh a session, log in automatically, use a configured TOTP, and update stored authentication state. Confirmed-invalid sessions can be removed. Manual login or 2FA that automatic recovery cannot complete requires this page before retrying preparation. Never share cookie files, 2FA codes, challenge details, or auth errors that may contain private tracker information.
+Automatic relogin uses saved tracker credentials only when the backend capability supports it. Upload preflight and **Check Auth** can reuse or refresh a session, log in automatically, use a configured TOTP, and update stored authentication state. Confirmed-invalid sessions can be removed. Duplicate search can also refresh the website session for trackers that support credential login there. If automatic recovery needs a manual 2FA code, use Check Auth on this page before retrying the workflow. Never share cookie files, 2FA codes, challenge details, or auth errors that may contain private tracker information.
 
 ## Export and import cookies
 
@@ -76,7 +76,9 @@ Use this route when you can access upbrr's application-state directory, includin
 
 For a standard Docker installation, the active database is normally `/config/upbrr/db.sqlite`, so the destination is `/config/upbrr/cookies/<tracker-id>.txt` **inside the container**. With the example bind mount `/path/to/config:/config`, copy the file to `/path/to/config/upbrr/cookies/<tracker-id>.txt` **on the host**. An older installation using `/config/.upbrr/db.sqlite` instead needs `/path/to/config/.upbrr/cookies/<tracker-id>.txt`. Check your actual Compose volume mapping and existing database before copying; `/data` is normally the media mount, not application state. See [Docker installation](../../getting-started/installation.md#docker-compose).
 
-On startup, eligible top-level cookie files are migrated into encrypted database storage. Cleanup is batch-wide: after at least one cookie is stored and no file has a parse or storage failure, upbrr removes the top-level `.txt` and `.json` files. Their disappearance is expected, not a lost session. Any parse or storage failure keeps all source files, including files whose cookies were stored. Cleanup permission failures can also leave files behind. Inspect the status/count and sanitized migration errors rather than using file presence alone as proof of success.
+On startup, eligible top-level cookie files are migrated into encrypted database storage. If no file has a parse or storage failure, upbrr removes the files it successfully migrated. Any parse or storage failure keeps all source files. Cleanup permission failures can also leave files behind. Verify the result using the cookie count and status on the tracker card.
+
+For trackers that manage website sessions, upbrr can retain a superseded export and skip it during migration. See the tracker card for session handling. To replace a managed session or retained export through the folder, select **Delete Auth** before placing the new export there. **Import Cookies** can replace them directly.
 
 ### Accepted file formats
 
