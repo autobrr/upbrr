@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -97,33 +98,57 @@ func TestInputLogExportAcrossRotation(t *testing.T) {
 	}
 }
 
-func TestInputLogExportLimitKeepsNewestDiskRecords(t *testing.T) {
+func TestInputLogExportLimitKeepsNewestRecords(t *testing.T) {
 	t.Parallel()
-	ctx := t.Context()
-	database := filepath.Join(t.TempDir(), "upbrr.db")
-	logger, err := New(config.LoggingConfig{
-		Level:          "warn",
-		FileEnabled:    true,
-		MaxTotalSizeMB: 1,
-		MaxFiles:       2,
-	}, database)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer logger.Close()
-	source := filepath.Join(filepath.Dir(database), "Example.mkv")
-	store := &recordingAttempts{}
-	old, _, finishOld := logger.BeginInputLog(ctx, store, source, "preparation")
-	FromContext(old, logger).Tracef("old detail %s", strings.Repeat("o", 80))
-	finishOld("", "completed")
-	current, _, finishCurrent := logger.BeginInputLog(ctx, store, source, "upload")
-	FromContext(current, logger).Tracef("latest failure detail")
-	finishCurrent("", "failed")
-	store.attempts[1].Outcome = "failed"
-	data, err := readInputLogs(ctx, nil, database, []db.InputLogAttempt{store.attempts[1], store.attempts[0]}, 120)
-	if err != nil || data.Coverage != "partial" || !strings.Contains(data.Text, "latest failure detail") ||
-		strings.Contains(data.Text, "old detail") {
-		t.Fatalf("bounded disk export = %#v, %v", data, err)
+	for _, source := range []string{"disk", "memory"} {
+		t.Run("older attempt on "+source, func(t *testing.T) {
+			fromMemory := source == "memory"
+			ctx := t.Context()
+			database := filepath.Join(t.TempDir(), "upbrr.db")
+			logger, err := New(config.LoggingConfig{
+				Level:          "warn",
+				FileEnabled:    true,
+				MaxTotalSizeMB: 1,
+				MaxFiles:       1,
+			}, database)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer logger.Close()
+			source := filepath.Join(filepath.Dir(database), "Example.mkv")
+			store := &recordingAttempts{}
+			old, _, finishOld := logger.BeginInputLog(ctx, store, source, "preparation")
+			FromContext(old, logger).Tracef("old detail %s", strings.Repeat("o", 80))
+			finishOld("", "completed")
+			if fromMemory {
+				writer, ok := logger.closer.(*rotatingWriter)
+				if !ok {
+					t.Fatal("expected rotating log writer")
+				}
+				if err := writer.rotate(); err != nil {
+					t.Fatal(err)
+				}
+				// Put the earlier captured entry in a different timestamp second
+				// without depending on a sleep or the time the test starts.
+				logger.inputLogs[0].Time = time.Now().Add(-time.Hour)
+			}
+			current, _, finishCurrent := logger.BeginInputLog(ctx, store, source, "upload")
+			FromContext(current, logger).Tracef("latest failure detail")
+			finishCurrent("", "failed")
+			store.attempts[1].Outcome = "failed"
+			attempts := []db.InputLogAttempt{store.attempts[1], store.attempts[0]}
+			if fromMemory {
+				full, err := ReadInputLogs(ctx, logger, database, attempts)
+				if err != nil || !strings.Contains(full.Text, "Coverage: memory") || !strings.Contains(full.Text, "old detail") {
+					t.Fatalf("earlier attempt did not use the memory fallback: %#v, %v", full, err)
+				}
+			}
+			data, err := readInputLogs(ctx, logger, database, attempts, 120)
+			if err != nil || data.Coverage != "partial" || !strings.Contains(data.Text, "latest failure detail") ||
+				strings.Contains(data.Text, "old detail") {
+				t.Fatalf("bounded export = %#v, %v", data, err)
+			}
+		})
 	}
 }
 

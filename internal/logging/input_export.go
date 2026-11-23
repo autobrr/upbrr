@@ -19,6 +19,7 @@ import (
 )
 
 const inputExportLimit = 50 * 1024 * 1024
+const inputLogTimeFormat = "2006/01/02 15:04:05"
 
 // InputLogExport contains the retained entries and their coverage.
 type InputLogExport struct {
@@ -54,14 +55,20 @@ func readInputLogs(ctx context.Context, logger *Logger, dbPath string, attempts 
 	if err := reader.readFiles(ctx, filepath.Join(dir, "logs")); err != nil {
 		return InputLogExport{}, err
 	}
+	memory := inputLogReader{limit: limit}
 	for _, e := range logger.recentInputLogs() {
 		records := reader.records[e.attempt]
 		if records != nil && !records.sawDiskRecord {
 			records.memory = true
-			reader.add(records, fmt.Sprintf("%s %s: %s\n", e.Time.Format("2006/01/02 15:04:05"), strings.ToUpper(e.Level), e.Message), false)
+			stamp := e.Time.Format(inputLogTimeFormat)
+			memory.add(inputLogLine{
+				records: records,
+				text:    fmt.Sprintf("%s %s: %s\n", stamp, strings.ToUpper(e.Level), e.Message),
+				stamp:   stamp,
+			})
 		}
 	}
-	for _, entry := range reader.lines[reader.first:] {
+	for _, entry := range exportInputLogLines(reader.lines[reader.first:], memory.lines[memory.first:], limit) {
 		if !entry.continuation || entry.records.text.Len() != 0 {
 			entry.records.text.WriteString(entry.text)
 		}
@@ -116,24 +123,25 @@ type inputLogRecords struct {
 type inputLogLine struct {
 	records      *inputLogRecords
 	text         string
+	stamp        string
 	continuation bool
 }
 
 type inputLogReader struct {
 	records      map[string]*inputLogRecords
-	continuation *inputLogRecords
+	continuation inputLogLine
 	lines        []inputLogLine
 	first        int
 	limit, bytes int
 	incomplete   bool
 }
 
-func (r *inputLogReader) add(records *inputLogRecords, line string, continuation bool) {
-	if len(line) > r.limit {
-		records.incomplete = true
+func (r *inputLogReader) add(line inputLogLine) {
+	if len(line.text) > r.limit {
+		line.records.incomplete = true
 		return
 	}
-	for r.bytes+len(line) > r.limit {
+	for r.bytes+len(line.text) > r.limit {
 		oldest := r.lines[r.first]
 		r.lines[r.first] = inputLogLine{}
 		r.first++
@@ -144,22 +152,51 @@ func (r *inputLogReader) add(records *inputLogRecords, line string, continuation
 		r.lines = slices.Delete(r.lines, 0, r.first)
 		r.first = 0
 	}
-	r.lines = append(r.lines, inputLogLine{
-		records:      records,
-		text:         line,
-		continuation: continuation,
-	})
-	r.bytes += len(line)
+	r.lines = append(r.lines, line)
+	r.bytes += len(line.text)
+}
+
+// Each source already retains only the newest candidates. Merge from the
+// newest end so a memory fallback cannot evict a newer disk entry.
+func exportInputLogLines(disk, memory []inputLogLine, limit int) []inputLogLine {
+	if len(disk) == 0 {
+		return memory
+	}
+	if len(memory) == 0 {
+		return disk
+	}
+	var result []inputLogLine
+	for len(disk)+len(memory) > 0 {
+		var line inputLogLine
+		switch {
+		case len(memory) == 0 || (len(disk) != 0 && disk[len(disk)-1].stamp >= memory[len(memory)-1].stamp):
+			line, disk = disk[len(disk)-1], disk[:len(disk)-1]
+		default:
+			line, memory = memory[len(memory)-1], memory[:len(memory)-1]
+		}
+		if len(line.text) > limit {
+			limit = 0
+			line.records.incomplete = true
+			continue
+		}
+		limit -= len(line.text)
+		result = append(result, line)
+	}
+	slices.Reverse(result)
+	return result
 }
 
 func (r *inputLogReader) accept(line string) {
 	if rest, ok := strings.CutPrefix(line, "\t"); ok {
-		if r.continuation != nil {
-			r.add(r.continuation, rest, true)
+		if r.continuation.records != nil {
+			line := r.continuation
+			line.text = rest
+			line.continuation = true
+			r.add(line)
 		}
 		return
 	}
-	r.continuation = nil
+	r.continuation = inputLogLine{}
 	// Accept only a marker immediately after the fixed timestamp and severity.
 	if len(line) <= 20 || line[4] != '/' || line[7] != '/' || line[10] != ' ' {
 		return
@@ -197,8 +234,16 @@ func (r *inputLogReader) accept(line string) {
 		records.ended = true
 	case "record":
 		records.sawDiskRecord = true
-		r.continuation = records
-		r.add(records, line[:20]+severity+": "+body, false)
+		text := line[:20] + severity + ": " + body
+		record := inputLogLine{
+			records: records,
+			text:    text,
+			stamp:   text[:len(inputLogTimeFormat)],
+		}
+		if len(text) <= r.limit {
+			r.continuation = record
+		}
+		r.add(record)
 	default:
 		records.incomplete = true
 	}
@@ -292,7 +337,7 @@ func (r *inputLogReader) readFile(ctx context.Context, root *os.Root, f retained
 	}
 	scanner := bufio.NewScanner(io.LimitReader(file, f.info.Size()))
 	scanner.Buffer(make([]byte, 64*1024), inputExportLimit)
-	r.continuation = nil
+	r.continuation = inputLogLine{}
 	for scanner.Scan() {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("read retained logs canceled: %w", err)

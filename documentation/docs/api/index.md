@@ -134,7 +134,7 @@ Keep the token in an environment variable or secret store. Do not paste it direc
 
 ## Upload log level
 
-Set `execution.runLogLevel` on `POST /api/v1/uploads` to `error`, `warn`, `info`, `debug`, or `trace` to control that run's application logs. Omit it or send an empty value to use the server’s default TRACE verbosity for live and recent entries. Invalid levels are rejected before the workflow is accepted.
+Set `execution.runLogLevel` on `POST /api/v1/uploads` to `error`, `warn`, `info`, `debug`, or `trace` to control that run's application logs. Omit it or send an empty value to use the server’s configured verbosity for live and recent entries (INFO by default). Invalid levels are rejected before the workflow is accepted.
 
 The level follows asynchronous work and feedback-driven continuation. Stage-based workflows use `descriptions.options.RunLogLevel` in their continuation intent; upload execution and retries inherit the retained description options when no new run override is supplied. Global settings and the server console threshold are unchanged. See [Logging](../web-ui/logging.md) for application outputs and viewer filters.
 
