@@ -9,7 +9,9 @@ Keep this file cross-cutting; put area-specific instructions in the nearest `AGE
 - CLI flags, prompts and unattended behavior: [cmd/upbrr/AGENTS.md](cmd/upbrr/AGENTS.md).
 - Shared request, preparation and runtime contracts: [pkg/api/AGENTS.md](pkg/api/AGENTS.md).
 - Tracker definitions, registration, auth, naming, validation or duplicate contracts, including callers outside the subtree: [internal/trackers/AGENTS.md](internal/trackers/AGENTS.md).
-- Browser transport/runtime: [internal/webserver/AGENTS.md](internal/webserver/AGENTS.md). Frontend: [webui/AGENTS.md](webui/AGENTS.md). Browser tests: [webui/e2e/AGENTS.md](webui/e2e/AGENTS.md).
+- Duplicate search, evaluation and policies: [internal/trackers/dupe/AGENTS.md](internal/trackers/dupe/AGENTS.md).
+- MediaInfo artifact ownership: [internal/metadata/AGENTS.md](internal/metadata/AGENTS.md). Waveform and spectrogram fidelity: [internal/services/audioanalysis/AGENTS.md](internal/services/audioanalysis/AGENTS.md).
+- Browser transport and runtime activation: [internal/webserver/AGENTS.md](internal/webserver/AGENTS.md). Frontend checks: [webui/AGENTS.md](webui/AGENTS.md). Frontend source and release-session ownership: [webui/src/AGENTS.md](webui/src/AGENTS.md). Browser tests: [webui/e2e/AGENTS.md](webui/e2e/AGENTS.md).
 - Public site: [documentation/AGENTS.md](documentation/AGENTS.md). Opt-in live testing: [scripts/live-testing/AGENTS.md](scripts/live-testing/AGENTS.md).
 
 Read the relevant scoped instructions before editing that area; do not load every reference for unrelated work. Preserve ancestor rules when following a scoped file.
@@ -24,6 +26,11 @@ Read the relevant scoped instructions before editing that area; do not load ever
 - Use synthetic media titles, release names and content identifiers in shareable examples and fixtures. Exclude private URLs and identifiable user data. Public service names, provider codes, format labels and production mappings are allowed. Prefer `GRP` for incidental groups; retain actual groups when behavior depends on them.
 - Never commit generated/local output: `dist/`, `webui/dist/`, `documentation/build/`, populated `internal/webserver/assets`, Playwright reports/results or repo-local scratch files.
 - Follow explicit maintainer PR-body instructions when provided; otherwise use `.github/pull_request_template.md`. Formatting exceptions do not waive validation or truthful disclosures.
+
+## Torrent structure and content names
+
+- Preserve the structure selected by the shared torrent workflow. Never add or drop content, change the torrent root, flatten or rearrange paths, or switch between single-file and folder layouts to satisfy a tracker. Existing shared input and layout options define what belongs in the payload. A validated reuse conversion may produce a separate torrent matching that exact layout. Announce edits and supported piece-size variants must preserve it.
+- Never rename or move source files or folders, rewrite their metainfo paths, stage copies or links under substitute names, or rewrite MediaInfo filename evidence to satisfy a tracker. Tracker-specific upload and search titles may still change independently. If the selected source fails a tracker requirement for content names or layout, block that tracker lane and identify the unmet requirement. See [content filename policy](ADDING_TRACKERS.md#content-filename-policy).
 
 ## Test value
 
