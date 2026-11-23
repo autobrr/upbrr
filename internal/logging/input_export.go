@@ -110,7 +110,8 @@ func readInputLogs(ctx context.Context, logger *Logger, dbPath string, attempts 
 	}
 	if aggregate == "partial" && len(attempts) > 1 {
 		text.WriteString("\nSome input log entries were not retained or could not be exported.\n")
-		if reader.legacy && reader.bytes > 0 && memory.bytes > 0 && reader.bytes+memory.bytes > limit {
+		mixed := (reader.bytes > 0 || reader.trimmed) && (memory.bytes > 0 || memory.trimmed)
+		if reader.legacy && mixed && (reader.trimmed || memory.trimmed || reader.bytes+memory.bytes > limit) {
 			text.WriteString("Older disk entries only record whole seconds; the order within a second may be uncertain.\n")
 		}
 	}
@@ -138,14 +139,17 @@ type inputLogReader struct {
 	limit, bytes int
 	incomplete   bool
 	legacy       bool
+	trimmed      bool
 }
 
 func (r *inputLogReader) add(line inputLogLine) {
 	if len(line.text) > r.limit {
+		r.trimmed = true
 		line.records.incomplete = true
 		return
 	}
 	for r.bytes+len(line.text) > r.limit {
+		r.trimmed = true
 		oldest := r.lines[r.first]
 		r.lines[r.first] = inputLogLine{}
 		r.first++

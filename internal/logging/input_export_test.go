@@ -159,6 +159,7 @@ func TestInputLogExportOrdersMemoryAfterOlderDiskInSameSecond(t *testing.T) {
 		name                  string
 		diskOffset            time.Duration
 		legacy, prefersMemory bool
+		trimDisk              bool
 	}{
 		{
 			name:          "newer memory",
@@ -170,6 +171,12 @@ func TestInputLogExportOrdersMemoryAfterOlderDiskInSameSecond(t *testing.T) {
 			name:          "legacy disk",
 			legacy:        true,
 			prefersMemory: true,
+		},
+		{
+			name:          "legacy disk trimmed before merge",
+			legacy:        true,
+			prefersMemory: true,
+			trimDisk:      true,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -192,12 +199,20 @@ func TestInputLogExportOrdersMemoryAfterOlderDiskInSameSecond(t *testing.T) {
 			}
 			line := fmt.Sprintf("%s TRACE: [input-log disk 1 record%s] disk detail %s\n",
 				second.Format(inputLogTimeFormat), at, strings.Repeat("d", 60))
+			limit, payload := 120, strings.Repeat("m", 50)
+			if test.trimDisk {
+				// Only one disk line fits in its own queue, but that line
+				// and the memory line together fit the shared limit.
+				line += fmt.Sprintf("%s TRACE: [input-log disk 2 record] recent disk record %s\n",
+					second.Format(inputLogTimeFormat), strings.Repeat("d", 60))
+				limit, payload = 160, ""
+			}
 			if err := os.WriteFile(logPath, []byte(line), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			store := &recordingAttempts{}
 			current, _, finish := logger.BeginInputLog(ctx, store, source, "upload")
-			FromContext(current, logger).Tracef("memory-only failure %s", strings.Repeat("m", 50))
+			FromContext(current, logger).Tracef("memory-only failure %s", payload)
 			finish("", "failed")
 			logger.inputLogs[0].Time = second.Add(900 * time.Millisecond)
 			attempts := []db.InputLogAttempt{store.attempts[0], {
@@ -206,11 +221,14 @@ func TestInputLogExportOrdersMemoryAfterOlderDiskInSameSecond(t *testing.T) {
 				Kind:       "preparation",
 				StartedAt:  second,
 			}}
-			result, err := readInputLogs(ctx, logger, database, attempts, 120)
+			result, err := readInputLogs(ctx, logger, database, attempts, limit)
 			if err != nil || result.Coverage != "partial" ||
 				strings.Contains(result.Text, "memory-only failure") != test.prefersMemory ||
 				strings.Contains(result.Text, "disk detail") == test.prefersMemory {
 				t.Fatalf("bounded same-second export = %#v, %v", result, err)
+			}
+			if strings.Contains(result.Text, "recent disk record") != test.trimDisk {
+				t.Fatalf("unexpected retained disk record: %s", result.Text)
 			}
 			if strings.Contains(result.Text, "order within a second may be uncertain") != test.legacy {
 				t.Fatalf("expected ordering warning only for legacy disk records: %s", result.Text)
