@@ -86,9 +86,9 @@ func (s *Service) prepareUploadContent(
 	case UploadContentModeNone:
 		return preparedUploadContent{Mode: mode, State: preparedUploadContentNotRequired}
 	case UploadContentModeScreenshots:
-		assets, err = resolveScreenshotAssets(ctx, tracker, meta, s.repo, logging.FromContext(ctx, s.logger), preloaded, s.registry)
+		assets, err = resolveScreenshotAssets(ctx, tracker, meta, s.cfg, s.repo, logging.FromContext(ctx, s.logger), preloaded, s.registry)
 	case UploadContentModeDescription, UploadContentModeOptionalDescription:
-		assets, err = resolveDescriptionAssets(ctx, tracker, meta, s.repo, logging.FromContext(ctx, s.logger), preloaded, s.registry)
+		assets, err = resolveDescriptionAssets(ctx, tracker, meta, s.cfg, s.repo, logging.FromContext(ctx, s.logger), preloaded, s.registry)
 	default:
 		err = errors.New("unsupported tracker upload content mode")
 	}
@@ -141,12 +141,13 @@ func resolveScreenshotAssets(
 	ctx context.Context,
 	tracker string,
 	meta api.UploadSubject,
+	cfg config.Config,
 	repo UploadPersistence,
 	logger api.Logger,
 	preloaded *preloadedDescriptionAssetData,
 	registry *Registry,
 ) (DescriptionAssets, error) {
-	slots, screenshots, err := resolveDescriptionScreenshots(ctx, tracker, meta, repo, logger, preloaded, registry)
+	slots, screenshots, err := resolveDescriptionScreenshots(ctx, tracker, meta, cfg, repo, logger, preloaded, registry)
 	if err != nil {
 		return DescriptionAssets{}, err
 	}

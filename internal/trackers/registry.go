@@ -289,6 +289,10 @@ func (r *Registry) LookupImageHostPolicy(tracker string) (ImageHostPolicy, bool)
 	policy := *descriptor.ImageHost
 	policy.AllowedHosts = append([]string(nil), policy.AllowedHosts...)
 	policy.OwnedHosts = append([]string(nil), policy.OwnedHosts...)
+	if policy.URLImport != nil {
+		capability := *policy.URLImport
+		policy.URLImport = &capability
+	}
 	return policy, true
 }
 

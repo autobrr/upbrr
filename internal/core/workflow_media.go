@@ -1425,6 +1425,18 @@ func (b workflowMediaBuilder) RestoreCompatible(
 			})
 			snapshot.HostAttempts = append(snapshot.HostAttempts, attempts...)
 			snapshot.ImageRequirementsPrepared = true
+		} else {
+			// Incomplete coverage can reflect a projection change, not invalidated account authority.
+			priorCount := len(snapshot.HostAttempts)
+			snapshot.HostAttempts = slices.DeleteFunc(snapshot.HostAttempts, func(attempt api.HostedImageAttempt) bool {
+				return attempt.Status == api.StageStatusCompleted && slices.ContainsFunc(attempt.Results, func(result api.MediaArtifact) bool {
+					link, ok := retained.HostedImages[result.ID]
+					return ok && !trackers.NativeImageLinkCurrent(b.config, b.mediaRegistry(), link)
+				})
+			})
+			if len(snapshot.HostAttempts) != priorCount && !snapshot.ImageHostUploadSkipped {
+				snapshot.ImageRequirementsPrepared = false
+			}
 		}
 		return snapshot, retained, nil
 	}
@@ -1492,6 +1504,8 @@ func (b workflowMediaBuilder) restoreCachedMedia(
 	for _, disc := range subject.Discs {
 		discNames[disc.ID] = disc.Name
 	}
+	var importedOrigins map[string]api.ScreenshotLinkedImage
+	originsLoaded := false
 	for _, asset := range assets {
 		if err := ctx.Err(); err != nil {
 			return api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, fmt.Errorf("workflow media restore canceled: %w", err)
@@ -1527,6 +1541,19 @@ func (b workflowMediaBuilder) restoreCachedMedia(
 				image.Format = reusableMediaImageFormat(image.Path)
 			}
 		} else if localAvailable {
+			if asset.Imported && asset.Kind == api.MediaArtifactScreenshot && image.RawURL == "" {
+				if !originsLoaded {
+					importedOrigins = b.reusableImportedImageOrigins(ctx, subject)
+					originsLoaded = true
+					if err := ctx.Err(); err != nil {
+						return api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, fmt.Errorf("workflow media restore canceled: %w", err)
+					}
+				}
+				if origin, ok := importedOrigins[contentSHA256]; ok {
+					image.Host = origin.Host
+					image.ImgURL, image.RawURL, image.WebURL = origin.URL, origin.URL, origin.URL
+				}
+			}
 			materialized, materializeErr := b.materializeReusableMediaImage(ctx, binding, image, captureFingerprint, asset.ContentSHA256)
 			if materializeErr != nil && !errors.Is(materializeErr, errReusableMediaUnavailable) {
 				return api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, fmt.Errorf("workflow media materialize reusable artifact: %w", materializeErr)
@@ -1574,7 +1601,7 @@ func (b workflowMediaBuilder) restoreCachedMedia(
 			if sourceOnlyHostedImageLink(link) {
 				continue
 			}
-			accountScope, scopeErr := workflowMediaHostAccountScope(b.config, link.Host)
+			accountScope, scopeErr := trackers.ImageHostAccountScope(b.config, b.mediaRegistry(), link.Host, link.UsageScope)
 			if scopeErr != nil || accountScope != link.AccountScope || hostedImageURL(link) == "" {
 				continue
 			}
@@ -1714,6 +1741,20 @@ func (b workflowMediaBuilder) restoredHostedImageAttemptsForSubject(
 				eligibleSources[sourceID] = struct{}{}
 			}
 		}
+		if configuredHost == "" {
+			if mixed, covered := b.restoredNativeImageAttempts(
+				snapshot,
+				retained,
+				projection,
+				subject,
+				selectedSources,
+				eligibleSources,
+				selectedArtifactIDs,
+			); covered {
+				attempts = append(attempts, mixed...)
+				continue
+			}
+		}
 		excludedHosts := slices.Clone(snapshot.FailedHosts)
 		for {
 			targets, err := b.media.resolveImageUploadTargets(ctx, []string{tracker}, subject, "", excludedHosts)
@@ -1777,9 +1818,9 @@ func (b workflowMediaBuilder) restoredHostedImageAttempt(
 	requiredScreenshots int,
 	host string,
 	usageScope string,
-	trackers []string,
+	trackerNames []string,
 ) (api.HostedImageAttempt, bool) {
-	accountScope, err := workflowMediaHostAccountScope(b.config, host)
+	accountScope, err := trackers.ImageHostAccountScope(b.config, b.mediaRegistry(), host, usageScope)
 	if err != nil {
 		return api.HostedImageAttempt{}, false
 	}
@@ -1831,8 +1872,8 @@ func (b workflowMediaBuilder) restoredHostedImageAttempt(
 			return api.HostedImageAttempt{}, false
 		}
 	}
-	trackerIDs := make([]api.TrackerID, 0, len(trackers))
-	for _, tracker := range trackers {
+	trackerIDs := make([]api.TrackerID, 0, len(trackerNames))
+	for _, tracker := range trackerNames {
 		trackerIDs = append(trackerIDs, api.TrackerID(tracker))
 	}
 	attemptFingerprint, err := api.CanonicalWorkflowFingerprint(struct {
@@ -2086,7 +2127,7 @@ func (b workflowMediaBuilder) retainedHostedImageCandidates(
 		} else if artifact.Purpose == api.ScreenshotPurposeComparison || link.Purpose == api.ScreenshotPurposeComparison {
 			continue
 		}
-		accountScope, err := workflowMediaHostAccountScope(b.config, link.Host)
+		accountScope, err := trackers.ImageHostAccountScope(b.config, b.mediaRegistry(), link.Host, link.UsageScope)
 		if err != nil || link.AccountScope != accountScope {
 			continue
 		}
@@ -2148,7 +2189,7 @@ func (b workflowMediaBuilder) retainedHostedImageLinks(
 		if strings.TrimSpace(currentPath) == "" {
 			continue
 		}
-		accountScope, scopeErr := workflowMediaHostAccountScope(b.config, link.Host)
+		accountScope, scopeErr := trackers.ImageHostAccountScope(b.config, b.mediaRegistry(), link.Host, link.UsageScope)
 		hostMatched, scopeMatched := retainedHostedLinkTargetMatch(link, targets)
 		validAssociation := artifact.Selected && mappedSource == sourceID && artifact.Source == string(sourceID) &&
 			scopeErr == nil && link.AccountScope == accountScope &&
@@ -2496,6 +2537,15 @@ func (b workflowMediaBuilder) UploadImages(
 		targets,
 	)
 	retireHostedMediaArtifacts(&snapshot, retiredHostedArtifacts)
+	nativeTargets, nativeSources := b.imageURLImportTargets(snapshot, retained, selected, subject, trackerNames, host, preferredHost, excludedHosts)
+	nativeAuthority := make(map[string]string, len(nativeTargets))
+	for _, target := range nativeTargets {
+		scope, scopeErr := trackers.ImageHostAccountScope(b.config, b.media.registry, target.Host, target.UsageScope)
+		if scopeErr != nil {
+			return api.MediaArtifactSet{}, nil, nil, fmt.Errorf("workflow image import account scope: %w", scopeErr)
+		}
+		nativeAuthority[target.ImportID] = scope
+	}
 	if !retry {
 		snapshot.Failures = slices.DeleteFunc(snapshot.Failures, func(failure api.WorkflowFailure) bool {
 			return failure.Failure.Operation == api.OperationKindImageHosting &&
@@ -2503,21 +2553,25 @@ func (b workflowMediaBuilder) UploadImages(
 		})
 	}
 	effectFingerprint, err := api.CanonicalWorkflowFingerprint(struct {
-		Release       api.ReleaseRef
-		ProjectionSet api.TrackerReleaseProjectionSetRef
-		Media         api.MediaArtifactSetRef
-		ArtifactIDs   []api.PublicResourceID
-		Host          string
-		Retry         bool
-		PreferredHost *string `json:",omitempty"`
+		Release         api.ReleaseRef
+		ProjectionSet   api.TrackerReleaseProjectionSetRef
+		Media           api.MediaArtifactSetRef
+		ArtifactIDs     []api.PublicResourceID
+		Host            string
+		Retry           bool
+		PreferredHost   *string           `json:",omitempty"`
+		NativeAuthority map[string]string `json:",omitempty"`
+		NativeSources   map[string]string `json:",omitempty"`
 	}{
-		Release:       release,
-		ProjectionSet: api.TrackerReleaseProjectionSetRef{ID: projections.ID, Revision: projections.Revision},
-		Media:         api.MediaArtifactSetRef{ID: snapshot.ID, Revision: snapshot.Revision},
-		ArtifactIDs:   artifactIDs,
-		Host:          host,
-		Retry:         retry,
-		PreferredHost: preferredHost,
+		Release:         release,
+		ProjectionSet:   api.TrackerReleaseProjectionSetRef{ID: projections.ID, Revision: projections.Revision},
+		Media:           api.MediaArtifactSetRef{ID: snapshot.ID, Revision: snapshot.Revision},
+		ArtifactIDs:     artifactIDs,
+		Host:            host,
+		Retry:           retry,
+		PreferredHost:   preferredHost,
+		NativeAuthority: nativeAuthority,
+		NativeSources:   nativeSources,
 	})
 	if err != nil {
 		return api.MediaArtifactSet{}, nil, nil, fmt.Errorf("workflow image hosting effect fingerprint: %w", err)
@@ -2546,12 +2600,14 @@ func (b workflowMediaBuilder) UploadImages(
 			Recovery:  api.OperationRecoveryConfirm,
 		}, api.ErrReleaseWorkflowEffectAlreadySucceeded)
 	}
-	result, err := b.media.uploadImagesToTargetsWithFallback(
+	result, err := b.media.uploadImagesWithURLImports(
 		ctx,
 		subject,
 		imageInput.Host,
 		imageInput.ExcludedHosts,
 		targets,
+		nativeTargets,
+		nativeSources,
 		images,
 		retainedLinks,
 		blockedRetainedLinks,
@@ -2588,6 +2644,15 @@ func (b workflowMediaBuilder) UploadImages(
 	}
 	attempts := make([]api.HostedImageAttempt, 0, len(result.Attempts))
 	for _, hostResult := range result.Attempts {
+		attemptArtifactIDs := artifactIDs
+		if len(hostResult.ImagePaths) > 0 {
+			attemptArtifactIDs = nil
+			for _, pathValue := range hostResult.ImagePaths {
+				if sourceID := sourceByPath[strings.ToLower(normalizedUploadImagePath(pathValue))]; sourceID != "" {
+					attemptArtifactIDs = append(attemptArtifactIDs, sourceID)
+				}
+			}
+		}
 		trackerIDs := make([]api.TrackerID, 0, len(hostResult.Trackers))
 		for _, tracker := range hostResult.Trackers {
 			trackerID := api.TrackerID(strings.ToUpper(strings.TrimSpace(tracker)))
@@ -2606,7 +2671,7 @@ func (b workflowMediaBuilder) UploadImages(
 			AttemptedAt time.Time
 		}{
 			Media:       api.MediaArtifactSetRef{ID: snapshot.ID, Revision: snapshot.Revision},
-			ArtifactIDs: artifactIDs,
+			ArtifactIDs: attemptArtifactIDs,
 			Host:        hostResult.Host,
 			UsageScope:  hostResult.UsageScope,
 			TrackerIDs:  trackerIDs,
@@ -2625,7 +2690,7 @@ func (b workflowMediaBuilder) UploadImages(
 			TrackerIDs:  trackerIDs,
 			Fallback:    hostResult.Fallback,
 			Status:      api.StageStatusCompleted,
-			ArtifactIDs: append([]api.PublicResourceID(nil), artifactIDs...),
+			ArtifactIDs: append([]api.PublicResourceID(nil), attemptArtifactIDs...),
 			AttemptedAt: now,
 		}
 		if hostResult.Failure != nil {
@@ -2647,7 +2712,7 @@ func (b workflowMediaBuilder) UploadImages(
 			if sourceID == "" {
 				continue
 			}
-			accountScope, scopeErr := workflowMediaHostAccountScope(b.config, link.Host)
+			accountScope, scopeErr := trackers.ImageHostAccountScope(b.config, b.mediaRegistry(), link.Host, link.UsageScope)
 			if scopeErr != nil {
 				return api.MediaArtifactSet{}, nil, nil, fmt.Errorf("workflow media fingerprint hosted account scope: %w", scopeErr)
 			}
@@ -2784,7 +2849,7 @@ func (b workflowMediaBuilder) persistReusableWorkflowMedia(
 				!strings.EqualFold(normalizedUploadImagePath(link.ImagePath), normalizedUploadImagePath(image.Path)) {
 				continue
 			}
-			accountScope, scopeErr := workflowMediaHostAccountScope(b.config, link.Host)
+			accountScope, scopeErr := trackers.ImageHostAccountScope(b.config, b.mediaRegistry(), link.Host, link.UsageScope)
 			if scopeErr != nil {
 				return fmt.Errorf("workflow media fingerprint hosted account scope: %w", scopeErr)
 			}
@@ -2857,19 +2922,11 @@ func workflowMediaReuseCaptureFingerprint(
 }
 
 func workflowMediaHostAccountScope(cfg config.Config, host string) (string, error) {
-	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
-		Version string
-		Host    string
-		Config  config.ImageHostingConfig
-	}{
-		Version: "media-host-account-v1",
-		Host:    strings.ToLower(strings.TrimSpace(host)),
-		Config:  cfg.ImageHosting,
-	})
+	scope, err := trackers.ImageHostAccountScope(cfg, nil, host, "global")
 	if err != nil {
-		return "", fmt.Errorf("workflow media fingerprint host account scope: %w", err)
+		return "", fmt.Errorf("workflow media host account scope: %w", err)
 	}
-	return string(fingerprint), nil
+	return scope, nil
 }
 
 func workflowMediaContentSHA256(ctx context.Context, pathValue string) (string, error) {

@@ -43,6 +43,9 @@ type UploadImageHostFailure struct {
 // UploadImageHostAttemptResult retains one exact scheduled host/scope attempt,
 // including failures later recovered by fallback.
 type UploadImageHostAttemptResult struct {
+	// ImagePaths narrows a private native attempt to its selected artifact subset.
+	// It is consumed by workflow publication, never a transport field.
+	ImagePaths []string `json:"-"`
 	Host       string
 	UsageScope string
 	Trackers   []string

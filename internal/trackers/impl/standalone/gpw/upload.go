@@ -10,14 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"net/http"
-	"strconv"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/httpclient"
-	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
@@ -36,7 +32,7 @@ type uploadState struct {
 	torrentPath   string
 	description   string
 	releaseName   string
-	fields        map[string]string
+	fields        map[string][]string
 	groupID       string
 	questionnaire *api.TrackerQuestionnaire
 	blockedReason string
@@ -64,7 +60,7 @@ func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers
 	if state.blockedReason != "" {
 		return trackers.PreparedOperation{}, trackers.NewQuestionnairePreparationFailure("GPW", state.blockedReason, state.questionnaire)
 	}
-	body, contentType, err := commonhttp.BuildMultipartPayload(state.fields, []commonhttp.FileField{{
+	body, contentType, err := commonhttp.BuildMultipartPayloadMulti(state.fields, []commonhttp.FileField{{
 		FieldName: "file_input",
 		FileName:  "GPW.placeholder.torrent",
 		Path:      state.torrentPath,
@@ -110,29 +106,22 @@ func submitPreparedUpload(
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
-	resp, err := httpclient.New(httpclient.DefaultTimeout).Do(httpReq)
-	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: GPW upload request: %w", err)
-	}
-	defer resp.Body.Close()
-	responseBody, responsePreview, err := commonhttp.ReadUploadResponseBody(
-		resp,
-		resp.StatusCode >= 200 && resp.StatusCode < 300,
-		commonhttp.DefaultResponsePreviewBytes,
-	)
-	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: GPW read upload response: %w", err)
+	execution, readErr := commonhttp.ExecuteUpload(httpclient.New(httpclient.DefaultTimeout), httpReq, commonhttp.UploadExecutionOptions{Tracker: "GPW"})
+	diagnostic := uploadDiagnostic(execution, req.TrackerConfig.APIKey, req.TrackerConfig.Passkey, req.TrackerConfig.AnnounceURL)
+	if readErr != nil && !execution.BodyComplete {
+		detail := commonhttp.RedactErrorDetail(readErr.Error(), req.TrackerConfig.APIKey, req.TrackerConfig.Passkey, req.TrackerConfig.AnnounceURL)
+		diagnostic += "; error=" + diagnosticURL.ReplaceAllString(detail, "[redacted URL]")
+		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "GPW", "upload_failure", []byte(diagnostic), ".txt")
+		return api.UploadSummary{}, &diagnosticError{message: "trackers: GPW response unavailable; " + diagnostic, cause: readErr}
 	}
 	var decoded apiResponse
-	if err := json.Unmarshal(responseBody, &decoded); err != nil {
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return api.UploadSummary{}, commonhttp.UploadHTTPError("GPW", resp.StatusCode, responsePreview)
-		}
-		return api.UploadSummary{}, fmt.Errorf("trackers: GPW decode response: %w", err)
+	if err := json.Unmarshal(execution.ProtocolBody, &decoded); err != nil {
+		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "GPW", "upload_failure", []byte(diagnostic), ".txt")
+		return api.UploadSummary{}, &diagnosticError{message: "trackers: GPW returned a non-JSON response; " + diagnostic, cause: err}
 	}
 	id := extractTorrentID(decoded.Response)
 	status := strings.ToLower(strings.TrimSpace(fmt.Sprint(decoded.Status)))
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 && strings.TrimSpace(decoded.Error) == "" &&
+	if execution.Success && strings.TrimSpace(decoded.Error) == "" &&
 		(status == "success" || status == "ok" || (status == "200" && id != "")) {
 		tURL := ""
 		if id != "" {
@@ -148,16 +137,8 @@ func submitPreparedUpload(
 			TorrentPath: registeredPath,
 		}}}, nil
 	}
-	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "GPW", "upload_failure", responsePreview, ".json")
-	return api.UploadSummary{}, fmt.Errorf(
-		"trackers: GPW %s",
-		metautil.FirstNonEmptyTrimmed(
-			commonhttp.ExtractHTTPErrorDetail(responsePreview),
-			commonhttp.RedactErrorDetail(decoded.Error),
-			commonhttp.RedactErrorDetail(decoded.Message),
-			"upload failed",
-		),
-	)
+	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "GPW", "upload_failure", []byte(diagnostic), ".txt")
+	return api.UploadSummary{}, fmt.Errorf("trackers: GPW upload failed; %s", diagnostic)
 }
 
 func buildUploadPreview(state uploadState) api.TrackerDryRunEntry {
@@ -175,7 +156,7 @@ func buildUploadPreview(state uploadState) api.TrackerDryRunEntry {
 		DescriptionGroup: "gpw",
 		Description:      state.description,
 		Endpoint:         baseURL + "/api.php?action=upload",
-		Payload:          state.fields,
+		Payload:          previewFields(state.fields),
 		Questionnaire:    state.questionnaire,
 		Files: []api.TrackerDryRunFile{{
 			Field:   "file_input",
@@ -201,7 +182,21 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 	description := buildDescription(req, assets)
 	groupID, _ := lookupGroupID(ctx, req.TrackerConfig.APIKey, req.Meta)
 	answers := standalone.QuestionnaireAnswers(req.Meta, "GPW")
-	fields := buildFields(req, req.TrackerConfig, description, groupID, answers)
+	fields := buildForm(req, description, groupID, answers)
+	if reason := validateMetadataFields(groupID, fields); reason != "" {
+		return uploadState{}, trackers.NewPreparationFailure("GPW", "missing_metadata", reason, nil)
+	}
+	if req.Logger != nil {
+		unmapped := 0
+		for _, language := range append(append([]string(nil), req.Meta.SubtitleLanguages...), req.Meta.HardcodedSubtitleLanguages...) {
+			if subtitleKey(language) == "" {
+				unmapped++
+			}
+		}
+		if unmapped > 0 {
+			req.Logger.Warnf("trackers: subtitle languages have no unambiguous GPW key tracker=GPW state=unmapped count=%d", unmapped)
+		}
+	}
 	releaseName, err := req.ReviewedUploadName()
 	if err != nil {
 		return uploadState{}, fmt.Errorf("trackers: GPW reviewed upload name: %w", err)
@@ -247,80 +242,6 @@ func lookupGroupID(ctx context.Context, apiKey string, meta api.UploadSubject) (
 	return "", nil
 }
 
-func buildFields(
-	req trackers.PreparationInput,
-	trackerCfg config.TrackerConfig,
-	description string,
-	groupID string,
-	answers map[string]string,
-) map[string]string {
-	meta := req.Meta
-	fields := map[string]string{
-		"codec_other":               "",
-		"codec":                     resolveCodec(meta),
-		"container_other":           "",
-		"container":                 resolveContainer(meta),
-		"mediainfo[]":               trackers.ReadBDinfoOrMediaInfo(req.Runtime.DBPath, meta),
-		"movie_edition_information": onOff(remasterTitle(meta) != ""),
-		"processing_other":          "",
-		"processing":                resolveProcessing(meta),
-		"release_desc":              description,
-		"remaster_custom_title":     "",
-		"remaster_title":            remasterTitle(meta),
-		"remaster_year":             "",
-		"resolution_height":         "",
-		"resolution_width":          "",
-		"resolution":                resolveResolution(meta),
-		"source_other":              "",
-		"source":                    resolveSource(meta),
-		"submit":                    "true",
-		"subtitle_type":             resolveSubtitleType(meta),
-		"subtitles[]":               strings.Join(resolveSubtitles(meta), ","),
-	}
-	if groupID != "" {
-		fields["groupid"] = groupID
-	} else {
-		fields["data_source"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["data_source"]), "imdb")
-		fields["identifier"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["identifier"]), resolveIdentifier(meta))
-		fields["desc"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["desc"]), resolveOverview(meta))
-		fields["image"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["poster_url"]), resolvePoster(meta))
-		fields["maindesc"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["main_desc"]), resolveOverview(meta))
-		fields["name"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["title"]), meta.Release.Title)
-		fields["releasetype"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["release_type"]), resolveMovieType(meta))
-		fields["subname"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["subname"]), meta.Release.Title)
-		fields["tags"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["tags"]), resolveTags(meta))
-		if year := resolveYear(meta); year > 0 {
-			fields["year"] = strconv.Itoa(year)
-		} else {
-			fields["year"] = ""
-		}
-		fields["artists[]"], fields["artist_ids[]"] = resolveDirectorFields(meta, answers)
-		fields["importance[]"] = "1"
-		fields["artist_subs[]"] = strings.TrimSpace(answers["director_chinese"])
-		fields["characters[]"] = ""
-		fields["main_artist_number"] = "1"
-	}
-	maps.Copy(fields, resolveMediaFlags(meta))
-	if meta.Scene {
-		fields["scene"] = "on"
-	}
-	if meta.PersonalRelease {
-		if isDiscUpload(meta) {
-			fields["buy"] = "on"
-		} else {
-			fields["diy"] = "on"
-		}
-	}
-	if trackerCfg.Exclusive {
-		fields["jinzhuan"] = "on"
-	}
-	return fields
-}
-
-func isDiscUpload(meta api.UploadSubject) bool {
-	return strings.TrimSpace(meta.DiscType) != "" || strings.EqualFold(strings.TrimSpace(meta.Type), "DISC")
-}
-
 func extractTorrentID(value any) string {
 	switch typed := value.(type) {
 	case map[string]any:
@@ -335,34 +256,6 @@ func extractTorrentID(value any) string {
 				}
 			}
 		}
-	}
-	return ""
-}
-
-func resolveIdentifier(meta api.UploadSubject) string {
-	if meta.Identity.IMDBID > 0 {
-		return providerid.IMDb(meta.Identity.IMDBID).Prefixed()
-	}
-	if meta.Identity.TMDBID > 0 {
-		return strconv.Itoa(meta.Identity.TMDBID)
-	}
-	return ""
-}
-
-func resolveYear(meta api.UploadSubject) int {
-	provider := 0
-	if meta.ProviderMetadata.TMDB != nil {
-		provider = meta.ProviderMetadata.TMDB.Year
-	}
-	if provider == 0 && meta.ProviderMetadata.IMDB != nil {
-		provider = meta.ProviderMetadata.IMDB.Year
-	}
-	return trackers.PreferredYear(meta, provider)
-}
-
-func onOff(value bool) string {
-	if value {
-		return "on"
 	}
 	return ""
 }

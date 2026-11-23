@@ -286,7 +286,7 @@ func (a *ExactMediaAssets) Clone() *ExactMediaAssets {
 		HDRStats:               cloneOptionalSlice(a.HDRStats),
 		HDRUploads:             cloneOptionalSlice(a.HDRUploads),
 		HDRUploadHosts:         maps.Clone(a.HDRUploadHosts),
-		Screenshots:            cloneOptionalSlice(a.Screenshots),
+		Screenshots:            cloneExactImages(a.Screenshots),
 		DVDMenus:               cloneOptionalSlice(a.DVDMenus),
 		ScreenshotUploads:      cloneOptionalSlice(a.ScreenshotUploads),
 		DVDMenuUploads:         cloneOptionalSlice(a.DVDMenuUploads),
@@ -309,9 +309,32 @@ func (a *ExactMediaAssets) Clone() *ExactMediaAssets {
 		cloned.AudioAnalysis = &ref
 	}
 	for index := range cloned.AudioTracks {
-		cloned.AudioTracks[index].Images = cloneOptionalSlice(a.AudioTracks[index].Images)
+		cloned.AudioTracks[index].Images = cloneExactImages(a.AudioTracks[index].Images)
+	}
+	for index := range cloned.DVDMenus {
+		cloned.DVDMenus[index].ScreenshotImage = cloneExactImage(a.DVDMenus[index].ScreenshotImage)
+	}
+	for index := range cloned.HDRPlots {
+		cloned.HDRPlots[index].Image = cloneExactImage(a.HDRPlots[index].Image)
 	}
 	return cloned
+}
+
+func cloneExactImages(images []ScreenshotImage) []ScreenshotImage {
+	cloned := cloneOptionalSlice(images)
+	for index := range cloned {
+		cloned[index] = cloneExactImage(cloned[index])
+	}
+	return cloned
+}
+
+func cloneExactImage(image ScreenshotImage) ScreenshotImage {
+	if processing := image.Processing; processing != nil {
+		cloned := *processing
+		cloned.Steps = cloneOptionalSlice(processing.Steps)
+		image.Processing = &cloned
+	}
+	return image
 }
 
 // Validate enforces media channel boundaries and retained image/upload identity.
@@ -1977,7 +2000,6 @@ func NewDescriptionSubject(subject UploadSubject) DescriptionSubject {
 		TrackerSite:                 subject.TrackerSiteOverrides,
 		ImageHost:                   subject.ImageHostOverrides,
 		TrackerData:                 append([]TrackerMetadata(nil), subject.TrackerData...),
-		ExactMedia:                  subject.ExactMedia.Clone(),
 	}
 	if subject.DescriptionGroupsFinal {
 		for index := range projected.DescriptionGroups {
@@ -1988,6 +2010,8 @@ func NewDescriptionSubject(subject UploadSubject) DescriptionSubject {
 	if err != nil {
 		panic(fmt.Sprintf("clone description subject: %v", err))
 	}
+	// Exact media carries private account authority omitted by JSON cloning.
+	cloned.ExactMedia = subject.ExactMedia.Clone()
 	cloned.SuppressImportedScreenshotReferences = cloneTrackerValidationValue(subject.SuppressImportedScreenshotReferences)
 	return cloned
 }

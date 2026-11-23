@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -734,6 +735,87 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		}
 	})
 
+	t.Run("native image route prerequisites", func(t *testing.T) {
+		for _, scenario := range []string{"native only", "insufficient", "duplicate", "missing local image", "invalid scheme", "protected source", "missing credential", "explicit host", "excluded destination", "skip upload", "menu required"} {
+			t.Run(scenario, func(t *testing.T) {
+				calls := 0
+				policyRegistry := trackerspkg.NewRegistry()
+				if err := policyRegistry.Register(workflowImageHostPolicyDefinition{name: "ALPHA", policy: &trackerspkg.ImageHostPolicy{
+					AllowedHosts: []string{"pixhost", "kshare"},
+					URLImport: &trackerspkg.ImageURLImportCapability{
+						ID:         "test-import-v1",
+						Host:       "kshare",
+						UsageScope: "tracker:ALPHA",
+						Import: func(context.Context, *http.Client, string, string) (string, error) {
+							calls++
+							return "", errors.New("preflight must not import images")
+						},
+					},
+				}}); err != nil {
+					t.Fatal(err)
+				}
+				if err := policyRegistry.Register(workflowImageHostPolicyDefinition{name: "BETA"}); err != nil {
+					t.Fatal(err)
+				}
+				cfg := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"ALPHA": {APIKey: "synthetic-key"}}}}
+				links := []api.ScreenshotLinkedImage{
+					{
+						Host: "ptpimg",
+						URL:  "https://ptpimg.me/one.png",
+						Path: "one.png",
+					},
+					{
+						Host: "ptpimg",
+						URL:  "https://ptpimg.me/two.png",
+						Path: "two.png",
+					},
+				}
+				withImages := projections
+				withImages.Projections = slices.Clone(projections.Projections)
+				withImages.Projections[0].Artifacts.ScreenshotCount = 2
+				subject := api.UploadSubject{SourcePath: `C:\releases\Example.Release.2026-GRP.mkv`}
+				switch scenario {
+				case "insufficient":
+					links = links[:1]
+				case "duplicate":
+					links[1].URL = links[0].URL
+				case "missing local image":
+					links[1].Path = ""
+				case "invalid scheme":
+					links[1].URL = "file:///two.png"
+				case "protected source":
+					links[1].URL = "https://passthepopcorn.me/static/image/two.png"
+				case "missing credential":
+					cfg.Trackers.Trackers["ALPHA"] = config.TrackerConfig{}
+				case "explicit host":
+					host := "ptpimg"
+					subject.ImageHostOverrides.PreferredHost = &host
+				case "excluded destination":
+					subject.ImageHostOverrides.FailedHosts = []string{"kshare"}
+				case "skip upload":
+					skip := true
+					subject.ImageHostOverrides.SkipUpload = &skip
+				case "menu required":
+					withImages.Projections[0].Artifacts.DVDMenuCount = 1
+				}
+				builder := workflowPreflightBuilder{
+					auth:     workflowPreflightAuthFake{},
+					config:   cfg,
+					registry: policyRegistry,
+					images:   workflowPreflightImagesFake{links: links},
+				}
+				assessment, finalized, err := builder.Build(t.Context(), subject, catalog, runtime, withImages, now)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ready := scenario == "native only"
+				if (assessment.Results[0].State == api.TrackerPreflightStateReady) != ready || finalized[0].DupeReady != ready || calls != 0 {
+					t.Fatalf("native route readiness=%s dupe=%t writes=%d", assessment.Results[0].State, finalized[0].DupeReady, calls)
+				}
+			})
+		}
+	})
+
 	t.Run("debug checks runtime policy and preserves blocked outcomes", func(t *testing.T) {
 		policyRegistry := trackerspkg.NewRegistry()
 		claimCalls := 0
@@ -792,9 +874,9 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 			t.Fatal(err)
 		}
 		builder := workflowPreflightBuilder{
-auth: workflowPreflightAuthFake{},
- registry: policyRegistry,
-			config: config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}},
+			auth:     workflowPreflightAuthFake{},
+			registry: policyRegistry,
+			config:   config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}},
 		}
 		progress := make([]api.WorkflowProgressUpdate, 0, 1)
 		ctx := api.WithWorkflowProgressReporter(context.Background(), func(update api.WorkflowProgressUpdate) {
@@ -832,15 +914,17 @@ auth: workflowPreflightAuthFake{},
 		diagnostic.Projections = slices.Clone(projections.Projections)
 		projection := &diagnostic.Projections[0]
 		if err := trackerspkg.ApplyProjectionRuleFailures(projection, []api.RuleFailure{{
-			Rule: "manual_policy",
- Reason: "Normal upload requires approval.",
- Disposition: api.RuleDispositionWaivable,
+			Rule:        "manual_policy",
+			Reason:      "Normal upload requires approval.",
+			Disposition: api.RuleDispositionWaivable,
 		}}, api.WorkflowExecutionModeDebug, "", nil); err != nil {
 			t.Fatal(err)
 		}
 		builder := workflowPreflightBuilder{auth: workflowPreflightAuthFake{}, registry: registry}
 		assessment, finalized, err := builder.Build(t.Context(), api.UploadSubject{}, catalog, runtime, diagnostic, now)
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		if assessment.Results[0].State != api.TrackerPreflightStateFailed || len(assessment.Results[0].Failures) == 0 ||
 			!finalized[0].DiagnosticReady || finalized[0].Readiness != api.ReadinessStatusBlocked || finalized[0].UploadReady {
 			t.Fatalf("diagnostic rule outcome = %#v / %#v", assessment.Results[0], finalized[0])

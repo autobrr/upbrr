@@ -26,6 +26,12 @@ func Profile() standalone.Profile {
 		BannedGroups:         bannedGroups(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: sourceFlag, RequireAnnounce: true},
 		ImageHostPolicy: &trackers.ImageHostPolicy{
+			URLImport: &trackers.ImageURLImportCapability{
+				ID:         "gpw-image-url-import-v1",
+				Host:       "kshare",
+				UsageScope: "tracker:GPW",
+				Import:     importImageURL,
+			},
 			AllowedHosts: []string{"kshare", "pixhost", "pterclub", "ilikeshots", "imgbox"},
 		},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{

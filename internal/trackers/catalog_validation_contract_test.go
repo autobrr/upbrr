@@ -4,6 +4,7 @@
 package trackers
 
 import (
+	"context"
 	"slices"
 	"testing"
 
@@ -41,5 +42,39 @@ func TestValidationContractInvalidatesRetainedProjectionCatalog(t *testing.T) {
 	}
 	if valid, err := projector.CatalogCurrent(current); err != nil || !valid {
 		t.Fatalf("current projection catalog was invalidated: valid=%t err=%v", valid, err)
+	}
+}
+
+func TestGPWPolicyVersionInvalidatesRetainedReadiness(t *testing.T) {
+	registry := NewRegistry()
+	descriptor := Descriptor{
+		Name:       "GPW",
+		Definition: stubDefinition{name: "GPW"},
+		Validation: ValidationPolicyBinding{ID: "standalone-gpw-constructibility-v1", Check: func(context.Context, api.TrackerValidationSubject, api.Logger) ([]api.RuleFailure, error) {
+			return nil, nil
+		}},
+	}
+	if err := registry.RegisterDescriptor(descriptor); err != nil {
+		t.Fatal(err)
+	}
+	old, err := NewWorkflowProjector(registry, config.Config{}, api.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained, err := old.catalogSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentRegistry := NewRegistry()
+	descriptor.Validation.ID = "standalone-gpw-constructibility-v2"
+	if err := currentRegistry.RegisterDescriptor(descriptor); err != nil {
+		t.Fatal(err)
+	}
+	current, err := NewWorkflowProjector(currentRegistry, config.Config{}, api.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if valid, err := current.CatalogCurrent(retained); err != nil || valid {
+		t.Fatal("v1 GPW readiness retained upload authority after policy change")
 	}
 }

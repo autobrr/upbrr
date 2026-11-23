@@ -6,7 +6,6 @@ package gpw
 import (
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -22,7 +21,7 @@ func buildQuestionnaire(meta api.UploadSubject, groupID string, answers map[stri
 			Key:      "poster_url",
 			Label:    "Poster URL",
 			Kind:     "text",
-			Value:    metautil.FirstNonEmptyTrimmed(answers["poster_url"], resolvePoster(meta)),
+			Value:    answerOr(answers, "poster_url", resolvePoster(meta)),
 			Required: true,
 		},
 		{
@@ -50,19 +49,26 @@ func buildQuestionnaire(meta api.UploadSubject, groupID string, answers map[stri
 			Key:      "tags",
 			Label:    "Tags",
 			Kind:     "text",
-			Value:    metautil.FirstNonEmptyTrimmed(answers["tags"], resolveTags(meta)),
+			Value:    answerOr(answers, "tags", resolveTags(meta)),
 			Required: true,
 		},
 	}
 	return &api.TrackerQuestionnaire{Tracker: "GPW", Fields: fields}
 }
 
+func answerOr(answers map[string]string, key, fallback string) string {
+	if value, supplied := answers[key]; supplied {
+		return strings.TrimSpace(value)
+	}
+	return fallback
+}
+
 // resolveDirectorFields pairs the selected name only with an unambiguous IMDb
 // director match, preserving explicit answers when supplied.
 func resolveDirectorFields(meta api.UploadSubject, answers map[string]string) (string, string) {
-	name := metautil.FirstNonEmptyTrimmed(answers["director_name"], resolveDirectorName(meta))
-	if id := strings.TrimSpace(answers["director_imdb"]); id != "" {
-		return name, id
+	name := answerOr(answers, "director_name", resolveDirectorName(meta))
+	if id, supplied := answers["director_imdb"]; supplied {
+		return name, strings.TrimSpace(id)
 	}
 	if name == "" || meta.ProviderMetadata.IMDB == nil {
 		return name, ""

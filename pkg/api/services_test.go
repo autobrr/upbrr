@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -62,6 +63,7 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 			},
 		}},
 		ExactMedia: &ExactMediaAssets{
+			ScreenshotUploads: []UploadedImageLink{{AccountScope: "synthetic-account-scope"}},
 			Screenshots: []ScreenshotImage{{
 				Path:    `C:\private\screen.png`,
 				Purpose: ScreenshotPurposeFinal,
@@ -72,7 +74,29 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 			}},
 		},
 	}
+	processing := &ScreenshotProcessing{Renderer: "original", Steps: []ScreenshotRenderStep{{Reason: "original"}}}
+	source.ExactMedia.Screenshots[0].Processing = processing
+	source.ExactMedia.DVDMenus[0].Processing = processing
+	source.ExactMedia.HDRPlots = []HDRDescriptionPlot{{Image: ScreenshotImage{Processing: processing}}}
+	source.ExactMedia.AudioTracks = []AudioDescriptionTrack{{Images: []ScreenshotImage{{Processing: processing}}}}
 	projected := NewDescriptionSubject(source)
+	if projected.ExactMedia.ScreenshotUploads[0].AccountScope != "synthetic-account-scope" {
+		t.Fatal("description projection lost private hosted-image authority")
+	}
+	for _, image := range []*ScreenshotProcessing{projected.ExactMedia.Screenshots[0].Processing, projected.ExactMedia.DVDMenus[0].Processing, projected.ExactMedia.HDRPlots[0].Image.Processing, projected.ExactMedia.AudioTracks[0].Images[0].Processing} {
+		image.Renderer = "changed"
+		image.Steps[0].Reason = "changed"
+	}
+	if processing.Renderer != "original" || processing.Steps[0].Reason != "original" {
+		t.Fatal("description projection shares renderer evidence with its source")
+	}
+	encoded, err := json.Marshal(projected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "synthetic-account-scope") {
+		t.Fatal("description JSON exposed private hosted-image authority")
+	}
 	if projected.VideoCodec != "AV1" || !projected.HasEncodeSettings || projected.TrackerQuestionnaireAnswers["OE"]["source_notes"] != "Example BluRay source" {
 		t.Fatal("description evidence was not projected")
 	}
@@ -89,6 +113,7 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 	projected.DescriptionGroups[0].ImageHost.Warnings[0].Message = "changed"
 	projected.ExactMedia.Screenshots[0].Path = "changed"
 	projected.ExactMedia.DVDMenus[0].Path = "changed"
+	projected.ExactMedia.ScreenshotUploads[0].AccountScope = "changed"
 
 	if source.Release.Codec[0] != "H.265" {
 		t.Fatal("release facts share storage with description subject")
@@ -108,7 +133,7 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 		t.Fatal("description groups share storage with description subject")
 	}
 	if source.ExactMedia.Screenshots[0].Path != `C:\private\screen.png` ||
-		source.ExactMedia.DVDMenus[0].Path != `C:\private\menu.png` {
+		source.ExactMedia.DVDMenus[0].Path != `C:\private\menu.png` || source.ExactMedia.ScreenshotUploads[0].AccountScope != "synthetic-account-scope" {
 		t.Fatal("exact media shares storage with description subject")
 	}
 }
