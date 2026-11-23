@@ -706,7 +706,7 @@ func (s *Service) preparationInput(
 			BTNAPIToken: config.ResolveBTNAPIToken(s.cfg),
 		},
 		Logger: logger,
-		Assets: appendManualLanguagesToDescriptionAssets(assets, meta.ManualLanguages),
+		Assets: s.withAdditionalDiscReports(tracker, meta, appendManualLanguagesToDescriptionAssets(assets, meta.ManualLanguages)),
 	}
 	selectedHost, err := PreferredImageUploadHostWithRegistry(s.registry, tracker, trackerCfg, meta.ImageHostOverrides)
 	if err != nil {

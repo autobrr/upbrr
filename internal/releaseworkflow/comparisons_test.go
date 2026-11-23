@@ -939,3 +939,145 @@ func TestLegacyCompositeComparisonImportsRequireFreshReimport(t *testing.T) {
 		})
 	}
 }
+
+func TestPackScreenshotReadinessRequiresEachMemberOnOneEligibleHost(t *testing.T) {
+	pack := api.TrackerReleaseProjection{TrackerID: "PTP", Artifacts: api.TrackerArtifactRequirements{
+		PackScreenshots: &api.PackScreenshotRequirement{MemberIDs: []string{"first", "second"}, CountPerMember: 2},
+	}}
+	ordinary := api.TrackerReleaseProjection{TrackerID: "BETA", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1}}
+	var snapshot api.MediaArtifactSet
+	attempt := api.HostedImageAttempt{Host: "one", TrackerIDs: []api.TrackerID{"PTP", "BETA"}}
+	for _, sample := range []struct{ id, member string }{
+		{"ordinary", ""}, {"a1", "first"}, {"a2", "first"}, {"a3", "first"}, {"b1", "second"}, {"b2", "second"},
+	} {
+		local := api.MediaArtifact{
+			ID:           api.PublicResourceID(sample.id),
+			Kind:         api.MediaArtifactScreenshot,
+			Purpose:      api.ScreenshotPurposeFinal,
+			Selected:     true,
+			PackMemberID: sample.member,
+		}
+		hosted := api.MediaArtifact{
+			ID:       api.PublicResourceID("host-" + sample.id),
+			Kind:     api.MediaArtifactHostedImage,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+			Source:   sample.id,
+		}
+		snapshot.Artifacts = append(snapshot.Artifacts, local, hosted)
+		attempt.Results = append(attempt.Results, hosted)
+	}
+	targets := []api.TrackerReleaseProjection{pack, ordinary}
+	last := attempt.Results[len(attempt.Results)-1]
+	attempt.Results = attempt.Results[:len(attempt.Results)-1]
+	snapshot.HostAttempts = []api.HostedImageAttempt{attempt, {
+		Host:       "two",
+		TrackerIDs: []api.TrackerID{"PTP"},
+		Results:    []api.MediaArtifact{last},
+	}}
+	if HostedScreenshotRequirementsMet(snapshot, targets) {
+		t.Fatal("surplus capture on one file or a screenshot on a different host filled the missing member slot")
+	}
+	snapshot.HostAttempts[0].Results = append(snapshot.HostAttempts[0].Results, last)
+	if !LocalScreenshotSourceRequirementsMet(snapshot.Artifacts, targets) || !HostedScreenshotRequirementsMet(snapshot, targets) {
+		t.Fatal("complete PTP pack and ordinary lane did not pass")
+	}
+	snapshot.Artifacts[0].Selected = false // ordinary source only
+	if HostedScreenshotRequirementsMet(snapshot, targets) || !HostedScreenshotRequirementsMet(snapshot, targets[:1]) {
+		t.Fatal("PTP pack shots filled the ordinary tracker slot or lost PTP coverage")
+	}
+	snapshot.Artifacts[len(snapshot.Artifacts)-2].Selected = false // b2 source
+	if LocalScreenshotSourceRequirementsMet(snapshot.Artifacts, targets) || HostedScreenshotRequirementsMet(snapshot, targets[:1]) {
+		t.Fatal("deselected pack source still supplied readiness")
+	}
+}
+
+func TestMultiDiscScreenshotReadinessDoesNotBorrowFramesAcrossDiscs(t *testing.T) {
+	projections := []api.TrackerReleaseProjection{{
+		TrackerID: "PTP",
+		Artifacts: api.TrackerArtifactRequirements{
+			ScreenshotCount: 3,
+			DiscScreenshots: &api.DiscScreenshotRequirement{DiscIDs: []string{"first", "second", "third"}, AdditionalCount: 2},
+		},
+	}}
+	var snapshot api.MediaArtifactSet
+	attempt := api.HostedImageAttempt{Host: "one", TrackerIDs: []api.TrackerID{"PTP"}}
+	for index, disc := range []string{"first", "first", "first", "first", "second", "second", "third", "third"} {
+		id := api.PublicResourceID(fmt.Sprintf("disc-screen-%d", index))
+		source := api.MediaArtifact{
+			ID:             id,
+			DiscID:         disc,
+			AdditionalDisc: disc != "first",
+			Kind:           api.MediaArtifactScreenshot,
+			Purpose:        api.ScreenshotPurposeFinal,
+			Selected:       true,
+		}
+		hosted := api.MediaArtifact{
+			ID:       api.PublicResourceID("hosted-" + string(id)),
+			Kind:     api.MediaArtifactHostedImage,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Source:   string(id),
+			Selected: true,
+		}
+		snapshot.Artifacts = append(snapshot.Artifacts, source, hosted)
+		attempt.Results = append(attempt.Results, hosted)
+	}
+	snapshot.HostAttempts = []api.HostedImageAttempt{attempt}
+	if !LocalScreenshotSourceRequirementsMet(snapshot.Artifacts, projections) || !HostedScreenshotRequirementsMet(snapshot, projections) {
+		t.Fatal("complete per-disc coverage was rejected")
+	}
+	scoped := attempt
+	scoped.UsageScope = "tracker:PTP"
+	scoped.Results = attempt.Results[4:]
+	snapshot.HostAttempts[0].Results = attempt.Results[:4]
+	snapshot.HostAttempts = append(snapshot.HostAttempts, scoped)
+	if !HostedScreenshotRequirementsMet(snapshot, projections) {
+		t.Fatal("same-host global and tracker-scoped attempts should provide complete disc coverage")
+	}
+	snapshot.HostAttempts[1].Host = "two"
+	if HostedScreenshotRequirementsMet(snapshot, projections) {
+		t.Fatal("different hosts must not be combined to meet disc coverage")
+	}
+	snapshot.HostAttempts[1].Host = "one"
+	snapshot.HostAttempts[1].UsageScope = "tracker:OTHER"
+	if HostedScreenshotRequirementsMet(snapshot, projections) {
+		t.Fatal("a different tracker scope must not count towards disc coverage")
+	}
+	snapshot.HostAttempts = []api.HostedImageAttempt{attempt}
+	ordinary := api.TrackerReleaseProjection{
+		TrackerID: "OTHER",
+		Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 3},
+	}
+	snapshot.HostAttempts[0].TrackerIDs = []api.TrackerID{"PTP", "OTHER"}
+	snapshot.HostAttempts[0].Results = attempt.Results[4:]
+	if HostedScreenshotRequirementsMet(snapshot, []api.TrackerReleaseProjection{ordinary}) {
+		t.Fatal("ordinary tracker counted extra-disc uploads on the same host")
+	}
+	snapshot.HostAttempts[0] = attempt
+
+	last := len(snapshot.Artifacts) - 2
+	snapshot.Artifacts[last].Selected = false
+	if LocalScreenshotSourceRequirementsMet(snapshot.Artifacts, projections) || HostedScreenshotRequirementsMet(snapshot, projections) {
+		t.Fatal("extra first-disc frame substituted for a missing later disc frame")
+	}
+	snapshot.Artifacts[last].Selected = true
+	snapshot.HostAttempts[0].Results = attempt.Results[:len(attempt.Results)-1]
+	if HostedScreenshotRequirementsMet(snapshot, projections) {
+		t.Fatal("missing hosted frame passed the disc quota")
+	}
+	// Successful links from a partially failed attempt remain usable only
+	// once the host is recovered and the retry supplies the missing coverage.
+	snapshot.HostAttempts[0].Status = api.StageStatusFailed
+	retry := attempt
+	retry.Status = api.StageStatusCompleted
+	retry.Results = attempt.Results[len(attempt.Results)-1:]
+	snapshot.HostAttempts = append(snapshot.HostAttempts, retry)
+	snapshot.FailedHosts = []string{"one"}
+	if HostedScreenshotRequirementsMet(snapshot, projections) {
+		t.Fatal("unrecovered host counted toward disc coverage")
+	}
+	snapshot.FailedHosts = nil
+	if !HostedScreenshotRequirementsMet(snapshot, projections) {
+		t.Fatal("recovered host rejected retained links after the missing frame uploaded")
+	}
+}

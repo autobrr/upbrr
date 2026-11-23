@@ -19,6 +19,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+ "github.com/autobrr/upbrr/internal/mediafacts"
 	dbsvc "github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -1291,4 +1292,67 @@ func TestMaterializeDescriptionSlotImagesPreservesExistingLocalImagePath(t *test
 	if slots[0].ImagePath != imagePath {
 		t.Fatalf("expected slot image path to be preserved, got %q", slots[0].ImagePath)
 	}
+}
+
+func TestExactMediaPrefersCompleteScopedGalleryOverConfiguredPartialHost(t *testing.T) {
+ for _, name := range []string{"pack", "discs"} {
+  t.Run(name, func(t *testing.T) {
+   root := t.TempDir()
+   registry := NewRegistry()
+   err := registry.RegisterDescriptor(Descriptor{
+    Name: "EXAMPLE",
+ Definition: stubDefinition{name: "EXAMPLE"},
+    UploadContentMode: UploadContentModeScreenshots,
+    ImageHost: &ImageHostPolicy{AllowedHosts: []string{"imgbb", "onlyimage"}},
+    WorkflowMedia: &WorkflowMediaRequirements{PackScreenshotsPerMember: 2, AdditionalDiscScreenshots: 2},
+   })
+   if err != nil { t.Fatal(err) }
+   exact := &api.ExactMediaAssets{}
+   meta := api.UploadSubject{ExactMedia: exact}
+   keys := []string{"first", "first", "first", "second", "second"}
+   if name == "pack" {
+    meta.FileList = []string{filepath.Join(root, "Example.cd1.mkv"), filepath.Join(root, "Example.cd2.mkv")}
+    members := mediafacts.PackScreenshotMembers(meta.FileList)
+    for i, key := range keys {
+     if key == "first" { keys[i] = members[0].ID } else { keys[i] = members[1].ID }
+    }
+   } else {
+    meta.DiscType = "BDMV"
+    meta.Discs = []api.DiscEvidenceResource{{ID: "first"}, {ID: "second"}}
+    meta.Options.Screens = 2
+   }
+   for i, key := range keys {
+    shot := api.ScreenshotImage{Path: filepath.Join(root, fmt.Sprintf("shot-%d.png",i)), Purpose: api.ScreenshotPurposeFinal}
+    if name == "pack" { shot.PackMemberID = key } else { shot.DiscID = key }
+    exact.Screenshots = append(exact.Screenshots, shot)
+    for _, host := range []string{"imgbb","onlyimage"} {
+     if host == "imgbb" && i == 2 || host == "onlyimage" && i == 4 { continue }
+     exact.ScreenshotUploads = append(exact.ScreenshotUploads, api.UploadedImageLink{
+      ImagePath: shot.Path,
+ Host: host,
+ UsageScope: "global",
+ RawURL: fmt.Sprintf("https://images.example.invalid/%s/%d.png",host,i),
+     })
+    }
+   }
+   cfg := config.TrackerConfig{ImageHost: "onlyimage"}
+   assertHost := func(want string) {
+    t.Helper()
+    got, err := exactMediaForTrackerHost("EXAMPLE", meta, config.Config{}, cfg, registry)
+    if err != nil { t.Fatal(err) }
+    if len(got.ScreenshotUploads) == 0 { t.Fatal("empty gallery") }
+    for _, link := range got.ScreenshotUploads {
+     if link.Host != want { t.Fatalf("selected %s instead of %s", link.Host, want) }
+    }
+   }
+   assertHost("imgbb")
+   exact.ScreenshotUploads = append(exact.ScreenshotUploads, api.UploadedImageLink{
+    ImagePath: exact.Screenshots[4].Path,
+ Host: "onlyimage",
+ UsageScope: "global",
+ RawURL: "https://images.example.invalid/onlyimage/4.png",
+   })
+   assertHost("onlyimage")
+  })
+ }
 }

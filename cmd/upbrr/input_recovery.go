@@ -4,7 +4,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -13,7 +12,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func (s *cliWorkflowSession) reconcileLegacyInputs(ctx context.Context, reader *bufio.Reader) (result error) {
+func (s *cliWorkflowSession) reconcileLegacyInputs(ctx context.Context) (result error) {
 	var claim cliInputSlotClaim
 	defer func() {
 		result = errors.Join(result, s.releaseRecoveryInput(ctx, claim))
@@ -23,12 +22,6 @@ func (s *cliWorkflowSession) reconcileLegacyInputs(ctx context.Context, reader *
 		return fmt.Errorf("upbrr: inspect input recovery: %w", err)
 	}
 	for len(active.RecoveryWorkflowIDs) > 0 || (active.State == api.ActiveInputRecovering && active.Current != nil) {
-		if s.intent.interaction == api.InteractionModeUnattended {
-			return fmt.Errorf(
-				"upbrr: an interrupted external effect requires reconciliation; rerun interactively or with --unattended_confirm after checking its outcome: %w",
-				api.ErrReleaseWorkflowEffectOutcomeUnknown,
-			)
-		}
 		var workflowID api.WorkflowID
 		if active.Current != nil {
 			workflowID = active.Current.Workflow.ID
@@ -53,14 +46,6 @@ func (s *cliWorkflowSession) reconcileLegacyInputs(ctx context.Context, reader *
 					api.ErrReleaseWorkflowEffectOutcomeUnknown,
 				)
 			}
-			bindCLIQuestion(ctx, s.streams.out, workflowID, active.Current.Workflow.Revision, action.ID, action.Prompt)
-			confirmed, err := promptYesNo(reader, s.streams.out, action.Prompt+" Confirm it did not complete? [y/N]: ", false)
-			if err != nil {
-				return fmt.Errorf("upbrr: read recovery confirmation: %w; %w", err, api.ErrReleaseWorkflowEffectOutcomeUnknown)
-			}
-			if !confirmed {
-				return fmt.Errorf("upbrr: external outcome remains unresolved; no new submission was started: %w", api.ErrReleaseWorkflowEffectOutcomeUnknown)
-			}
 			priorRevision := active.Current.Workflow.Revision
 			active, err = s.core.ReconcileActiveInput(ctx, cliWorkflowOwnerID, api.ReconcileActiveInputRequest{
 				Authority: api.WorkflowAuthority{WorkflowID: workflowID, ExpectedRevision: priorRevision},
@@ -69,11 +54,12 @@ func (s *cliWorkflowSession) reconcileLegacyInputs(ctx context.Context, reader *
 					WorkflowRevision: priorRevision,
 					SelectedValues:   []string{api.RequiredActionReconcileNotCompleted},
 				},
-				IdempotencyKey: s.nextIdempotencyKey("reconcile"),
+				IdempotencyKey: "auto-recover:" + string(action.ID),
 			})
 			if err != nil {
-				return fmt.Errorf("upbrr: reconcile interrupted input: %w", err)
+				return fmt.Errorf("upbrr: reconcile interrupted workflow %s: %w", workflowID, err)
 			}
+			s.logger.Infof("Recovery marked not completed: workflow=%s effect=%s", workflowID, action.EffectKind)
 			if active.Current != nil && active.Current.Workflow.Revision <= priorRevision {
 				return fmt.Errorf("upbrr: reconciliation did not advance workflow %s", workflowID)
 			}

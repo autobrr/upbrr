@@ -14,10 +14,236 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestPTPDescriptionPreviewKeepsPackAndDiscCaptureScopesSeparate(t *testing.T) {
+	for _, disc := range []string{"", "BDMV"} {
+		label := "non-disc pack"
+		if disc != "" {
+			label = "multi-stream disc"
+		}
+		t.Run(label, func(t *testing.T) {
+			testPTPDescriptionCaptureScope(t, disc, nil)
+		})
+	}
+	t.Run("three discs", func(t *testing.T) {
+		testPTPDescriptionCaptureScope(t, "BDMV", []string{"first", "first", "first", "second", "second", "third", "third", "third"})
+	})
+}
+
+func testPTPDescriptionCaptureScope(t *testing.T, disc string, frameDiscs []string) {
+	t.Helper()
+	root := t.TempDir()
+	files := []string{filepath.Join(root, "Movie.cd1.mkv"), filepath.Join(root, "Movie.cd2.mkv")}
+	exact := &api.ExactMediaAssets{}
+	captureFiles := []string{files[0], files[0], files[1], files[1], ""}
+	wantCount := 4
+	if disc != "" {
+		files = []string{"00001.m2ts", "00002.m2ts", "00003.m2ts", "00004.m2ts"}
+		captureFiles = make([]string, 3)
+		wantCount = 3
+	}
+	var discs []api.DiscEvidenceResource
+	var facts api.DiscFacts
+	trackerIDs := []string{"PTP"}
+	if len(frameDiscs) > 0 {
+		captureFiles = make([]string, len(frameDiscs))
+		wantCount = 7
+		trackerIDs = append(trackerIDs, "HHD", "HDB", "BJS")
+		for index, id := range []string{"first", "second", "third"} {
+			discs = append(discs, api.DiscEvidenceResource{ID: id, Type: "BDMV"})
+			facts.Items = append(facts.Items, api.DiscItemFacts{
+				ID:      id,
+				Name:    fmt.Sprintf("Disc %d", index+1),
+				Reports: []api.DiscReportFacts{{Summary: fmt.Sprintf("BDInfo report %d", index+1)}},
+			})
+		}
+		facts.Items[0].Reports = append(facts.Items[0].Reports, api.DiscReportFacts{
+			Playlist: api.PlaylistInfo{File: "00002.MPLS"},
+			Summary:  "Another playlist on disc 1",
+		})
+	}
+	for index, file := range captureFiles {
+		imagePath := filepath.Join(root, fmt.Sprintf("frame-%d.png", index))
+		url := fmt.Sprintf("https://i.ibb.co/synthetic/frame-%d.png", index)
+		image := api.ScreenshotImage{Path: imagePath, Purpose: api.ScreenshotPurposeFinal}
+		if index < len(frameDiscs) {
+			image.DiscID = frameDiscs[index]
+			image.AdditionalDisc = image.DiscID != "first"
+		}
+		if file != "" {
+			image.PackMemberID = mediafacts.TrackResourceID(file)
+		}
+		exact.Screenshots = append(exact.Screenshots, image)
+		exact.ScreenshotUploads = append(exact.ScreenshotUploads, api.UploadedImageLink{
+			ImagePath:  imagePath,
+			Host:       "imgbb",
+			UsageScope: "global",
+			RawURL:     url,
+			ImgURL:     url,
+			WebURL:     url,
+		})
+	}
+	meta := api.UploadSubject{
+		SourcePath:         root,
+		DiscType:           disc,
+		Discs:              discs,
+		Disc:               facts,
+		FileList:           files,
+		Trackers:           trackerIDs,
+		ExactMedia:         exact,
+		ImageHostOverrides: api.ImageHostOverrides{SkipUpload: new(true)},
+	}
+	cfg := config.Config{
+MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "upbrr.db")},
+		ImageHosting: config.ImageHostingConfig{Host1: "imgbb"},
+		Description:  config.DescriptionSettingsConfig{CustomDescriptionHeader: "Release notes", ScreenshotHeader: "[b]Screenshots[/b]"},
+}
+	service := trackers.NewServiceWithRegistry(cfg, api.NopLogger{}, descriptionPreviewPersistence{}, MustNewRegistry())
+	preview, err := service.BuildPreparation(t.Context(), api.NewDescriptionSubject(meta), trackerIDs)
+	if err != nil || len(preview.ContentFailures) != 0 || len(preview.Descriptions) != len(trackerIDs) {
+		t.Fatalf("pack preview = %+v, err = %v", preview, err)
+	}
+	var body string
+	ordinary := make(map[string]string)
+	for _, desc := range preview.Descriptions {
+		if slices.Contains(desc.Trackers, "PTP") {
+			body = desc.RawDescription
+		} else {
+			for _, tracker := range desc.Trackers {
+				ordinary[tracker] = desc.RawDescription
+			}
+		}
+	}
+	if len(discs) > 1 {
+		groups := strings.Split(body, "\n\n\n")
+		if len(groups) != 3 || strings.Count(body, "[mediainfo]") != 3 || strings.Contains(body, "[b]Disc ") ||
+			!strings.Contains(groups[0], "BDInfo report 1\n\nDisc 1 — 00002.MPLS\nAnother playlist on disc 1[/mediainfo]") {
+			t.Fatalf("disc galleries did not have one unlabelled MediaInfo block per disc: %s", body)
+		}
+		for index, firstFrame := range []int{0, 3, 5} {
+			if !strings.HasPrefix(groups[index], "[mediainfo]"+[]string{"Disc 1", "BDInfo report 2", "BDInfo report 3"}[index]) ||
+				!strings.Contains(groups[index], "[/mediainfo]\n[img]"+exact.ScreenshotUploads[firstFrame].RawURL) {
+				t.Fatalf("disc %d report did not immediately precede its own screenshots: %s", index+1, groups[index])
+			}
+		}
+	}
+	if len(discs) > 1 {
+		hhd := ordinary["HHD"]
+		notes, reports, header := strings.Index(hhd, "Release notes"), strings.Index(hhd, "[spoiler=BDInfo - Disc 2]"), strings.Index(hhd, "[b]Screenshots[/b]")
+		if notes < 0 || reports <= notes || header <= reports ||
+			!strings.Contains(hhd, "[/code][/spoiler]\n\n[b]Screenshots[/b]") || strings.Contains(hhd, "[b]Disc 1[/b]") {
+			t.Errorf("HHD should put extra disc reports between other description data and the existing screenshot header: %s", hhd)
+		}
+		hdb := ordinary["HDB"]
+		if !strings.Contains(hdb, "[/font][/hide]\n\n[center][url=") || strings.Contains(hdb, "[b]Disc 1[/b]") {
+			t.Errorf("HDB should put converted reports directly above the gallery, without a disc label: %s", hdb)
+		}
+		for tracker, tags := range map[string][2]string{
+			"HHD": {"[spoiler=BDInfo - Disc %d][code]", "[/code][/spoiler]"},
+			"HDB": {"[hide=BDInfo - Disc %d][font=monospace]", "[/font][/hide]"},
+			"BJS": {"[hide=BDInfo - Disc %d][pre]", "[/pre][/hide]"},
+		} {
+			text := ordinary[tracker]
+			for _, discNumber := range []int{2, 3} {
+				report := fmt.Sprintf("BDInfo report %d", discNumber)
+				want := fmt.Sprintf(tags[0], discNumber) + report + tags[1]
+				if !strings.Contains(text, want) || strings.Count(text, report) != 1 {
+					t.Errorf("%s did not render disc %d once in its own markup: %s", tracker, discNumber, text)
+				}
+			}
+			if strings.Contains(text, "BDInfo - Disc 1") {
+				t.Errorf("%s rendered the first disc as an additional report: %s", tracker, text)
+			}
+		}
+	}
+	for index, image := range exact.ScreenshotUploads {
+		if got := strings.Contains(body, image.RawURL); got != (index < wantCount) {
+			t.Errorf("PTP description used the wrong screenshot set: frame %d present=%t; %s", index, got, body)
+		}
+		if hhd, ok := ordinary["HHD"]; ok && strings.Contains(hhd, image.RawURL) != (index < 3) {
+			t.Errorf("ordinary description used the wrong screenshot set: frame %d; %s", index, hhd)
+		}
+		for tracker, text := range ordinary {
+			if index >= 3 && strings.Contains(text, image.RawURL) {
+				t.Errorf("%s received an extra-disc screenshot: frame %d; %s", tracker, index, text)
+			}
+		}
+	}
+}
+
+func TestPTPPackRequirementIsOwnedByPTPAndUsesOnlyEligibleFiles(t *testing.T) {
+	projector, err := trackers.NewWorkflowProjector(MustNewRegistry(), config.Config{
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 5},
+	}, api.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, disc string
+		files      []string
+		members    []string
+		discs      []api.DiscEvidenceResource
+	}{
+		{
+			name:    "mixed targets",
+			files:   []string{"Movie.Sampler.cd1.mkv", "sample.mkv", "Movie.!sample.cd2.MP4", "Movie-sample.mkv", "Movie.srt", "Movie.Sampler.cd1.mkv"},
+			members: []string{mediafacts.TrackResourceID("Movie.Sampler.cd1.mkv"), mediafacts.TrackResourceID("Movie.!sample.cd2.MP4")},
+		},
+		{name: "single video", files: []string{"Movie.mkv", "Movie.srt"}},
+		{
+			name:  "multi-disc quota belongs to PTP only",
+			disc:  "BDMV",
+			discs: []api.DiscEvidenceResource{{ID: "one"}, {ID: "two"}, {ID: "three"}},
+		},
+		{
+			name:  "disc stays on normal capture",
+			disc:  "DVD",
+			files: []string{"Title1.mkv", "Title2.mkv"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, _, result, err := projector.Build(t.Context(), api.ReleaseSnapshot{}, api.UploadSubject{
+				ReleaseName: "Example.Movie.2026.1080p-GRP",
+				DiscType:    tc.disc,
+				Discs:       tc.discs,
+				FileList:    tc.files,
+			}, []api.TrackerID{"PTP", "AITHER"}, nil, nil, api.WorkflowExecutionModeNormal)
+			if err != nil || len(result.Projections) != 2 {
+				t.Fatalf("projection = %+v, error = %v", result, err)
+			}
+			for _, p := range result.Projections {
+				normalCount := 5
+				if p.TrackerID == "PTP" && len(tc.members) > 0 {
+					normalCount = 0
+				}
+				if p.Artifacts.ScreenshotCount != normalCount {
+					t.Errorf("normal screenshot count changed for %s: %d", p.TrackerID, p.Artifacts.ScreenshotCount)
+				}
+				discs := p.Artifacts.DiscScreenshots
+				if p.TrackerID == "PTP" && len(tc.discs) > 1 {
+					if discs == nil || discs.AdditionalCount != 2 || !slices.Equal(discs.DiscIDs, []string{"one", "two", "three"}) {
+						t.Errorf("PTP multi-disc quota = %+v", discs)
+					}
+				} else if discs != nil {
+					t.Errorf("unexpected multi-disc quota for %s: %+v", p.TrackerID, discs)
+				}
+				pack := p.Artifacts.PackScreenshots
+				if p.TrackerID != "PTP" || len(tc.members) == 0 {
+					if pack != nil {
+						t.Errorf("unexpected pack requirement for %s: %+v", p.TrackerID, pack)
+					}
+				} else if pack == nil || pack.CountPerMember != 2 || !slices.Equal(pack.MemberIDs, tc.members) {
+					t.Errorf("PTP pack requirement = %+v, want two captures for each of %v", pack, tc.members)
+				}
+			}
+		})
+	}
+}
 
 func TestNameProvidersFollowTrackerMetadataAuthority(t *testing.T) {
 	t.Parallel()

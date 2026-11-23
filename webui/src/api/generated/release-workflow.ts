@@ -683,6 +683,11 @@ export type DiscReportFacts = Readonly<{
   Summary: string;
 }>;
 
+export type DiscScreenshotRequirement = Readonly<{
+  additionalCount: number;
+  discIds: readonly string[];
+}>;
+
 export type DiscoverReleaseWorkflowComparisonSourceRequest = Readonly<{
   expectedRevision: WorkflowRevision;
   idempotencyKey: string;
@@ -1426,6 +1431,7 @@ export type LanguageFacts = Readonly<{
 }>;
 
 export type MediaArtifact = Readonly<{
+  additionalDisc?: boolean;
   discId?: string;
   discName?: string;
   height?: number;
@@ -1434,6 +1440,7 @@ export type MediaArtifact = Readonly<{
   index?: number;
   kind: MediaArtifactKind;
   order?: number;
+  packMemberId?: string;
   processing?: ScreenshotProcessing | null;
   purpose: ScreenshotPurpose;
   selected: boolean;
@@ -1498,6 +1505,7 @@ export type MediaCaptureInstructions = Readonly<{
 }>;
 
 export type MediaCaptureRequirement = Readonly<{
+  automaticPackScreenshots?: boolean;
   dvdMenuCount: number;
   purpose: ScreenshotPurpose;
   screenshotCount: number;
@@ -1793,6 +1801,11 @@ export type OperationLifecycle = string;
 export type OperationRecovery = string;
 
 export type OverrideState = string;
+
+export type PackScreenshotRequirement = Readonly<{
+  countPerMember: number;
+  memberIds: readonly string[];
+}>;
 
 export type PackageInventory = Readonly<{
   Files?: readonly string[];
@@ -2997,11 +3010,13 @@ export type TrackerArtifactRequirements = Readonly<{
   allowedImageHosts?: readonly string[];
   bdInfo: boolean;
   description: boolean;
+  discScreenshots?: DiscScreenshotRequirement | null;
   dvdMenuCount: number;
   imageHosting: boolean;
   localScreenshotsOnly?: boolean;
   mediaInfo: boolean;
   nfo: boolean;
+  packScreenshots?: PackScreenshotRequirement | null;
   screenshotCount: number;
   torrent: boolean;
 }>;

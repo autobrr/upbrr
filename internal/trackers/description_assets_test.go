@@ -20,6 +20,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	dbsvc "github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -521,6 +522,47 @@ func TestAudioGraphUploadDoesNotAttachToScreenshotSlot(t *testing.T) {
 	}})
 	if result.MatchedUploads != 0 || result.FallbackMatched != 0 || len(slots[0].Variants) != 0 || slots[0].ImagePath != "" {
 		t.Fatalf("audio graph attached to screenshot slot: result=%#v slots=%#v", result, slots)
+	}
+}
+
+func TestAdditionalDiscReportsPreserveSavedBlocksWithoutDuplicatingThem(t *testing.T) {
+	t.Parallel()
+	service := &Service{registry: descriptionAssetsTestRegistry(t)}
+	meta := multiDiscBDInfoSubject(t.TempDir())
+	meta.Disc.Items[1].Reports[0].Summary = "BDINFO TWO\nVideo: [Example]"
+	fresh := service.withAdditionalDiscReports("AITHER", meta, &DescriptionAssets{Description: "Fresh notes"})
+	if strings.Count(fresh.Description, "[spoiler=BDInfo - Disc 2]") != 1 || !strings.HasSuffix(fresh.Description, "Fresh notes") {
+		t.Fatalf("fresh generation missing report: %q", fresh.Description)
+	}
+	for _, saved := range []string{
+		strings.ReplaceAll(fresh.Description, "BDINFO TWO", "Reviewed disc report"),
+		"Notes\n[hide=BDInfo - Disc 2][pre]Reviewed disc report[/pre][/hide]",
+		"Notes\n[hide=BDInfo - Disc 2][font=monospace]Reviewed disc report[/font][/hide]",
+		"Notes\n[hide=BDInfo - Disc 2][code]Reviewed disc report[/code][/hide]",
+		"Notes<br>\nBDINFO TWO<br>\nVideo: &amp;#91;Example]",
+	} {
+		assets := &DescriptionAssets{Description: saved, Override: true}
+		if got := service.withAdditionalDiscReports("AITHER", meta, assets); got.Description != saved {
+			t.Fatalf("saved block changed or duplicated: %q", got.Description)
+		}
+	}
+	third := meta.Disc.Items[1]
+	third.ID = "third"
+	meta.Disc.Items = append(meta.Disc.Items, third)
+	for _, saved := range []string{fresh.Description, "Notes<br>BDINFO TWO<br>Video: &amp;#91;Example]"} {
+		assets := &DescriptionAssets{Description: saved, Override: true}
+		got := service.withAdditionalDiscReports("AITHER", meta, assets)
+		if strings.Count(got.Description, "BDINFO TWO") != 2 ||
+			strings.Count(got.Description, "[spoiler=BDInfo - Disc 3]") != 1 || !strings.HasSuffix(got.Description, saved) {
+			t.Fatalf("a single saved report must not also suppress the identical missing report: %q", got.Description)
+		}
+		if again := service.withAdditionalDiscReports("AITHER", meta, got); again.Description != got.Description {
+			t.Fatalf("regenerating the repaired description changed it: %q", again.Description)
+		}
+	}
+	final := &DescriptionAssets{Description: "Final notes", Final: true}
+	if got := service.withAdditionalDiscReports("AITHER", meta, final); got.Description != final.Description {
+		t.Fatalf("reviewed output changed: %q", got.Description)
 	}
 }
 
@@ -4716,5 +4758,64 @@ func TestResolveDescriptionAssetsDoesNotApplyScopedCanonicalGroupToOtherTracker(
 	}
 	if assets.Final || assets.Description != "" {
 		t.Fatalf("scoped canonical group escaped membership: %+v", assets)
+	}
+}
+
+func TestResolvePackDescriptionAssetsKeepsHostedVariantsBoundToEachVideo(t *testing.T) {
+	root := t.TempDir()
+	files := []string{filepath.Join(root, "Movie.cd1.mkv"), filepath.Join(root, "Movie.cd2.mkv")}
+	members := mediafacts.PackScreenshotMembers(files)
+	exact := &api.ExactMediaAssets{}
+	for index, member := range []string{members[0].ID, members[0].ID, members[1].ID, members[1].ID, ""} {
+		image := api.ScreenshotImage{
+			Path:         filepath.Join(root, fmt.Sprintf("screen-%d.png", index)),
+			Purpose:      api.ScreenshotPurposeFinal,
+			PackMemberID: member,
+		}
+		link := fmt.Sprintf("https://i.ibb.co/test/screen-%d.png", index)
+		exact.Screenshots = append(exact.Screenshots, image)
+		exact.ScreenshotUploads = append(exact.ScreenshotUploads, api.UploadedImageLink{
+			ImagePath:  image.Path,
+			Host:       "imgbb",
+			UsageScope: globalImageUsageScope,
+			ImgURL:     link,
+			RawURL:     link,
+		})
+	}
+	meta := api.UploadSubject{
+		SourcePath: root,
+		FileList:   files,
+		Trackers:   []string{"PTP", "HHD"},
+		ExactMedia: exact,
+	}
+	repo := &stubRepo{}
+	registry := descriptionAssetsTestRegistry(t)
+	if err := registry.RegisterDescriptor(Descriptor{
+		Name:          "PACK",
+		Definition:    stubDefinition{name: "PACK"},
+		WorkflowMedia: &WorkflowMediaRequirements{PackScreenshotsPerMember: 2},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	meta.Trackers[0] = "PACK"
+	ptpMeta := scopeExactScreenshotMedia(meta, "PACK", registry)
+	ptpExact, err := exactMediaForTrackerHost("PACK", ptpMeta, config.Config{}, config.TrackerConfig{}, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ptpMeta.ExactMedia = ptpExact
+	assets, err := ResolveDescriptionAssets(t.Context(), "PACK", ptpMeta, repo, api.NopLogger{}, registry)
+	if err != nil || len(assets.Screenshots) != 4 {
+		t.Fatalf("PTP pack description assets = %#v, err = %v", assets.Screenshots, err)
+	}
+	for index, screenshot := range assets.Screenshots {
+		if screenshot.PackMemberID != members[index/2].ID || screenshot.RawURL != exact.ScreenshotUploads[index].RawURL {
+			t.Fatalf("member binding not preserved through the hosted description slot: %#v", screenshot)
+		}
+	}
+	ordinary, err := ResolveDescriptionAssets(t.Context(), "HHD", scopeExactScreenshotMedia(meta, "HHD", registry), repo, api.NopLogger{}, registry)
+	if err != nil || len(ordinary.Screenshots) != 1 || ordinary.Screenshots[0].RawURL != exact.ScreenshotUploads[4].RawURL ||
+		ordinary.Screenshots[0].PackMemberID != "" || len(meta.ExactMedia.Screenshots) != 5 || repo.uploadsCalls != 0 {
+		t.Fatalf("ordinary lane or source was changed = %#v, repository reads = %d, err = %v", ordinary.Screenshots, repo.uploadsCalls, err)
 	}
 }

@@ -2758,6 +2758,24 @@
           "Summary"
         ]
       },
+      "DiscScreenshotRequirement": {
+        "type": "object",
+        "properties": {
+          "additionalCount": {
+            "type": "integer"
+          },
+          "discIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "additionalCount",
+          "discIds"
+        ]
+      },
       "DiscoverReleaseWorkflowComparisonSourceRequest": {
         "type": "object",
         "properties": {
@@ -5512,6 +5530,9 @@
       "MediaArtifact": {
         "type": "object",
         "properties": {
+          "additionalDisc": {
+            "type": "boolean"
+          },
           "discId": {
             "type": "string"
           },
@@ -5535,6 +5556,9 @@
           },
           "order": {
             "type": "integer"
+          },
+          "packMemberId": {
+            "type": "string"
           },
           "processing": {
             "anyOf": [
@@ -5785,6 +5809,9 @@
       "MediaCaptureRequirement": {
         "type": "object",
         "properties": {
+          "automaticPackScreenshots": {
+            "type": "boolean"
+          },
           "dvdMenuCount": {
             "type": "integer"
           },
@@ -7037,6 +7064,24 @@
       },
       "OverrideState": {
         "type": "string"
+      },
+      "PackScreenshotRequirement": {
+        "type": "object",
+        "properties": {
+          "countPerMember": {
+            "type": "integer"
+          },
+          "memberIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "countPerMember",
+          "memberIds"
+        ]
       },
       "PackageInventory": {
         "type": "object",
@@ -12416,6 +12461,16 @@
           "description": {
             "type": "boolean"
           },
+          "discScreenshots": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DiscScreenshotRequirement"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "dvdMenuCount": {
             "type": "integer"
           },
@@ -12430,6 +12485,16 @@
           },
           "nfo": {
             "type": "boolean"
+          },
+          "packScreenshots": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PackScreenshotRequirement"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "screenshotCount": {
             "type": "integer"

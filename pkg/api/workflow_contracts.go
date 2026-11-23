@@ -237,6 +237,10 @@ type TrackerArtifactRequirements struct {
 	ScreenshotCount int `json:"screenshotCount"`
 	// LocalScreenshotsOnly requires selected captures without hosted variants.
 	LocalScreenshotsOnly bool `json:"localScreenshotsOnly,omitempty"`
+	// DiscScreenshots adds fixed quotas for the remaining discs after the primary.
+	DiscScreenshots *DiscScreenshotRequirement `json:"discScreenshots,omitempty"`
+	// PackScreenshots requires distinct captures for each prepared media member.
+	PackScreenshots *PackScreenshotRequirement `json:"packScreenshots,omitempty"`
 	// DVDMenuCount is a tracker-declared minimum, not an automatic-capture cap.
 	DVDMenuCount          int      `json:"dvdMenuCount"`
 	MediaInfo             bool     `json:"mediaInfo"`
@@ -247,6 +251,19 @@ type TrackerArtifactRequirements struct {
 	ImageHosting          bool     `json:"imageHosting"`
 	AllowedImageHosts     []string `json:"allowedImageHosts,omitempty"`
 	Torrent               bool     `json:"torrent"`
+}
+
+// PackScreenshotRequirement pins the eligible video members and minimum per
+// member without exposing filesystem paths.
+type PackScreenshotRequirement struct {
+	MemberIDs      []string `json:"memberIds"`
+	CountPerMember int      `json:"countPerMember"`
+}
+
+// DiscScreenshotRequirement pins the prepared disc order and the count for each disc after the first.
+type DiscScreenshotRequirement struct {
+	DiscIDs         []string `json:"discIds"`
+	AdditionalCount int      `json:"additionalCount"`
 }
 
 // TrackerQuestionnaireRequirement describes one non-secret tracker input requirement.
@@ -568,6 +585,10 @@ type MediaArtifact struct {
 	ID         PublicResourceID      `json:"id"`
 	// DiscID identifies the prepared disc that produced this artifact.
 	DiscID string `json:"discId,omitempty"`
+	// PackMemberID keeps pack images out of ordinary release-level slots.
+	PackMemberID string `json:"packMemberId,omitempty"`
+	// AdditionalDisc keeps tracker-required extra frames out of the shared screenshot set.
+	AdditionalDisc bool `json:"additionalDisc,omitempty"`
 	// DiscName is the safe page-facing label derived from prepared facts.
 	DiscName         string            `json:"discName,omitempty"`
 	Kind             MediaArtifactKind `json:"kind"`

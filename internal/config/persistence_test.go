@@ -925,6 +925,67 @@ func TestSaveSectionsToDatabasePreservesStoredUnknownSameRootFields(t *testing.T
 	}
 }
 
+func TestRetiredDescriptionAndEmbySettingsAreDroppedOnLoadRepairAndExport(t *testing.T) {
+	t.Parallel()
+	raw := defaultDatabaseConfigMap(t)
+	fields := map[string][]string{
+		"Description":    {"MultiScreens", "PackThumbSize", "CharLimit", "FileLimit", "ProcessLimit"},
+		"ArrIntegration": {"EmbyDir", "EmbyTVDir"},
+	}
+	for section, keys := range fields {
+		m, ok := raw[section].(map[string]any)
+		if !ok {
+			t.Fatalf("expected %s fixture map", section)
+		}
+		for _, key := range keys {
+			m[key] = "retired"
+		}
+		m["FutureOption"] = "kept"
+	}
+	screenshots, ok := raw["ScreenshotHandling"].(map[string]any)
+	if !ok {
+		t.Fatal("expected ScreenshotHandling fixture map")
+	}
+	screenshots["ProcessLimit"] = 11
+	repo := &sectionBatchPreserveRepo{raw: raw}
+
+	loaded, report, err := LoadFromDatabaseWithRepairReport(t.Context(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ScreenshotHandling.ProcessLimit != 11 ||
+		!slices.Equal(report.ChangedSections, []string{"ArrIntegration", "Description"}) {
+		t.Fatalf("retirement damaged active capture concurrency or missed repair sections: %+v", report)
+	}
+	if err := SaveSectionsToDatabase(t.Context(), loaded, report.ChangedSections, repo); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := ExportToPlaintextJSON(loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exported map[string]map[string]any
+	if err := json.Unmarshal([]byte(payload), &exported); err != nil {
+		t.Fatal(err)
+	}
+	for section, keys := range fields {
+		persisted, ok := repo.raw[section].(map[string]any)
+		if !ok {
+			t.Fatalf("expected persisted %s map", section)
+		}
+		if persisted["FutureOption"] != "kept" {
+			t.Fatalf("%s did not preserve an unrelated extension", section)
+		}
+		for _, key := range keys {
+			_, stored := persisted[key]
+			_, exported := exported[section][key]
+			if stored || exported {
+				t.Errorf("%s.%s survived retirement: stored=%t exported=%t", section, key, stored, exported)
+			}
+		}
+	}
+}
+
 func TestSaveSectionsToDatabaseDoesNotPreserveRepairedTrackerAliases(t *testing.T) {
 	t.Parallel()
 

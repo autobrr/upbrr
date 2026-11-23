@@ -900,16 +900,20 @@ test("restart interrupts an uncertain client effect without replay", async () =>
         failure: expect.objectContaining({ Code: "stale_review", Recovery: "retry" }),
       }),
     ]);
-    // An empty active session must not authorize retrying the uncertain effect.
+    expect(current.workflow.requiredActions ?? []).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "reconcile_submission" })]),
+    );
+    expect(workspace.fake.counters.clientInjections).toBe(1);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+
+    // A fresh request is allowed without a manual recovery command or answer.
     const retry = await client.raw("/uploads", {
       method: "POST",
       idempotencyKey: "uncertain-client-effect-retry",
-      body: uploadBody(workspace.sourcePath, { confirm: false, mode: "debug", noSeed: false }),
+      body: uploadBody(workspace.sourcePath, { confirm: false, mode: "debug", noSeed: true }),
     });
-    expect(retry.status, await retry.clone().text()).toBe(409);
-    expect(await retry.json()).toMatchObject({
-      failure: { Code: "unknown_submission_outcome", Recovery: "confirm" },
-    });
+    expect(retry.status, await retry.clone().text()).toBe(202);
+    await client.accepted(retry);
     expect(workspace.fake.counters.clientInjections).toBe(1);
     expect(workspace.fake.counters.trackerUploads).toBe(0);
   } finally {

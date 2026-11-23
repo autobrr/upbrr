@@ -20,6 +20,7 @@ func buildDescription(meta api.UploadSubject, assets trackers.DescriptionAssets)
 	if assets.Final {
 		return base
 	}
+	base, discReports := description.SplitLeadingDiscReports(base)
 	base, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(base)
 
 	cleaned := CleanDescription(base, BBCodeOptions{
@@ -55,7 +56,10 @@ func buildDescription(meta api.UploadSubject, assets trackers.DescriptionAssets)
 	if audioAnalysis != "" {
 		parts = append(parts, strings.ReplaceAll(audioAnalysis, "[img]", "[img width=350]"))
 	}
-	if screenshots := buildDiscScreenshotSection(meta, images, screenshotLimit); screenshots != "" {
+	if discReports != "" {
+		parts = append(parts, CleanDescription(discReports, BBCodeOptions{}).Description)
+	}
+	if screenshots := buildScreenshotSection(images, screenshotLimit); screenshots != "" {
 		parts = append(parts, screenshots)
 	}
 	parts = append(parts, `[align=right][url=https://github.com/autobrr/upbrr]Uploaded by upbrr[/url][/align]`)

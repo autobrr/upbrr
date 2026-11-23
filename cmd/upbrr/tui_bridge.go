@@ -147,6 +147,16 @@ func (b *cliTUIBridge) Publish(view cliView) {
 // Progress coalesces counts by lane and attempt, rejecting callbacks from older
 // items or reporter epochs and mismatched workflow or operation identities.
 func (b *cliTUIBridge) Progress(progress cliTelemetry) {
+	b.updateProgress(progress, false)
+}
+
+// FinishProgressLane only updates an existing producer row and keeps its counts.
+func (b *cliTUIBridge) FinishProgressLane(progress cliTelemetry) {
+	progress.ItemOnly = true
+	b.updateProgress(progress, true)
+}
+
+func (b *cliTUIBridge) updateProgress(progress cliTelemetry, existingOnly bool) {
 	progress.Phase = safeDiagnosticText(progress.Phase)
 	progress.Lane, progress.Attempt = safeDiagnosticText(progress.Lane), safeDiagnosticText(progress.Attempt)
 	b.mu.Lock()
@@ -159,8 +169,11 @@ func (b *cliTUIBridge) Progress(progress cliTelemetry) {
 			return previous.Lane == progress.Lane && previous.Attempt == progress.Attempt
 		})
 		if index >= 0 {
+			if existingOnly {
+				progress.Completed, progress.Total = b.telemetry[index].Completed, b.telemetry[index].Total
+			}
 			b.telemetry[index] = progress
-		} else {
+		} else if !existingOnly {
 			if len(b.telemetry) >= cliTelemetryLimit {
 				b.telemetry = b.telemetry[1:]
 			}

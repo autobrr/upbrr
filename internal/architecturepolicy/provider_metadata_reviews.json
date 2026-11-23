@@ -176,8 +176,8 @@
     "sha256": "5e7451f9faf3fed9241d74928416ce5519193d3ff75dd9b542b48f76c0b82366"
   },
   "internal/trackers/impl/standalone/ar/description.go:buildDescription": {
-    "reason": "AR center-tag conversion applies only outside complete code/pre blocks in generated or final descriptions. Title, database-link, overview, genre, and YouTube provider selection and manual precedence remain unchanged, including PreferredGenreText and the final-description bypass of generated sections.",
-    "sha256": "ea34c699aaea4fb8ab15385c20195c8e9a19c7a64e126a62e361c0d3399edba1"
+    "reason": "AR center-tag conversion applies only outside complete code/pre blocks in generated or final descriptions. Title, database-link, overview, genre, and YouTube provider selection and manual precedence remain unchanged, including PreferredGenreText and the final-description bypass of generated sections. Additional-disc markup changes only prepared report presentation, not provider selection.",
+    "sha256": "70195be02c9a567a37845e6145ebd2b486311565ce20849a826d6175a9f8d4f7"
   },
   "internal/trackers/impl/standalone/ar/description.go:resolveOverview": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -396,8 +396,8 @@
     "sha256": "ed1c1a77df8f4845f3ab494b716917891fbfe438061dc6bd5497ba744cb622d6"
   },
   "internal/trackers/impl/standalone/bjs/description.go:buildDescription": {
-    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed Screenshot notices consume selected image processing evidence only; provider/manual metadata precedence and tracker markup remain unchanged.",
-    "sha256": "9db75f72ab2ad7bb99e0ac73f90c380b379bf6397f9d607a2eb409b62647ef23"
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed Screenshot notices consume selected image processing evidence only; provider/manual metadata precedence and tracker markup remain unchanged. Additional-disc markup changes only prepared report presentation, not provider selection.",
+    "sha256": "85b84d2bba9507fcdfbcb9a8ec91854221c24d064951d65ecdffb74a291667a3"
   },
   "internal/trackers/impl/standalone/bjs/description.go:resolveDirectors": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -948,8 +948,8 @@
     "sha256": "ebd180e1f84731eb81c40fe5a7cd94d985113af8b8bfab22fe370788fd743551"
   },
   "internal/trackers/impl/standalone/hds/description.go:buildDescription": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. Screenshot notices consume selected image processing evidence only; provider/manual metadata precedence and tracker markup remain unchanged.",
-    "sha256": "95322fe614377ca5a3cfe731d1fe4900d097eaff0b6cdcc142e62b22ba739113"
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. Screenshot notices consume selected image processing evidence only; provider/manual metadata precedence and tracker markup remain unchanged. Additional-disc markup changes only prepared report presentation, not provider selection.",
+    "sha256": "35eaf276b0af5d2df5244c52d198664770108e6b98dac67d6aa1f4d02e961160"
   },
   "internal/trackers/impl/standalone/hds/description.go:prepareDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -996,8 +996,8 @@
     "sha256": "7e89c7505b94a7bd7ae8bf30d82c1752e5fdc97dc7ce7f992ed45ac629a810a8"
   },
   "internal/trackers/impl/standalone/hdt/description.go:buildDescription": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. Screenshot notices consume selected image processing evidence only; provider/manual metadata precedence and tracker markup remain unchanged.",
-    "sha256": "f191aea957958376b0a58ba5bd2fb251777ebe8f6941b80abb3b601f3ee93e08"
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. Screenshot notices consume selected image processing evidence only; provider/manual metadata precedence and tracker markup remain unchanged. Additional-disc markup changes only prepared report presentation, not provider selection.",
+    "sha256": "bcf4fa8c1585f5f70065437dc0bd6e9a9e318464b5810657c353c64b5c169236"
   },
   "internal/trackers/impl/standalone/hdt/description.go:prepareDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -1124,8 +1124,8 @@
     "sha256": "529fc165a5f125ccb2154a762a22b4f1830a41320c58dc8ef83f5d62b64ed3eb"
   },
   "internal/trackers/impl/standalone/ptp/upload.go:prepareUploadStateAt": {
-    "reason": "Audio-order policy review: only order eligibility, its retired questionnaire/call arguments, or the validation policy version changed. Existing finalized/manual metadata precedence and provider selectors remain unchanged; HDB animation uses finalized Anime/Genres, including explicit manual clears.",
-    "sha256": "1d4e2479e064e2e86bd7b816cff1f511410f7866280d144236da0069afcb0e1a"
+    "reason": "Description preparation now returns incomplete multi-disc Blu-ray report errors before upload. Existing manual metadata precedence and provider selectors are unchanged.",
+    "sha256": "c50ed0669190768cef4ef850e4b9955b36bb6f668f5cd48c1574541d1587d1f1"
   },
   "internal/trackers/impl/standalone/ptp/upload.go:resolveGroupTitleYear": {
     "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged.",
@@ -1253,7 +1253,7 @@
   },
   "internal/trackers/impl/standalone/tvc/description.go:buildDescription": {
     "reason": "Only the provider title logo is gated by AddLogo; episode text and other finalized facts retain their existing manual precedence.",
-    "sha256": "015239e4170bc1843d42708f6a8015d0067bf23b8195880fd244e05fceb86885"
+    "sha256": "fc28d0c495dbd1703d652e3130dd3c6ea352534ac505d6a09724e99c602a9bf0"
   },
   "internal/trackers/impl/standalone/tvc/description.go:genresText": {
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input",

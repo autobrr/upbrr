@@ -110,7 +110,7 @@ func (s *Service) preflightDescriptionImageHostsWithPreferences(
 ) imageHostPreflight {
 	logger := logging.FromContext(ctx, s.logger)
 
-	if len(trackers) == 0 || s.registry == nil {
+	if len(trackers) == 0 || s.registry == nil || hasExactScreenshotScope(meta, s.registry) {
 		return nil
 	}
 
@@ -335,7 +335,7 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 		return api.PreparationPreview{SourcePath: meta.SourcePath, ContentFailures: contentFailures}, nil
 	}
 	preferredImageHosts := preparationImageHostPreferences(s.cfg, meta, resolved, logger, s.registry)
-	scopeExactReuse := meta.ExactMedia != nil && imageHostUploadSkipped(meta)
+	scopeExactReuse := meta.ExactMedia != nil && (imageHostUploadSkipped(meta) || hasExactScreenshotScope(meta, s.registry))
 	var preflight imageHostPreflight
 	if !scopeExactReuse {
 		preflight = s.preflightDescriptionImageHostsWithPreferences(ctx, meta, resolved, preferredImageHosts, preloaded, false)
@@ -384,7 +384,8 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 		trackerMeta := meta
 		trackerPreloaded := preloaded
 		if scopeExactReuse {
-			trackerMeta.ExactMedia, err = exactMediaForTrackerHost(tracker, meta, s.cfg, trackerCfg, s.registry, preferredImageHosts[key])
+			trackerMeta = scopeExactScreenshotMedia(trackerMeta, tracker, s.registry)
+			trackerMeta.ExactMedia, err = exactMediaForTrackerHost(tracker, trackerMeta, s.cfg, trackerCfg, s.registry, preferredImageHosts[key])
 			if err == nil {
 				trackerPreloaded, err = preloadDescriptionAssetData(ctx, trackerMeta, s.repo, s.registry)
 			}
@@ -435,6 +436,11 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 			failed := failedPreparedUploadContent(tracker, UploadContentModeDescription, err)
 			contentFailures = append(contentFailures, *failed.Failure)
 			continue
+		}
+		// Only an exact per-file pack preview uses the prepared file inventory.
+		// Ordinary previews keep their capture count independent of stream files.
+		if trackerMeta.ExactMedia == nil || !RequiresPackScreenshots(s.registry, tracker, trackerMeta) {
+			trackerMeta.FileList = nil
 		}
 		plan, failure := definition.Prepare(ctx, s.preparationInput(ctx, PreparationIntentDescriptionPreview, tracker, trackerMeta, trackerCfg, &assets))
 		if failure != nil {
@@ -546,6 +552,7 @@ func uploadSubjectForDescription(subject api.DescriptionSubject) api.UploadSubje
 		HardcodedSubtitleCoverage:            append([]api.SubtitleLanguageCoverage(nil), subject.HardcodedSubtitleCoverage...),
 		MediaBinding:                         subject.MediaBinding,
 		SourcePath:                           subject.SourcePath,
+		FileList:                             slices.Clone(subject.FileList),
 		DiscType:                             subject.DiscType,
 		MediaInfoTextPath:                    subject.MediaInfoTextPath,
 		DVDVOBMediaInfoText:                  subject.DVDVOBMediaInfoText,

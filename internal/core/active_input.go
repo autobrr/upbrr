@@ -234,6 +234,7 @@ func (c *Core) OpenActiveInput(ctx context.Context, owner string, request api.Op
 			CorrectionPatch:     request.Request.Intent.CorrectionPatch,
 			IdempotencyKey:      request.Request.IdempotencyKey,
 			ReuseVerifiedSource: request.ReuseVerifiedSource,
+			RecoverInterrupted:  true,
 		})
 	}()
 	if err != nil {

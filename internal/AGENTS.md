@@ -1,6 +1,6 @@
 # Backend Guidelines
 
-Scope: backend Go under `internal/`; root repo rules apply.
+Applies to Go work across the repository, including `cmd/` and `pkg/`. Follow the root rules and any more specific guidance for the affected area.
 
 ## Checks
 
@@ -11,16 +11,18 @@ Scope: backend Go under `internal/`; root repo rules apply.
 
 ## Runtime Flow
 
-1. Entrypoints build request/options from CLI args or WebUI payloads.
+1. Entrypoints build requests and options from CLI args, WebUI payloads, or public API requests.
 2. `internal/preparedrelease` owns immutable source-scoped prepared generations/display projections; uses `internal/sourcelayout` and `internal/externalidentity` for source resources/canonical identity.
-3. `internal/core` consumes exact prepared generations; owns workflow orchestration, tracker eligibility, validation, screenshots/images, review, upload.
-4. `internal/clientdiscovery` owns normalized source-scoped torrent-client search.
-5. `internal/webserver` owns browser transport, retained background jobs, runtime activation via `RuntimeActivator`.
+3. `internal/releaseworkflow` owns durable release coordination and operation authority. `internal/core` wires the module and implements operations against exact prepared generations, including tracker eligibility, validation, screenshots and images, review, and upload.
+4. `internal/clientdiscovery` owns normalized source-scoped torrent-client search. `internal/torrent` owns the submission inventory, metainfo layout validation, and torrent creation and reuse.
+5. `internal/webserver` owns browser and public API transport and runtime activation through `RuntimeActivator`.
 6. Generic `internal/trackers` orchestration consumes typed registry capabilities; dedicated subpackages own auth, dupe, data coordination.
 7. Implementations by registry family: Unit3D under `internal/trackers/impl/unit3d/sites/<tracker>`, AvistaZ profiles under `internal/trackers/impl/azfamily`, others under `internal/trackers/impl/standalone/<tracker>`. Tracker-local packages own endpoints, payloads, auth, lookup, rules, validation, descriptions, policy.
 8. DB/repositories persist config, prepared generations, history, images, upload records, status.
 
 Preserve CLI/WebUI behavior unless intentionally changing one entrypoint.
+
+For screenshot comparisons, [`releaseworkflow`](releaseworkflow/comparisons.go) owns durable review, revision checks, and recovery. [`core`](core/workflow_comparisons.go) owns source matching, native frame capture and replay, and artifact production. Restore approval only after revalidating the same prepared generation and reviewed comparison evidence.
 
 ## Config / Runtime Ownership
 
@@ -37,6 +39,7 @@ Preserve CLI/WebUI behavior unless intentionally changing one entrypoint.
 ## Canonical Release Ownership
 
 - Resolve managed artifact roots with `pathing/layout.ReleaseTempDirFor`; derive feature/generation/attempt subdirectories only beneath that owner. `ReleaseTempPathFor` is the non-creating cleanup lookup. Independent feature roots under application `tmp` are prohibited by `make architecturepolicy`.
+- Torrent creation, reuse, and tracker variants must use the shared submission inventory and preserve the root [torrent structure and content-name rules](../AGENTS.md#torrent-structure-and-content-names).
 - Keep source identity/fingerprints (including verified content) separate from visible directory names. Layout changes must align producers, persisted/hydrated references, consumers, cancellation/private writes, active/shared cleanup protection, and upgrade documentation. Do not discover or migrate abandoned legacy caches automatically.
 - Canonical preparation contracts: single-source; preserve caller interaction mode.
 - `PreparedRelease`: typed reusable source facts only; no workflow options, tracker choices, questionnaire answers, overrides, outcomes.

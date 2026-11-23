@@ -650,7 +650,7 @@ func formatDate(dateStr string) string {
 func buildMediaInfo(meta api.UploadSubject, dbPath string) string {
 	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
 	case "BDMV":
-		text, _ := trackers.ReadBDInfo(dbPath, meta)
+		text, _ := trackers.ReadBDInfoForDescription(dbPath, meta)
 		return text
 	case "DVD":
 		return metautil.FirstNonEmptyTrimmed(trackers.ReadDVDVOBMediaInfo(meta), readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath)))

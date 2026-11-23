@@ -1178,6 +1178,25 @@ func continuationAssessmentGoalCurrent(current CommandResult, goal api.WorkflowG
 		current.Dupes.ExpiresAt.After(now)
 }
 
+// continuationMediaProjections applies the same duplicate and approval scope as
+// the capture command when checking whether retained media is sufficient.
+func continuationMediaProjections(current CommandResult) []api.TrackerReleaseProjection {
+	projections := *current.Projections
+	if current.Dupes == nil {
+		return projections.Projections
+	}
+	eligible := DownstreamEligibleProjections(projections, *current.Dupes)
+	if approval := current.TrackerApproval; approval != nil && current.Workflow.TrackerApproval != nil &&
+		approval.ID == current.Workflow.TrackerApproval.ID && approval.Revision == current.Workflow.TrackerApproval.Revision &&
+		approval.ProjectionSet == current.Dupes.ProjectionSet && approval.Dupes.ID == current.Dupes.ID &&
+		approval.Dupes.Revision == current.Dupes.Revision {
+		eligible.Projections = slices.DeleteFunc(eligible.Projections, func(p api.TrackerReleaseProjection) bool {
+			return !slices.Contains(approval.ApprovedTrackerIDs, p.TrackerID)
+		})
+	}
+	return eligible.Projections
+}
+
 // continuationMediaCaptureSatisfied recognizes retained capture results and
 // completed imports. Overall media readiness is checked separately by the planner.
 func continuationMediaCaptureSatisfied(current CommandResult, desired *api.MediaCaptureInstructions) bool {
@@ -1222,14 +1241,39 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 		return stageSucceeded(current.Media.Status) && err == nil && current.Media.CaptureFingerprint == expected
 	}
 	if (desired.Purpose == "" || desired.Purpose == api.ScreenshotPurposeFinal) && desired.Selections != nil {
-		retained := make(map[int]struct{}, len(current.Media.Artifacts))
+		if !LocalScreenshotSourceRequirementsMet(current.Media.Artifacts, continuationMediaProjections(current)) {
+			return false
+		}
+		type discFrame struct {
+			disc  string
+			index int
+		}
+		retained := make(map[discFrame]struct{}, len(current.Media.Artifacts))
 		for _, artifact := range current.Media.Artifacts {
-			if artifact.Kind == api.MediaArtifactScreenshot && artifact.Source != "tracker" {
-				retained[artifact.Index] = struct{}{}
+			if artifact.Kind == api.MediaArtifactScreenshot && artifact.PackMemberID == "" && artifact.Source != "tracker" {
+				retained[discFrame{artifact.DiscID, artifact.Index}] = struct{}{}
+				retained[discFrame{index: artifact.Index}] = struct{}{}
 			}
 		}
+		var discs *api.DiscScreenshotRequirement
+		for _, projection := range continuationMediaProjections(current) {
+			if projection.Artifacts.DiscScreenshots != nil {
+				discs = projection.Artifacts.DiscScreenshots
+				break
+			}
+		}
+		perDisc := make(map[string]int)
+		seen := make(map[discFrame]bool)
 		for _, selection := range desired.Selections {
-			if _, ok := retained[selection.Index]; !ok {
+			key := discFrame{selection.DiscID, selection.Index}
+			if discs != nil && len(discs.DiscIDs) > 1 && slices.Contains(discs.DiscIDs[1:], selection.DiscID) {
+				if seen[key] || perDisc[key.disc] >= discs.AdditionalCount {
+					continue
+				}
+				seen[key] = true
+				perDisc[key.disc]++
+			}
+			if _, ok := retained[key]; !ok {
 				return false
 			}
 		}
@@ -1246,7 +1290,9 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 		}
 		switch artifact.Kind {
 		case api.MediaArtifactScreenshot:
-			screenshots++
+			if artifact.PackMemberID == "" {
+				screenshots++
+			}
 		case api.MediaArtifactComparison:
 			if _, reused := comparisonScreenshots[artifact.ID]; reused {
 				screenshots++
@@ -1265,6 +1311,9 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 		}
 		return automaticMenus > 0 && stageSucceeded(current.Media.Status)
 	case "", api.ScreenshotPurposeFinal:
+		if !LocalScreenshotSourceRequirementsMet(current.Media.Artifacts, continuationMediaProjections(current)) {
+			return false
+		}
 		required := desired.ScreenshotCount
 		if desired.Selections != nil {
 			required = len(desired.Selections)

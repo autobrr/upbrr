@@ -4540,6 +4540,19 @@ func TestRefreshMutatedMediaStatusAcceptsLocalScreenshotsForLocalOnlyTrackers(t 
 	if snapshot.Status != api.StageStatusCompleted || len(snapshot.RequiredActions) != 0 {
 		t.Fatalf("local screenshots did not satisfy local-only requirements: %#v", snapshot)
 	}
+	second := snapshot.Artifacts[1]
+	packCapture := second
+	packCapture.PackMemberID = "member-1"
+	additionalDiscCapture := second
+	additionalDiscCapture.AdditionalDisc = true
+	for _, scopedCapture := range []api.MediaArtifact{packCapture, additionalDiscCapture} {
+		snapshot.Artifacts[1] = scopedCapture
+		refreshMutatedMediaStatus(&snapshot, projections, projections)
+		if snapshot.Status != api.StageStatusBlocked {
+			t.Errorf("a tracker-scoped capture satisfied the local minimum: %#v", scopedCapture)
+		}
+	}
+	snapshot.Artifacts[1] = second
 	snapshot.Artifacts[1].Selected = false
 	refreshMutatedMediaStatus(&snapshot, projections, projections)
 	if snapshot.Status != api.StageStatusBlocked {

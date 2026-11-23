@@ -171,6 +171,16 @@ func TestAcceptedReceiptSuppressesRecoveryAndRejectsDirectConfirmation(t *testin
 				if err := module.durability.MarkOperationEffectsUnknown(ctx, testOwnerID, created.Workflow.ID, effect.OperationID, now); err != nil {
 					t.Fatal(err)
 				}
+				if database != nil {
+					stamp := now.Format(time.RFC3339Nano)
+					if _, err := database.RawDB().ExecContext(ctx, `INSERT INTO submission_fences (
+						content_version, content_digest, content_scope, content_json, tracker_site,
+						owner_id, workflow_id, operation_id, effect_id, status, started_at, updated_at
+					) VALUES ('1', 'synthetic', 'file', '{}', 'EXAMPLE', ?, ?, ?, ?, 'unknown', ?, ?)`,
+						testOwnerID, created.Workflow.ID, effect.OperationID, effect.EffectID, stamp, stamp); err != nil {
+						t.Fatal(err)
+					}
+				}
 				state, err := repo.Load(ctx, testOwnerID, created.Workflow.ID)
 				if err != nil {
 					t.Fatal(err)
@@ -355,6 +365,10 @@ func TestAcceptedReceiptSuppressesRecoveryAndRejectsDirectConfirmation(t *testin
 						`SELECT status FROM release_workflow_effects WHERE owner_id = ? AND workflow_id = ? AND operation_id = ? AND effect_id = ?`,
 						testOwnerID, created.Workflow.ID, effect.OperationID, effect.EffectID).Scan(&status); err != nil || status != api.WorkflowEffectStatusSucceeded {
 						t.Fatalf("accepted effect was not durably retained as successful: status=%s error=%v", status, err)
+					}
+					if err := database.RawDB().QueryRowContext(ctx, `SELECT status FROM submission_fences WHERE effect_id = ?`,
+						effect.EffectID).Scan(&status); err != nil || status != api.WorkflowEffectStatusSucceeded {
+						t.Fatalf("accepted submission fence was not durably retained as successful: status=%s error=%v", status, err)
 					}
 				} else {
 					retained, idempotent, err := module.durability.BeginEffect(ctx, effect)

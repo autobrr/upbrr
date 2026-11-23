@@ -497,7 +497,7 @@ func newCLIWorkflowSession(
 			session.releaseActiveInput(ctx)
 		}
 	}()
-	if err := session.reconcileLegacyInputs(ctx, reader); err != nil {
+	if err := session.reconcileLegacyInputs(ctx); err != nil {
 		return nil, err
 	}
 	if err := session.continueUntilStable(ctx, api.ContinueReleaseWorkflowRequest{

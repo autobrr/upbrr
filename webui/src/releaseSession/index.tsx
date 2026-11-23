@@ -2584,6 +2584,9 @@ export function ReleaseSessionProvider({
       const plan: ScreenshotPlan = {
         SourcePath: applicable.release?.release.Source.SourcePath || "",
         SavedImagePlanID: workflowPlan.id,
+        AutomaticPackScreenshots: workflowPlan.requirements?.some(
+          (requirement) => requirement.automaticPackScreenshots,
+        ),
         DiscType: workflowPlan.discType || "",
         Discs: (workflowPlan.discs || []).map((disc) => ({
           DiscID: disc.discId,

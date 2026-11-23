@@ -4,7 +4,8 @@ Scope: `internal/trackers/` and changes elsewhere to tracker definitions, regist
 
 ## Domain Guardrails
 
-- Duplicate-search, evaluation, adapter, or policy work anywhere under `internal/trackers` must also read and follow `internal/trackers/dupe/AGENTS.md`, including tracker-local `dupe.go` and `dupe_policy.go` files.
+- Duplicate-search, evaluation, adapter, or policy work anywhere under `internal/trackers` must also read and follow [the duplicate-checking guidance](dupe/AGENTS.md), including tracker-local `dupe.go` and `dupe_policy.go` files.
+- Review content filenames and layout against the prepared submission inventory. Keep site-specific upload and search titles separate from source names and follow the root [torrent structure and content-name rules](../../AGENTS.md#torrent-structure-and-content-names).
 - Standalone behavior belongs in `internal/trackers/impl/standalone/<tracker>`; Unit3D exceptions in `internal/trackers/impl/unit3d/sites/<tracker>`. Each standalone package composes identity/static capabilities in `profile.go`; dynamic data/claim factories and private CLI answer-schema providers may wrap `standalone.Definition` locally. Explicitly register definitions in `internal/trackers/impl/registry.go`; generic packages never import implementations.
 - `internal/trackers/impl/registry.go` is the sole complete supported-tracker composition list, grouped by family. Profiles/definitions own endpoints/typed policy; `internal/config/defaults/example.yaml` owns ordered config/defaults. Generic metadata, auth, image-hosting, torrent-client, frontend code consume registry/catalog capabilities without tracker-name dispatch.
 - Strict tracker semantic ownership:

@@ -152,6 +152,11 @@ var migrationRegistry = []migrationStep{
 		apply:     migrateAddMediaReuseAssociations,
 	},
 	{
+		id:        "2026_11_add_reusable_media_screenshot_lanes",
+		dependsOn: []string{"2026_09_add_media_reuse_associations"},
+		apply:     migrateAddReusableMediaScreenshotLanes,
+	},
+	{
 		id:        "2026_09_add_reusable_media_commits",
 		dependsOn: []string{"2026_09_add_media_reuse_associations"},
 		apply:     migrateAddReusableMediaCommits,
