@@ -11,11 +11,12 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/configstore"
 	"github.com/autobrr/upbrr/internal/logging"
 )
 
 func TestExportLastLogDoesNotProcessInputAndUsesSelectedDirectory(t *testing.T) {
-	repo, _, configPath := newRecoveryCLIFixture(t)
+	repo, cfg, _ := newRecoveryCLIFixture(t)
 	logger, err := logging.New(config.LoggingConfig{
 		Level:          "warn",
 		FileEnabled:    true,
@@ -35,20 +36,46 @@ func TestExportLastLogDoesNotProcessInputAndUsesSelectedDirectory(t *testing.T) 
 	if err := logger.Close(); err != nil {
 		t.Fatal(err)
 	}
-	dir := t.TempDir()
-	result := executeCLIForTest(t.Context(), t, []string{
-		"--config", configPath, "--export-last-log", "--log-export-dir", dir, source,
-	})
-	if result.err != nil || !strings.Contains(result.stdout, "Exported") {
-		t.Fatalf("CLI export did not succeed without source bytes: %v, %s", result.err, result.stdout)
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	jsonConfig, err := config.ExportToJSON(&cfg)
+	if err != nil {
+		t.Fatal(err)
 	}
-	files, err := filepath.Glob(filepath.Join(dir, "*.log"))
-	if err != nil || len(files) != 1 {
-		t.Fatalf("exports: %v, %v", files, err)
+	if err := os.WriteFile(configPath, []byte(jsonConfig), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	text, err := os.ReadFile(files[0])
-	if err != nil || !strings.Contains(string(text), "latest run detail") || strings.Contains(string(text), "previous run detail") {
-		t.Fatalf("unexpected export: %s, %v", text, err)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("UA_DEFAULT_DB_PATH", "")
+	implicit, err := configstore.DefaultYAMLPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.ExportToYAML(&cfg, implicit); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name       string
+		configArgs []string
+	}{
+		{name: "explicit JSON", configArgs: []string{"--config", configPath}},
+		{name: "implicit startup config"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			args := append([]string{"--export-last-log", "--log-export-dir", dir, source}, test.configArgs...)
+			result := executeCLIForTest(t.Context(), t, args)
+			if result.err != nil || !strings.Contains(result.stdout, "Exported") {
+				t.Fatalf("CLI export did not succeed without source bytes: %v, %s", result.err, result.stdout)
+			}
+			files, err := filepath.Glob(filepath.Join(dir, "*.log"))
+			if err != nil || len(files) != 1 {
+				t.Fatalf("exports: %v, %v", files, err)
+			}
+			text, err := os.ReadFile(files[0])
+			if err != nil || !strings.Contains(string(text), "latest run detail") || strings.Contains(string(text), "previous run detail") {
+				t.Fatal("export did not contain only the most recent run")
+			}
+		})
 	}
 }
 

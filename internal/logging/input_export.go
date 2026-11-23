@@ -168,7 +168,10 @@ func (r *inputLogRecords) readFiles(ctx context.Context, dir string) error {
 				continue
 			}
 		}
-		info, statErr := e.Info()
+		// On Windows, DirEntry.Info can defer obtaining its file ID
+		// using the directory handle's relative name. Capture the ID
+		// from the rooted path now so SameFile compares real identities.
+		info, statErr := root.Lstat(name)
 		if statErr != nil || !info.Mode().IsRegular() {
 			r.incomplete = true
 			continue

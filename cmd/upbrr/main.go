@@ -250,7 +250,7 @@ func runUploadDriver(
 				return exitError(2, fmt.Errorf("--export-last-log cannot be combined with --%s", flag))
 			}
 		}
-		dbPath, err := resolveExportDBPath(opts.ConfigPath, configFlagProvided)
+		dbPath, err := configstore.ResolveExistingDBPath(ctx, opts.ConfigPath, configFlagProvided)
 		if err != nil {
 			return exitError(1, err)
 		}
@@ -1601,7 +1601,6 @@ func processCLIPreparationItems(
 			}
 		}
 		outcome, err := batch.logs.process(itemCtx, item, streams, process)
-		err = errors.Join(err, itemCtx.Err())
 		if batch.queue != nil {
 			if saveErr := batch.queue.finish(queueIndex, outcome, err); saveErr != nil {
 				return &cliQueueCheckpointError{err: errors.Join(err, saveErr)}

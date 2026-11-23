@@ -67,7 +67,11 @@ func (l *Logger) BeginInputLog(ctx context.Context, repo InputLogRepository, sou
 			level:   level,
 			capture: c,
 		}), id, func(path, outcome string) {
+			c.bindPath(path)
 			c.write("INFO", "end", "Input processing finished.")
+			c.mu.Lock()
+			path = c.path
+			c.mu.Unlock()
 			saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 			defer cancel()
 			if err := repo.FinishInputLog(saveCtx, id, path, outcome); err != nil {

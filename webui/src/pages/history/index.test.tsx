@@ -90,6 +90,18 @@ describe("HistoryPage", () => {
     expect(loadOverview).not.toHaveBeenCalled();
   });
 
+  it("shows log discovery failure instead of reporting empty history", async () => {
+    installHistoryMocks({
+      ListHistory: async () => [],
+      ListInputLogSources: async () => {
+        throw new Error("unavailable");
+      },
+    });
+    renderHistory();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not find input logs");
+    expect(screen.queryByText("No stored releases found.")).not.toBeInTheDocument();
+  });
+
   it("opens a stored source through the shared active-input callback", async () => {
     const sourcePath = "C:\\media\\Stored.Release.2026.1080p-GRP.mkv";
     const onOpenInput = vi.fn(async () => true);

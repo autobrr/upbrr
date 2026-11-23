@@ -3655,6 +3655,10 @@ func (r *SQLiteRepository) DeleteUploadedImage(
 }
 
 func (r *SQLiteRepository) ListStoredReleasePaths(ctx context.Context) ([]string, error) {
+	return r.listStoredReleasePaths(ctx, true)
+}
+
+func (r *SQLiteRepository) listStoredReleasePaths(ctx context.Context, includeLogOnly bool) ([]string, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("db: repository not initialized")
 	}
@@ -3706,11 +3710,11 @@ func (r *SQLiteRepository) ListStoredReleasePaths(ctx context.Context) ([]string
 			UNION
 			SELECT source_path FROM media_reusable_tombstones
 			UNION
-			SELECT source_path FROM input_log_attempts
+			SELECT source_path FROM input_log_attempts WHERE ?
 		)
 		WHERE TRIM(source_path) <> ''
 		ORDER BY source_path ASC
-	`)
+	`, includeLogOnly)
 	if err != nil {
 		return nil, fmt.Errorf("db list stored release paths: %w", err)
 	}

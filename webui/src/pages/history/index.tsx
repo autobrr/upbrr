@@ -100,7 +100,7 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
         })),
     ];
   }, [storedEntries, logSourcesQuery.data]);
-  const loading = historyQuery.isPending;
+  const loading = historyQuery.isPending || logSourcesQuery.isPending;
   const [selectedPath, setSelectedPath] = useState("");
   const [logsPath, setLogsPath] = useState("");
   const logOnly =
@@ -246,8 +246,11 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
             </label>
           </div>
 
+          {logSourcesQuery.isError && (
+            <p role="alert">Could not find input logs. Refresh History to try again.</p>
+          )}
           {loading ? <p className="text-muted-foreground">Loading history...</p> : null}
-          {!loading && entries.length === 0 ? (
+          {!loading && !logSourcesQuery.isError && entries.length === 0 ? (
             <p className="text-muted-foreground">No stored releases found.</p>
           ) : null}
           {!loading && entries.length > 0 && filteredEntries.length === 0 ? (

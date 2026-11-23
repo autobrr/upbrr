@@ -2072,14 +2072,10 @@ func (m *Module) recoverOperationAfterLease(
 	if !ok {
 		return errors.New("release workflow: runtime generation retired")
 	}
-	source := ""
-	if retained, loadErr := m.repository.Load(ctx, current.OwnerID, current.WorkflowID); loadErr == nil {
-		source = retained.SourcePath
-	}
 	m.dispatchOperationWorker(
 		context.WithValue(ctx, recoveredOperationContextKey{}, true),
 		current.OwnerID,
-		source,
+		state.SourcePath,
 		capsule.command,
 		current,
 		release,

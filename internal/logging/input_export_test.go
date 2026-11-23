@@ -47,6 +47,12 @@ func TestInputLogExportAcrossRotation(t *testing.T) {
 	source := filepath.Join(root, "original", "Example.mkv")
 	other := filepath.Join(root, "other", "Example.mkv")
 	first, id, finish := logger.BeginInputLog(ctx, repo, source, "open input")
+	canonical := filepath.Join(root, "verified", "Example.mkv")
+	_, nestedID, bindVerified := logger.BeginInputLog(first, repo, source, "verify")
+	if nestedID != id {
+		t.Fatal("nested verification opened an independent attempt")
+	}
+	bindVerified(canonical, "completed")
 	second, otherID, otherFinish := logger.BeginInputLog(ctx, repo, other, "open input")
 	FromContext(first, logger).Tracef("first detail\ncontinued api_key=example-secret")
 	FromContext(second, logger).Tracef("not this input")
@@ -66,7 +72,7 @@ func TestInputLogExportAcrossRotation(t *testing.T) {
 	}
 
 	attempts, err := db.ReadOnlyInputLogs(ctx, database, source)
-	if err != nil || len(attempts) != 1 || attempts[0].ID != id {
+	if err != nil || len(attempts) != 1 || attempts[0].ID != id || attempts[0].SourcePath != canonical {
 		t.Fatalf("attempt lookup: %v, %v", attempts, err)
 	}
 	restarted, err := ReadInputLog(ctx, nil, database, attempts[0])

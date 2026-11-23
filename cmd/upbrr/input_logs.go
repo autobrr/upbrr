@@ -32,11 +32,16 @@ func (l *cliInputLogs) process(
 	process func(context.Context, cliPreparationItem) (cliQueueOutcome, error),
 ) (cliQueueOutcome, error) {
 	if l == nil {
-		return process(ctx, item)
+		outcome, err := process(ctx, item)
+		return outcome, errors.Join(err, ctx.Err())
 	}
 	started := time.Now()
 	ctx, id, finish := l.core.BeginInputLog(ctx, item.originalPath)
+	itemLogger := logging.FromContext(ctx, l.logger)
+	ctx = withCLIUploadProgressLogger(ctx, itemLogger)
+	ctx = withCLISourceVerificationProgressLogger(ctx, itemLogger)
 	outcome, err := process(ctx, item)
+	err = errors.Join(err, ctx.Err())
 	status := outcome.Status
 	if err != nil {
 		if ctx.Err() != nil {
