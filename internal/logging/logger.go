@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -75,8 +76,9 @@ func ParseLevel(value string) (Level, error) {
 
 // Logger writes sanitized, threshold-filtered entries to console and optional
 // file outputs. The file receives every level through TRACE; the optional
-// console threshold can differ from the threshold for snapshots and subscribers. Close releases the
-// optional file output.
+// console threshold can differ from the threshold for snapshots and subscribers.
+// Input captures retain TRACE independently of those thresholds. Close releases
+// the optional file output.
 type Logger struct {
 	level           Level
 	consoleLevel    Level
@@ -88,6 +90,7 @@ type Logger struct {
 	mu              sync.Mutex
 	nextID          int64
 	buffer          []Entry
+	inputLogs       []Entry
 	bufferCap       int
 	subs            map[int]chan Entry
 	subID           int
@@ -296,7 +299,7 @@ func (l *Logger) writefAtLevel(applicationLevel Level, level Level, label string
 		return
 	}
 	applicationEnabled, consoleLevel, enabled := l.enabledLevels(applicationLevel, level)
-	if !enabled {
+	if !enabled && capture == nil {
 		return
 	}
 	l.writeSanitized(level, label, SanitizeMessage(fmt.Sprintf(format, args...)), capture, applicationEnabled, consoleLevel)
@@ -332,8 +335,8 @@ func (l *Logger) writeSanitized(level Level, label, formatted string, capture *i
 		// Indent multiline continuations so they cannot introduce a record.
 		l.file.Print(prefix + diskLogMessage(formatted))
 	}
-	if applicationEnabled {
-		l.record(label, formatted, attempt)
+	if applicationEnabled || attempt != "" {
+		l.record(label, formatted, attempt, applicationEnabled)
 	}
 }
 
@@ -361,7 +364,7 @@ func DBRelativePathLabel(value string) (string, bool) {
 	return "", false
 }
 
-func (l *Logger) record(label, message, attempt string) {
+func (l *Logger) record(label, message, attempt string, applicationEnabled bool) {
 	if l == nil {
 		return
 	}
@@ -374,6 +377,16 @@ func (l *Logger) record(label, message, attempt string) {
 	}
 
 	l.mu.Lock()
+	defer l.mu.Unlock()
+	if attempt != "" {
+		l.inputLogs = append(l.inputLogs, entry)
+		if l.bufferCap > 0 && len(l.inputLogs) > l.bufferCap {
+			l.inputLogs = l.inputLogs[len(l.inputLogs)-l.bufferCap:]
+		}
+	}
+	if !applicationEnabled {
+		return
+	}
 	l.nextID++
 	entry.ID = l.nextID
 	l.buffer = append(l.buffer, entry)
@@ -386,7 +399,15 @@ func (l *Logger) record(label, message, attempt string) {
 		default:
 		}
 	}
-	l.mu.Unlock()
+}
+
+func (l *Logger) recentInputLogs() []Entry {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.inputLogs)
 }
 
 // Recent returns a copied, oldest-to-newest snapshot of the most recent entries.

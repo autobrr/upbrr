@@ -3980,6 +3980,16 @@ func matchingStoredReleaseWorkflowStates(
 // path, including matching workflow state and retired UI-state rows. It does
 // not remove local files or remote uploads.
 func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) error {
+	return r.purgeContentData(ctx, path, true)
+}
+
+// PurgeOrphanContentData removes orphaned release state while retaining input
+// log associations, which can exist without any stored release metadata.
+func (r *SQLiteRepository) PurgeOrphanContentData(ctx context.Context, path string) error {
+	return r.purgeContentData(ctx, path, false)
+}
+
+func (r *SQLiteRepository) purgeContentData(ctx context.Context, path string, deleteInputLogs bool) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
 	}
@@ -4028,17 +4038,19 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 			return err
 		}
 		totalRemoved = 0
-		logPaths, err := inputLogSourceAliases(ctx, tx, trimmedPath)
-		if err != nil {
-			return err
-		}
-		for _, logPath := range logPaths {
-			result, err := tx.ExecContext(ctx, `DELETE FROM input_log_attempts WHERE source_path = ?`, logPath)
+		if deleteInputLogs {
+			logPaths, err := inputLogSourceAliases(ctx, tx, trimmedPath)
 			if err != nil {
-				return fmt.Errorf("db purge input logs: %w", err)
+				return err
 			}
-			removed, _ := result.RowsAffected()
-			totalRemoved += removed
+			for _, logPath := range logPaths {
+				result, err := tx.ExecContext(ctx, `DELETE FROM input_log_attempts WHERE source_path = ?`, logPath)
+				if err != nil {
+					return fmt.Errorf("db purge input logs: %w", err)
+				}
+				removed, _ := result.RowsAffected()
+				totalRemoved += removed
+			}
 		}
 		workflowStates, err := matchingStoredReleaseWorkflowStates(ctx, tx, trimmedPath)
 		if err != nil {

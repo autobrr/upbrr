@@ -67,7 +67,7 @@ func (s *Server) registerInputLogRoutes(mux *http.ServeMux) {
 			for end < len(data.Text) && !utf8.RuneStart(data.Text[end]) {
 				end++
 			}
-			data.Text = "Showing the end of the log. Download for all retained entries.\n\n" + data.Text[end:]
+			data.Text = "Showing the end of the log. Download for the full export.\n\n" + data.Text[end:]
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, http.StatusOK, struct {
@@ -86,6 +86,7 @@ func (s *Server) registerInputLogRoutes(mux *http.ServeMux) {
 			http.NotFound(w, r)
 			return
 		}
+		// History exports the input, not just the attempt that identified it.
 		attempts, err := s.backend.repo.InputLogs(r.Context(), anchor[0].SourcePath, "")
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Input log history is unavailable."})

@@ -19,7 +19,7 @@ These edits require **Save** before they become active.
 | **Total log-file budget (MB)** | `50 MB` | Sets the approximate total file budget. The per-file rotation threshold is this value divided by **Retained log files**. |
 | **Retained log files**         | `3`     | Sets the file-rotation depth used with the total-size budget.                                                            |
 
-File logging requires positive **Total log-file budget (MB)** and **Retained log files** values. The log path is `<database directory>/logs/upbrr.log`; displaying a path does not mean file logging is enabled. When enabled, files receive every level through TRACE. The live viewer receives TRACE by default. An explicit upload-run level can filter that run’s live and recent entries but does not reduce what is written to disk. An existing custom file budget is unchanged.
+File logging requires positive **Total log-file budget (MB)** and **Retained log files** values. The log path is `<database directory>/logs/upbrr.log`; displaying a path does not mean file logging is enabled. When enabled, files receive every level through TRACE. The live viewer and server console keep their configured verbosity. The input log captures through TRACE, even if the live viewer or console is less verbose. An existing custom file budget is unchanged.
 
 ## Choosing a level
 
@@ -38,7 +38,7 @@ This choice does not change another operation’s verbosity. The server console 
 
 In **History**, select the input and choose **Logs**. Opening, preparation, upload, and other retained operations for that input appear together in one log. **Download log** saves a text `.log` file through your browser, including earlier retained lines when the preview only shows the end. An input that failed before metadata was stored can still appear with processing logs only.
 
-upbrr reads matching entries from the active and rotated application logs. When no matching disk entries remain, it can show entries still in the current session's recent buffer. The page labels memory-only, partial and expired logs. Exports include up to 50 MB of log entries and are marked partial if entries are omitted; it cannot attribute older, untagged records to an input. Removing a History entry removes its log association, not the lines already written to the shared rotating files. Inspect and sanitize exports before sharing them.
+upbrr reads matching entries from the active and rotated application logs. When no matching disk entries remain, it can show entries still in the current session's input-log buffer. The page labels memory-only, partial and expired logs. Exports include up to 50 MB of log entries and prefer newer entries when that limit is reached, and are marked partial if entries are omitted; it cannot attribute older, untagged records to an input. Removing a History entry removes its log association, not the lines already written to the shared rotating files. Inspect and sanitize exports before sharing them.
 
 ## Live viewer
 

@@ -251,7 +251,9 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
                 <span className="text-xs">
                   {entry.LogsOnly ? "Processing logs only" : entry.LatestUploadStatus || "Stored"}
                 </span>
-                <span className="text-xs">Updated {formatDate(entry.MetadataUpdatedAt)}</span>
+                {!entry.LogsOnly && (
+                  <span className="text-xs">Updated {formatDate(entry.MetadataUpdatedAt)}</span>
+                )}
               </button>
             ))}
           </div>

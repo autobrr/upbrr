@@ -97,7 +97,37 @@ func TestInputLogExportAcrossRotation(t *testing.T) {
 	}
 }
 
-func TestInputLogUsesExistingMemoryBufferWhenFileLoggingOff(t *testing.T) {
+func TestInputLogExportLimitKeepsNewestDiskRecords(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	database := filepath.Join(t.TempDir(), "upbrr.db")
+	logger, err := New(config.LoggingConfig{
+		Level:          "warn",
+		FileEnabled:    true,
+		MaxTotalSizeMB: 1,
+		MaxFiles:       2,
+	}, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logger.Close()
+	source := filepath.Join(filepath.Dir(database), "Example.mkv")
+	store := &recordingAttempts{}
+	old, _, finishOld := logger.BeginInputLog(ctx, store, source, "preparation")
+	FromContext(old, logger).Tracef("old detail %s", strings.Repeat("o", 80))
+	finishOld("", "completed")
+	current, _, finishCurrent := logger.BeginInputLog(ctx, store, source, "upload")
+	FromContext(current, logger).Tracef("latest failure detail")
+	finishCurrent("", "failed")
+	store.attempts[1].Outcome = "failed"
+	data, err := readInputLogs(ctx, nil, database, []db.InputLogAttempt{store.attempts[1], store.attempts[0]}, 120)
+	if err != nil || data.Coverage != "partial" || !strings.Contains(data.Text, "latest failure detail") ||
+		strings.Contains(data.Text, "old detail") {
+		t.Fatalf("bounded disk export = %#v, %v", data, err)
+	}
+}
+
+func TestInputLogUsesMemoryWhenFileLoggingOff(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 	database := filepath.Join(t.TempDir(), "upbrr.db")

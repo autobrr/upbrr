@@ -34,7 +34,12 @@ func ReadInputLog(ctx context.Context, logger *Logger, dbPath string, a db.Input
 // ReadInputLogs reads the rotating files once for all selected attempts, then
 // assembles their retained records in chronological attempt order. An attempt
 // is complete only when both markers and every numbered disk entry survive.
+// If the export limit is reached, newer records take precedence.
 func ReadInputLogs(ctx context.Context, logger *Logger, dbPath string, attempts []db.InputLogAttempt) (InputLogExport, error) {
+	return readInputLogs(ctx, logger, dbPath, attempts, inputExportLimit)
+}
+
+func readInputLogs(ctx context.Context, logger *Logger, dbPath string, attempts []db.InputLogAttempt, limit int) (InputLogExport, error) {
 	if len(attempts) == 0 {
 		return InputLogExport{Coverage: "expired"}, nil
 	}
@@ -42,19 +47,23 @@ func ReadInputLogs(ctx context.Context, logger *Logger, dbPath string, attempts 
 	if err != nil {
 		return InputLogExport{}, fmt.Errorf("resolve input log root: %w", err)
 	}
-	budget := inputExportLimit
-	reader := inputLogReader{records: make(map[string]*inputLogRecords, len(attempts))}
+	reader := inputLogReader{records: make(map[string]*inputLogRecords, len(attempts)), limit: limit}
 	for _, a := range attempts {
-		reader.records[a.ID] = &inputLogRecords{remaining: &budget}
+		reader.records[a.ID] = &inputLogRecords{}
 	}
 	if err := reader.readFiles(ctx, filepath.Join(dir, "logs")); err != nil {
 		return InputLogExport{}, err
 	}
-	for _, e := range logger.Recent(0) {
+	for _, e := range logger.recentInputLogs() {
 		records := reader.records[e.attempt]
 		if records != nil && !records.sawDiskRecord {
 			records.memory = true
-			records.add(fmt.Sprintf("%s %s: %s\n", e.Time.Format("2006/01/02 15:04:05"), strings.ToUpper(e.Level), e.Message))
+			reader.add(records, fmt.Sprintf("%s %s: %s\n", e.Time.Format("2006/01/02 15:04:05"), strings.ToUpper(e.Level), e.Message), false)
+		}
+	}
+	for _, entry := range reader.lines[reader.first:] {
+		if !entry.continuation || entry.records.text.Len() != 0 {
+			entry.records.text.WriteString(entry.text)
 		}
 	}
 	var text strings.Builder
@@ -64,7 +73,7 @@ func ReadInputLogs(ctx context.Context, logger *Logger, dbPath string, attempts 
 		coverage := "expired"
 		if records.text.Len() > 0 {
 			switch {
-			case records.memory:
+			case records.memory && !records.incomplete:
 				coverage = "memory"
 			case records.started && records.ended && !records.incomplete && !reader.incomplete && a.Outcome != "":
 				coverage = "complete"
@@ -100,30 +109,53 @@ func ReadInputLogs(ctx context.Context, logger *Logger, dbPath string, attempts 
 
 type inputLogRecords struct {
 	text                                              strings.Builder
-	remaining                                         *int
 	next                                              uint64
 	started, ended, incomplete, memory, sawDiskRecord bool
 }
 
-func (r *inputLogRecords) add(line string) {
-	if len(line) > *r.remaining {
-		r.incomplete = true
-		return
-	}
-	*r.remaining -= len(line)
-	r.text.WriteString(line)
+type inputLogLine struct {
+	records      *inputLogRecords
+	text         string
+	continuation bool
 }
 
 type inputLogReader struct {
 	records      map[string]*inputLogRecords
 	continuation *inputLogRecords
+	lines        []inputLogLine
+	first        int
+	limit, bytes int
 	incomplete   bool
+}
+
+func (r *inputLogReader) add(records *inputLogRecords, line string, continuation bool) {
+	if len(line) > r.limit {
+		records.incomplete = true
+		return
+	}
+	for r.bytes+len(line) > r.limit {
+		oldest := r.lines[r.first]
+		r.lines[r.first] = inputLogLine{}
+		r.first++
+		oldest.records.incomplete = true
+		r.bytes -= len(oldest.text)
+	}
+	if r.first > 0 && r.first >= len(r.lines)-r.first {
+		r.lines = slices.Delete(r.lines, 0, r.first)
+		r.first = 0
+	}
+	r.lines = append(r.lines, inputLogLine{
+		records:      records,
+		text:         line,
+		continuation: continuation,
+	})
+	r.bytes += len(line)
 }
 
 func (r *inputLogReader) accept(line string) {
 	if rest, ok := strings.CutPrefix(line, "\t"); ok {
 		if r.continuation != nil {
-			r.continuation.add(rest)
+			r.add(r.continuation, rest, true)
 		}
 		return
 	}
@@ -166,7 +198,7 @@ func (r *inputLogReader) accept(line string) {
 	case "record":
 		records.sawDiskRecord = true
 		r.continuation = records
-		records.add(line[:20] + severity + ": " + body)
+		r.add(records, line[:20]+severity+": "+body, false)
 	default:
 		records.incomplete = true
 	}

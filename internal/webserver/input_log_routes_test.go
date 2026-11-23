@@ -35,6 +35,8 @@ func TestInputLogHistoryAndDownloadCombineSameInput(t *testing.T) {
 	server.backend.capabilities = generation.Capabilities
 	logger := generation.Logger
 	logger.SetConsoleOutput(io.Discard, io.Discard)
+	subscriptionID, live := logger.Subscribe(10)
+	t.Cleanup(func() { logger.Unsubscribe(subscriptionID) })
 	server.backend.logger = logger
 	ctx := t.Context()
 	source := filepath.Join(t.TempDir(), "Example.mkv")
@@ -58,6 +60,18 @@ func TestInputLogHistoryAndDownloadCombineSameInput(t *testing.T) {
 	other, _, finishOther := logger.BeginInputLog(ctx, server.backend.repo, otherPath, "open input")
 	logging.FromContext(other, logger).Infof("unrelated input")
 	finishOther("", "failed")
+	logger.Warnf("live warning")
+	if recent := logger.Recent(0); len(recent) != 1 || recent[0].Message != "live warning" {
+		t.Fatalf("trace input capture leaked into recent application logs: %#v", recent)
+	}
+	select {
+	case first := <-live:
+		if first.Message != "live warning" || len(live) != 0 {
+			t.Fatalf("live subscriber received input-only entries: %#v", first)
+		}
+	default:
+		t.Fatal("live warning did not reach subscriber")
+	}
 
 	active, err := server.sessions.Create("admin", false)
 	if err != nil {

@@ -15,6 +15,7 @@ type operationLoggerKey struct{}
 // OperationLogger is an immutable non-owning verbosity view over one active
 // logger. Entries use the root logger's sanitized outputs, buffer, and
 // subscribers without changing its configured application or console threshold.
+// Input captures and file logging are not filtered by the operation level.
 type OperationLogger struct {
 	root    *Logger
 	level   Level

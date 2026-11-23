@@ -72,12 +72,18 @@ const overview = (sourcePath: string, title: string): HistoryOverview => ({
 });
 
 describe("HistoryPage", () => {
-  it("finds a failed input before metadata and offers a browser download for its attempt", async () => {
+  it("finds a failed input before metadata and offers a browser download without an update date", async () => {
     const sourcePath = "/media/Missing.Release.2026-GRP.mkv";
     const id = "00000000000000000000001a";
     const loadOverview = vi.fn();
     installHistoryMocks({
-      ListHistory: async () => [{ ...entry(sourcePath, "Missing Release"), LogsOnly: true }],
+      ListHistory: async () => [
+        {
+          ...entry(sourcePath, "Missing Release"),
+          MetadataUpdatedAt: "0001-01-01T00:00:00Z",
+          LogsOnly: true,
+        },
+      ],
       GetInputLog: async () => ({
         Coverage: "memory",
         Text: "Input validation failed.",
@@ -89,6 +95,7 @@ describe("HistoryPage", () => {
     renderHistory();
     expect(await screen.findByText("Input validation failed.")).toBeInTheDocument();
     expect(screen.getByText(/Recent entries from this session only/)).toBeInTheDocument();
+    expect(screen.queryByText(/^Updated /)).not.toBeInTheDocument();
     const download = screen.getByRole("link", { name: "Download log" });
     expect(download).toHaveAttribute("download");
     expect(download).toHaveAttribute("href", `/api/app/InputLog/${id}`);
