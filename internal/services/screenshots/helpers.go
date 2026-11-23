@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 
+	gomediainfo "github.com/autobrr/go-mediainfo"
+
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
@@ -64,6 +66,23 @@ type mediaInfoDoc struct {
 	} `json:"media"`
 }
 
+// inspectLocalMediaInfo uses native facts for a prepared secondary file.
+func inspectLocalMediaInfo(ctx context.Context, path string) (mediaInfoDoc, error) {
+	report, err := gomediainfo.AnalyzeFileContext(ctx, path)
+	if err != nil {
+		return mediaInfoDoc{}, fmt.Errorf("screenshots: inspect local media facts: %w", err)
+	}
+	payload, err := gomediainfo.Render([]gomediainfo.Report{report}, gomediainfo.OutputJSON)
+	if err != nil {
+		return mediaInfoDoc{}, fmt.Errorf("screenshots: render local media facts: %w", err)
+	}
+	var doc mediaInfoDoc
+	if err := json.Unmarshal([]byte(payload), &doc); err != nil {
+		return mediaInfoDoc{}, fmt.Errorf("screenshots: decode local media facts: %w", err)
+	}
+	return doc, nil
+}
+
 var durationTokenPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(milliseconds?|msecs?|ms|hours?|hrs?|h|minutes?|mins?|min|seconds?|secs?|sec|s)\b`)
 
 const dvdSegmentDurationToleranceSeconds = 5.0
@@ -99,6 +118,9 @@ func resolveVideoInfo(ctx context.Context, meta api.ScreenshotSubject, tmpRoot s
 		meta.TVPack,
 	)
 	doc, mediaInfoErr := loadMediaInfoDoc(meta.MediaInfoJSONPath)
+	if meta.PackMemberID != "" && meta.MediaInfoJSONPath == "" {
+		doc, mediaInfoErr = inspectLocalMediaInfo(ctx, basePath)
+	}
 	if mediaInfoErr != nil {
 		logger.Debugf("screenshots: mediainfo timing unavailable err=%s", redaction.RedactValue(mediaInfoErr.Error(), nil))
 	}

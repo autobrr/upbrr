@@ -52,14 +52,6 @@ func TestEffectiveConfigFingerprintIgnoresCompatibilitySettingsWithoutMutatingSt
 		CheckPredb:    true,
 	}
 	next.ScreenshotHandling.CutoffScreens = 4
-	next.Description = DescriptionSettingsConfig{
-		MultiScreens:  2,
-		PackThumbSize: 300,
-		CharLimit:     100,
-		FileLimit:     3,
-		ProcessLimit:  4,
-	}
-	next.ArrIntegration = ArrIntegrationConfig{EmbyDir: "legacy movies", EmbyTVDir: "legacy episodes"}
 	next.TorrentCreation.MkbrrThreads = 3
 	next.PostUpload = PostUploadConfig{
 		ShowUploadDuration:       true,

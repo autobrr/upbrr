@@ -74,11 +74,6 @@ description_settings:
   screens_per_row: ""
   episode_overview: false
   tonemapped_header: "[center][code] Screenshots have been tonemapped for reference [/code][/center]"
-  multiScreens: 2
-  pack_thumb_size: 300
-  charLimit: 14000
-  fileLimit: 2
-  processLimit: 10
   custom_description_header: ""
   screenshot_header: ""
   disc_menu_header: ""
@@ -111,8 +106,6 @@ arr_integration:
   radarr_api_key_2: ""
   radarr_url_3: ""
   radarr_api_key_3: ""
-  emby_dir: ""
-  emby_tv_dir: ""
 
 torrent_creation:
   mkbrr_threads: 0

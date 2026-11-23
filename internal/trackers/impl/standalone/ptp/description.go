@@ -22,6 +22,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/description"
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -29,10 +30,10 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func buildDescription(meta api.UploadSubject, trackerConfig config.TrackerConfig, appConfig config.Config, assets trackers.DescriptionAssets) string {
+func buildDescription(meta api.UploadSubject, trackerConfig config.TrackerConfig, appConfig config.Config, assets trackers.DescriptionAssets) (string, error) {
 	baseDescription := strings.TrimSpace(assets.Description)
 	if assets.Final {
-		return baseDescription
+		return baseDescription, nil
 	}
 	baseDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(baseDescription)
 	if baseDescription != "" {
@@ -42,8 +43,11 @@ func buildDescription(meta api.UploadSubject, trackerConfig config.TrackerConfig
 	}
 
 	var sections []string
-	if mediaSection, err := buildMediaSection(meta, appConfig.MainSettings.DBPath); err == nil && mediaSection != "" {
-		sections = append(sections, mediaSection)
+	multiDisc := meta.ExactMedia != nil && len(meta.Discs) > 1
+	if !multiDisc {
+		if mediaSection, err := buildMediaSection(meta, appConfig.MainSettings.DBPath); err == nil && mediaSection != "" {
+			sections = append(sections, mediaSection)
+		}
 	}
 	if strings.TrimSpace(baseDescription) != "" {
 		sections = append(sections, comparison.MapOutsideBlocks(baseDescription, convertDescription))
@@ -57,43 +61,145 @@ func buildDescription(meta api.UploadSubject, trackerConfig config.TrackerConfig
 	if audioAnalysis != "" {
 		sections = append(sections, convertDescription(audioAnalysis))
 	}
-	if shots := buildScreenshotSection(meta, assets.Screenshots, trackerConfig.ScreenshotBlankLineEnabled()); shots != "" {
+	blankLine := trackerConfig.ScreenshotBlankLineEnabled()
+	if multiDisc {
+		reports, err := ptpDiscMediaBlocks(meta, appConfig.MainSettings.DBPath)
+		if err != nil {
+			return "", err
+		}
+		galleries := ptpDiscScreenshotGroups(meta.Discs, assets.Screenshots, screenshotSeparator(blankLine))
+		if len(galleries) > 0 {
+			for index, disc := range meta.Discs {
+				if report := reports[disc.ID]; report != "" {
+					galleries[index] = report + "\n" + galleries[index]
+				}
+			}
+			sections = append(sections, strings.Join(galleries, "\n\n\n"))
+		}
+	} else if shots := buildScreenshotSection(meta, assets.Screenshots, blankLine); shots != "" {
 		sections = append(sections, shots)
 	}
-	return strings.TrimSpace(strings.Join(sections, "\n\n"))
+	return strings.TrimSpace(strings.Join(sections, "\n\n")), nil
 }
+
+const (
+	packScreenshotsPerMember     = 2
+	screenshotsPerAdditionalDisc = 2
+)
 
 func buildScreenshotSection(meta api.UploadSubject, screenshots []api.ScreenshotImage, blankLine bool) string {
 	if len(screenshots) == 0 {
 		return ""
 	}
+	separator := screenshotSeparator(blankLine)
+	if members := ptpExactPackMembers(meta); len(members) > 0 {
+		return strings.Join(ptpPackScreenshotImages(members, screenshots), separator)
+	}
 	minimum := max(len(meta.FileList), max(meta.Options.Screens, 3))
 	allowed := make([]string, 0, len(screenshots))
 	for _, screenshot := range screenshots {
-		rawURL := strings.TrimSpace(screenshot.RawURL)
-		if rawURL == "" {
-			rawURL = strings.TrimSpace(screenshot.ImgURL)
+		if url := ptpScreenshotURL(screenshot); url != "" {
+			allowed = append(allowed, "[img]"+url+"[/img]")
 		}
-		if rawURL == "" {
-			continue
-		}
-		host := strings.ToLower(strings.TrimSpace(screenshot.Host))
-		if host == "" {
-			host = imagehost.ExtractHost(rawURL)
-		}
-		if !isPTPImageHost(host) {
-			continue
-		}
-		allowed = append(allowed, "[img]"+rawURL+"[/img]")
 	}
 	if len(allowed) < minimum {
 		return ""
 	}
-	separator := "\n"
-	if blankLine {
-		separator += "\n"
-	}
 	return strings.Join(allowed, separator)
+}
+
+func screenshotSeparator(blankLine bool) string {
+	if blankLine {
+		return "\n\n"
+	}
+	return "\n"
+}
+
+// ptpDiscScreenshotGroups returns one gallery per prepared disc in order, or
+// nil when any disc lacks its required distinct hosted frames.
+func ptpDiscScreenshotGroups(discs []api.DiscEvidenceResource, screenshots []api.ScreenshotImage, separator string) []string {
+	sections := make([]string, 0, len(discs))
+	seen := make(map[string]bool)
+	for index, disc := range discs {
+		var images []string
+		for _, image := range screenshots {
+			if image.DiscID != disc.ID {
+				continue
+			}
+			url := ptpScreenshotURL(image)
+			if url == "" || seen[url] {
+				continue
+			}
+			seen[url] = true
+			images = append(images, "[img]"+url+"[/img]")
+			if index > 0 && len(images) == screenshotsPerAdditionalDisc {
+				break
+			}
+		}
+		if len(images) == 0 || index > 0 && len(images) != screenshotsPerAdditionalDisc {
+			return nil
+		}
+		sections = append(sections, strings.Join(images, separator))
+	}
+	return sections
+}
+
+func ptpExactPackMembers(meta api.UploadSubject) []api.ScreenshotPackMember {
+	if meta.ExactMedia == nil || strings.TrimSpace(meta.DiscType) != "" {
+		return nil
+	}
+	members := mediafacts.PackScreenshotMembers(meta.FileList)
+	if len(members) < 2 {
+		return nil
+	}
+	return members
+}
+
+// ptpPackScreenshotImages includes exactly two distinct hosted frames for each
+// member, in prepared member order. Whole-release images cannot fill a gap.
+func ptpPackScreenshotImages(members []api.ScreenshotPackMember, screenshots []api.ScreenshotImage) []string {
+	byMember := make(map[string][]string, len(members))
+	for _, member := range members {
+		byMember[member.ID] = nil
+	}
+	seen := make(map[string]bool)
+	for _, image := range screenshots {
+		found, eligible := byMember[image.PackMemberID]
+		if !eligible || len(found) >= packScreenshotsPerMember {
+			continue
+		}
+		if url := ptpScreenshotURL(image); url != "" && !seen[url] {
+			byMember[image.PackMemberID] = append(found, "[img]"+url+"[/img]")
+			seen[url] = true
+		}
+	}
+	var images []string
+	for _, member := range members {
+		found := byMember[member.ID]
+		if len(found) != packScreenshotsPerMember {
+			return nil
+		}
+		images = append(images, found...)
+	}
+	return images
+}
+
+func ptpScreenshotURL(screenshot api.ScreenshotImage) string {
+	rawURL := strings.TrimSpace(screenshot.RawURL)
+	if rawURL == "" {
+		rawURL = strings.TrimSpace(screenshot.ImgURL)
+	}
+	if rawURL == "" {
+		return ""
+	}
+	host := strings.ToLower(strings.TrimSpace(screenshot.Host))
+	if host == "" {
+		host = imagehost.ExtractHost(rawURL)
+	}
+	if !isPTPImageHost(host) {
+		return ""
+	}
+	return rawURL
 }
 
 func isPTPImageHost(host string) bool {

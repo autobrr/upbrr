@@ -9,8 +9,6 @@ const field = (label: string, help: string): Presentation => ({ label, help });
 /** Controls omitted from Settings; stored values and secret metadata remain intact. */
 export const hiddenSettingsFields: Record<string, readonly string[]> = {
   Metadata: ["BTNAPI"],
-  Description: ["MultiScreens", "PackThumbSize", "CharLimit", "FileLimit", "ProcessLimit"],
-  ArrIntegration: ["EmbyDir", "EmbyTVDir"],
 };
 
 /** Display-only metadata: configuration keys and values remain owned by the existing schema. */

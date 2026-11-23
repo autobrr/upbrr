@@ -129,7 +129,7 @@ func TestStartupPreservesEvidenceOnlyForProvenFingerprintFormatChange(t *testing
 			repo := openRuntimeActivationTestRepo(t)
 			cfg := validRuntimeActivationConfig()
 			cfg.MainSettings.DBPath = repo.DBPath()
-			cfg.Description.CharLimit = 37
+			cfg.MainSettings.TrackerPassChecks = 37
 			legacy := cfg
 			legacy.MainSettings.DBPath = ""
 			oldFingerprint, err := api.CanonicalWorkflowFingerprint(legacy)

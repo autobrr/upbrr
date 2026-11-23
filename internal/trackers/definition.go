@@ -942,6 +942,11 @@ type ClaimPolicyProvider interface {
 // WorkflowMediaRequirements declares tracker-owned media minimums and reuse policy.
 // Capture preferences and global caps do not belong here.
 type WorkflowMediaRequirements struct {
+	// PackScreenshotsPerMember is the site-owned count for each eligible video
+	// in a multi-file pack, where a release-level count is not sufficient.
+	PackScreenshotsPerMember int
+	// AdditionalDiscScreenshots fixes the number of screenshots on each disc after the first.
+	AdditionalDiscScreenshots int
 	// DVDMenuCount is the minimum selected DVD-menu image count.
 	DVDMenuCount int
 	// AllowImportedScreenshotReferences permits current, host-compatible imported

@@ -142,6 +142,25 @@ func migrateAddReusableMediaTombstoneSources(ctx context.Context, exec migration
 	return nil
 }
 
+// migrateAddReusableMediaScreenshotLanes leaves existing shared images unscoped.
+func migrateAddReusableMediaScreenshotLanes(ctx context.Context, exec migrationExecutor) error {
+	for _, column := range []struct{ name, statement string }{
+		{"pack_member_id", `ALTER TABLE media_reusable_assets ADD COLUMN pack_member_id TEXT NOT NULL DEFAULT ''`},
+		{"additional_disc", `ALTER TABLE media_reusable_assets ADD COLUMN additional_disc INTEGER NOT NULL DEFAULT 0`},
+	} {
+		exists, err := tableColumnExists(ctx, exec, "media_reusable_assets", column.name)
+		if err != nil {
+			return fmt.Errorf("db: inspect reusable screenshot lane: %w", err)
+		}
+		if !exists {
+			if _, err := exec.ExecContext(ctx, column.statement); err != nil {
+				return fmt.Errorf("db: add reusable screenshot lane: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
 // CommitReusableMedia atomically records reusable media and the exact durable
 // workflow snapshot it represents.
 func (r *SQLiteRepository) CommitReusableMedia(
@@ -165,6 +184,10 @@ func (r *SQLiteRepository) CommitReusableMedia(
 	if err != nil {
 		return internalerrors.ErrInvalidInput
 	}
+	// A snapshot without a tracker lane must not delete it: the tracker may
+	// simply not be selected this time. Explicit deletions use tombstones.
+	replacePack := slices.ContainsFunc(normalized, func(asset api.ReusableMediaAsset) bool { return asset.Image.PackMemberID != "" })
+	replaceDiscs := slices.ContainsFunc(normalized, func(asset api.ReusableMediaAsset) bool { return asset.Image.AdditionalDisc })
 	return r.withWriteTx(ctx, "commit reusable media", func(tx *sql.Tx) error {
 		if err := requireReusableMediaAuthority(ctx, tx, bound.SourcePath); err != nil {
 			return err
@@ -172,12 +195,21 @@ func (r *SQLiteRepository) CommitReusableMedia(
 		if _, err := tx.ExecContext(ctx, `
 			DELETE FROM media_reusable_assets
 			WHERE source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ?
-		`, bound.SourcePath, bound.PreparedMediaFingerprint, bound.PreparedGeneration); err != nil {
+    AND ((pack_member_id = '' AND additional_disc = 0)
+      OR (? AND pack_member_id <> '') OR (? AND additional_disc <> 0))
+		`, bound.SourcePath, bound.PreparedMediaFingerprint, bound.PreparedGeneration, replacePack, replaceDiscs); err != nil {
 			return fmt.Errorf("db reusable media: clear associations: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `
-			DELETE FROM media_reusable_hosted_links
+			DELETE FROM media_reusable_hosted_links AS link
 			WHERE source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ?
+    AND NOT EXISTS (
+     SELECT 1 FROM media_reusable_assets AS asset
+     WHERE asset.source_path = link.source_path
+       AND asset.prepared_media_fingerprint = link.prepared_media_fingerprint
+       AND asset.prepared_generation = link.prepared_generation
+       AND asset.capture_fingerprint = link.capture_fingerprint AND asset.content_sha256 = link.content_sha256
+    )
 		`, bound.SourcePath, bound.PreparedMediaFingerprint, bound.PreparedGeneration); err != nil {
 			return fmt.Errorf("db reusable media: clear hosted associations: %w", err)
 		}
@@ -194,8 +226,9 @@ func (r *SQLiteRepository) CommitReusableMedia(
 			INSERT INTO media_reusable_assets (
 				source_path, prepared_media_fingerprint, prepared_generation, compatibility_key,
 				capture_fingerprint, content_sha256, kind, purpose, disc_id, image_path,
-			image_index, timestamp_seconds, width, height, size_bytes, imported, selected, sort_order, captured_at, tonemapping, processing_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			image_index, timestamp_seconds, width, height, size_bytes, imported, selected, sort_order, captured_at, tonemapping, processing_json,
+   pack_member_id, additional_disc
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`)
 		if err != nil {
 			return fmt.Errorf("db reusable media: prepare asset: %w", err)
@@ -227,6 +260,7 @@ func (r *SQLiteRepository) CommitReusableMedia(
 				strings.TrimSpace(image.DiscID), strings.TrimSpace(image.Path), image.Index, image.TimestampSeconds,
 				image.Width, image.Height, image.SizeBytes, boolToInt(asset.Imported), boolToInt(asset.Selected), asset.Order,
 				time.Now().UTC().Format(time.RFC3339Nano), image.Tonemapping, encodeOptionalJSON(image.Processing),
+				image.PackMemberID, boolToInt(image.AdditionalDisc),
 			); err != nil {
 				return fmt.Errorf("db reusable media: insert asset: %w", err)
 			}
@@ -315,7 +349,7 @@ func (r *SQLiteRepository) loadReusableMediaAssets(
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT source_path, prepared_media_fingerprint, prepared_generation, capture_fingerprint, content_sha256,
 			kind, purpose, disc_id, image_path, image_index, timestamp_seconds, width, height, size_bytes,
-			imported, selected, sort_order, tonemapping, processing_json
+			imported, selected, sort_order, tonemapping, processing_json, pack_member_id, additional_disc
 		FROM media_reusable_assets AS asset
 		WHERE compatibility_key = ?
 			AND (? = '' OR (source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ?))
@@ -336,13 +370,14 @@ func (r *SQLiteRepository) loadReusableMediaAssets(
 	seen := make(map[string]struct{})
 	for rows.Next() {
 		var asset api.ReusableMediaAsset
-		var imported, selected int
+		var imported, selected, additionalDisc int
 		var processingJSON string
 		if err := rows.Scan(
 			&asset.Binding.SourcePath, &asset.Binding.PreparedMediaFingerprint, &asset.Binding.PreparedGeneration,
 			&asset.CaptureFingerprint, &asset.ContentSHA256, &asset.Kind, &asset.Image.Purpose, &asset.Image.DiscID,
 			&asset.Image.Path, &asset.Image.Index, &asset.Image.TimestampSeconds, &asset.Image.Width, &asset.Image.Height,
 			&asset.Image.SizeBytes, &imported, &selected, &asset.Order, &asset.Image.Tonemapping, &processingJSON,
+			&asset.Image.PackMemberID, &additionalDisc,
 		); err != nil {
 			return nil, fmt.Errorf("db reusable media: scan asset: %w", err)
 		}
@@ -352,6 +387,7 @@ func (r *SQLiteRepository) loadReusableMediaAssets(
 		}
 		asset.CompatibilityKey = compatibilityKey
 		asset.Image.ContentSHA256 = asset.ContentSHA256
+		asset.Image.AdditionalDisc = additionalDisc != 0
 		asset.Imported = imported != 0
 		asset.Selected = selected != 0
 		key := reusableMediaClaimKey(asset.CaptureFingerprint, asset.ContentSHA256)

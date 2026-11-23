@@ -21,7 +21,8 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 		return strings.TrimSpace(assets.Description)
 	}
 	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
-	baseDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(assets.Description)
+	baseDescription, discReports := description.SplitLeadingDiscReports(assets.Description)
+	baseDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(baseDescription)
 	assets.Description = baseDescription
 	meta := req.Meta
 	parts := make([]string, 0, 8)
@@ -45,7 +46,7 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 	}
 
 	// File information (BDInfo or MediaInfo)
-	if media := trackers.ReadBDinfoOrMediaInfo(req.Runtime.DBPath, meta); media != "" {
+	if media := trackers.ReadMediaInfoForDescription(req.Runtime.DBPath, meta); media != "" {
 		parts = append(parts, media)
 	}
 
@@ -67,6 +68,9 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 	}
 	if audioAnalysis != "" {
 		parts = append(parts, audioAnalysis)
+	}
+	if discReports != "" {
+		parts = append(parts, discReports)
 	}
 	// Screenshot Header
 	if header := strings.TrimSpace(req.Runtime.Description.ScreenshotHeader); header != "" {

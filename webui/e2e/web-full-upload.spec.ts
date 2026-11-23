@@ -798,6 +798,13 @@ test("embedded video comparisons match three native sources and retain reviewed 
       await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
       await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
       await page.getByRole("checkbox", { name: "HDS", exact: true }).check();
+      // Tracker selection refreshes projections asynchronously and gates navigation.
+      await expect
+        .poll(async () =>
+          (await snapshot()).current?.projections?.projections.map((item) => item.trackerId),
+        )
+        .toEqual(["HDS"]);
+      await expect(page.getByRole("button", { name: "Run dupe check", exact: true })).toBeEnabled();
       await page.getByRole("button", { name: "Screenshots", exact: true }).click();
       await comparison
         .getByRole("button", { name: "Restore retained comparisons", exact: true })

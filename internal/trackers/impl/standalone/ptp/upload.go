@@ -230,7 +230,10 @@ func prepareUploadStateAt(ctx context.Context, req trackers.PreparationInput, dr
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description := buildDescription(req.Meta, req.TrackerConfig, req.Runtime.DescriptionConfig(), assets)
+	description, err := buildDescription(req.Meta, req.TrackerConfig, req.Runtime.DescriptionConfig(), assets)
+	if err != nil {
+		return uploadState{}, err
+	}
 	groupID, err := lookupGroupID(ctx, baseURL, req.TrackerConfig, req.Meta)
 	if err != nil {
 		return uploadState{}, err

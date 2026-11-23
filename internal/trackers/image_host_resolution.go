@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/netip"
@@ -27,6 +28,7 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/pathing"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	dbsvc "github.com/autobrr/upbrr/internal/services/db"
@@ -41,10 +43,63 @@ type descriptionImageHostResolution struct {
 	blocking    bool
 }
 
+// hasExactScreenshotScope routes scoped descriptions through per-tracker
+// image selection even when hosting was not skipped.
+func hasExactScreenshotScope(meta api.UploadSubject, registry *Registry) bool {
+	if meta.ExactMedia == nil {
+		return false
+	}
+	if slices.ContainsFunc(meta.ExactMedia.Screenshots, func(image api.ScreenshotImage) bool { return image.PackMemberID != "" || image.AdditionalDisc }) {
+		return true
+	}
+	return slices.ContainsFunc(meta.Trackers, func(tracker string) bool {
+		return RequiresPackScreenshots(registry, tracker, meta)
+	})
+}
+
+// RequiresPackScreenshots reports whether the registered tracker requires
+// screenshots from each eligible video file for this prepared release.
+func RequiresPackScreenshots(registry *Registry, tracker string, meta api.UploadSubject) bool {
+	descriptor, ok := registry.LookupDescriptor(tracker)
+	return ok && descriptor.WorkflowMedia != nil && descriptor.WorkflowMedia.PackScreenshotsPerMember > 0 &&
+		strings.TrimSpace(meta.DiscType) == "" && len(mediafacts.PackScreenshotMembers(meta.FileList)) > 1
+}
+
+// RequiresAdditionalDiscScreenshots reports whether this tracker can consume
+// extra screenshots from later discs in the prepared collection.
+func RequiresAdditionalDiscScreenshots(registry *Registry, tracker string, meta api.UploadSubject) bool {
+	descriptor, ok := registry.LookupDescriptor(tracker)
+	return ok && descriptor.WorkflowMedia != nil && descriptor.WorkflowMedia.AdditionalDiscScreenshots > 0 && len(meta.Discs) > 1
+}
+
+// scopeExactScreenshotMedia keeps extra disc and per-file screenshots out of ordinary tracker
+// lanes without altering the shared exact media or comparison inputs.
+func scopeExactScreenshotMedia(meta api.UploadSubject, tracker string, registry *Registry) api.UploadSubject {
+	if !hasExactScreenshotScope(meta, registry) {
+		return meta
+	}
+	wantPack := RequiresPackScreenshots(registry, tracker, meta)
+	wantExtraDisc := RequiresAdditionalDiscScreenshots(registry, tracker, meta)
+	exact := meta.ExactMedia.Clone()
+	removedPaths := make(map[string]bool)
+	exact.Screenshots = slices.DeleteFunc(exact.Screenshots, func(image api.ScreenshotImage) bool {
+		remove := (image.PackMemberID != "") != wantPack || image.AdditionalDisc && !wantExtraDisc
+		if remove {
+			removedPaths[strings.TrimSpace(image.Path)] = true
+		}
+		return remove
+	})
+	exact.ScreenshotUploads = slices.DeleteFunc(exact.ScreenshotUploads, func(upload api.UploadedImageLink) bool {
+		return removedPaths[strings.TrimSpace(upload.ImagePath)]
+	})
+	meta.ExactMedia = exact
+	return meta
+}
+
 // exactMediaForTrackerHost selects reusable screenshots and excludes source-only
 // or failed-host DVD menu uploads. The workflow may contain other trackers' images.
-// Available configured-host links take precedence over other hosts' coverage.
-// Equal coverage otherwise retains the resolved host preference.
+// Complete scoped galleries outrank partial galleries. Within the same
+// completeness tier, eligible configured hosts retain their preference.
 func exactMediaForTrackerHost(
 	tracker string,
 	meta api.UploadSubject,
@@ -134,14 +189,19 @@ func exactMediaForTrackerHost(
 		}
 		pathsByHost[host][pathValue] = struct{}{}
 	}
+	complete := completeScopedScreenshotHosts(registry, tracker, meta, appCfg, exact.Screenshots, pathsByHost)
 	selectedHost := ""
 	for _, host := range orderedHosts {
+		if len(complete) > 0 && !complete[host] {
+			continue
+		}
 		if selectedHost == "" || len(pathsByHost[host]) > len(pathsByHost[selectedHost]) ||
 			(len(pathsByHost[host]) == len(pathsByHost[selectedHost]) && host == preferredHost(selectionPolicy)) {
 			selectedHost = host
 		}
 	}
-	if configuredHost := strings.ToLower(strings.TrimSpace(trackerCfg.ImageHost)); len(pathsByHost[configuredHost]) > 0 {
+	if configuredHost := strings.ToLower(strings.TrimSpace(trackerCfg.ImageHost)); len(pathsByHost[configuredHost]) > 0 &&
+		(len(complete) == 0 || complete[configuredHost]) {
 		selectedHost = configuredHost
 	}
 	if selectedHost == "" {
@@ -173,6 +233,73 @@ func exactMediaForTrackerHost(
 	exact.Screenshots = filteredImages
 	exact.ScreenshotUploads = filteredUploads
 	return exact, nil
+}
+
+// completeScopedScreenshotHosts checks each host independently against the
+// same per-source quotas used by workflow projection. An ordinary gallery
+// has no scoped quotas, so it preserves the existing host preference.
+func completeScopedScreenshotHosts(
+	registry *Registry, tracker string, meta api.UploadSubject, cfg config.Config,
+	images []api.ScreenshotImage, pathsByHost map[string]map[string]struct{},
+) map[string]bool {
+	descriptor, ok := registry.LookupDescriptor(tracker)
+	if !ok || descriptor.WorkflowMedia == nil {
+		return nil
+	}
+	var count *int
+	if meta.Options.Screens > 0 {
+		count = &meta.Options.Screens
+	}
+	var projection api.TrackerReleaseProjection
+	applyWorkflowProjectionRequirements(&projection, descriptor, count, count == nil, cfg, meta)
+	requirements := projection.Artifacts
+	remaining := make(map[string]int)
+	switch {
+	case requirements.PackScreenshots != nil:
+		for _, id := range requirements.PackScreenshots.MemberIDs {
+			remaining[id] = requirements.PackScreenshots.CountPerMember
+		}
+	case requirements.DiscScreenshots != nil:
+		for _, id := range requirements.DiscScreenshots.DiscIDs {
+			remaining[id] = requirements.DiscScreenshots.AdditionalCount
+		}
+		remaining[requirements.DiscScreenshots.DiscIDs[0]] = requirements.ScreenshotCount
+	default:
+		return nil
+	}
+	groupsByPath := make(map[string]string, len(images))
+	for _, image := range images {
+		if image.Purpose != api.ScreenshotPurposeFinal {
+			continue
+		}
+		group := image.DiscID
+		if requirements.PackScreenshots != nil {
+			group = image.PackMemberID
+		}
+		if remaining[group] > 0 {
+			groupsByPath[strings.TrimSpace(image.Path)] = group
+		}
+	}
+	complete := make(map[string]bool)
+	for host, paths := range pathsByHost {
+		quotas := maps.Clone(remaining)
+		for path := range paths {
+			if group := groupsByPath[path]; quotas[group] > 0 {
+				quotas[group]--
+			}
+		}
+		covered := true
+		for _, missing := range quotas {
+			if missing > 0 {
+				covered = false
+				break
+			}
+		}
+		if covered {
+			complete[host] = true
+		}
+	}
+	return complete
 }
 
 const (
