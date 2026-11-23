@@ -8,11 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// Recovery exposes only manual reconciliation of retained external effects.
+// Recovery exposes local reconciliation of retained external effects.
 // It does not activate configuration or install preparation, tracker, image-host,
 // or torrent-client services. Normal workflow admissions remain unavailable.
 type Recovery struct {
@@ -62,11 +63,99 @@ func (r *Recovery) Recover(ctx context.Context, scope api.WorkflowScope) (Recove
 	return RecoveryWorkflow{Workflow: state.Workflow, SourcePath: sourcePath}, nil
 }
 
+// RecoverAutomatically applies the restart policy to one retained workflow.
+// It uses the existing fenced disposition and never runs an external operation.
+func (r *Recovery) RecoverAutomatically(ctx context.Context, scope api.WorkflowScope, logger api.Logger) error {
+	retained, err := r.Recover(ctx, scope)
+	if err != nil {
+		return err
+	}
+	return r.resolveInterruptedActions(ctx, scope, retained.Workflow, logger)
+}
+
+func (r *Recovery) resolveInterruptedActions(ctx context.Context, scope api.WorkflowScope, workflow api.ReleaseWorkflow, logger api.Logger) error {
+	for {
+		index := slices.IndexFunc(workflow.RequiredActions, func(action api.RequiredAction) bool {
+			return action.Kind == api.RequiredActionReconcileSubmission && action.Status == api.RequiredActionStatusPending
+		})
+		if index < 0 {
+			return nil
+		}
+		action := workflow.RequiredActions[index]
+		next, err := r.markNotCompleted(ctx, scope, workflow.Revision, action.ID, "auto-recover:")
+		if err != nil {
+			return fmt.Errorf("mark interrupted %s effect not completed: %w", action.EffectKind, err)
+		}
+		workflow = next
+		logger.Infof("Recovery marked not completed: workflow=%s effect=%s", scope.WorkflowID, action.EffectKind)
+	}
+}
+
+// recoverSourceBeforeOpen settles retained attempts under the caller's exact
+// empty-slot revision. It never adopts an intervening caller's slot change.
+func (m *Module) recoverSourceBeforeOpen(ctx context.Context, owner, source string, revision uint64) (uint64, error) {
+	prior, err := m.ActiveInput(ctx, owner)
+	if err != nil || prior.State != api.ActiveInputEmpty || prior.Revision != revision {
+		return revision, err
+	}
+	ids, err := m.LegacyRecoveryWorkflowIDsForSource(ctx, owner, source)
+	if err != nil {
+		return revision, err
+	}
+	for _, id := range ids {
+		scope := api.WorkflowScope{OwnerID: owner, WorkflowID: id}
+		slot, err := m.recoverLegacyInput(ctx, owner, id, &revision)
+		if err != nil {
+			return revision, fmt.Errorf("recover interrupted workflow %s: %w", id, errors.Join(err, m.releaseInterruptedOpenClaim(ctx, scope, slot)))
+		}
+		if slot.State == api.ActiveInputRecovering && m.OwnsActiveInput(slot) && slot.WorkflowID == id && slot.Revision == revision+1 {
+			state, loadErr := m.repository.Load(ctx, owner, id)
+			if loadErr == nil {
+				loadErr = (&Recovery{module: m}).resolveInterruptedActions(ctx, scope, state.Workflow, m.logger)
+			}
+			if loadErr != nil {
+				return revision, fmt.Errorf("recover interrupted workflow %s: %w", id, errors.Join(loadErr, m.releaseInterruptedOpenClaim(ctx, scope, slot)))
+			}
+			slot, err = m.ActiveInput(ctx, owner)
+			if err != nil {
+				return revision, err
+			}
+		}
+		if slot.State != api.ActiveInputEmpty || slot.Revision != revision+2 || slot.CoordinatorID != m.processEpoch {
+			return revision, api.ErrActiveInputChanged
+		}
+		revision = slot.Revision
+	}
+	return revision, nil
+}
+
+func (m *Module) releaseInterruptedOpenClaim(ctx context.Context, scope api.WorkflowScope, claimed api.ActiveInputRecord) error {
+	if !IsLegacyRecoverySlot(claimed) || !m.OwnsActiveInput(claimed) || claimed.WorkflowID != scope.WorkflowID {
+		return nil
+	}
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	current, err := m.ActiveInput(cleanup, scope.OwnerID)
+	if err != nil {
+		return err
+	}
+	if current.Revision != claimed.Revision || !m.OwnsActiveInput(current) {
+		return nil
+	}
+	return m.ReleaseInput(cleanup, scope.OwnerID, claimed.Revision)
+}
+
 // ConfirmNotCompleted records explicit verification that one pending external
 // effect did not complete. The claimed input fence and exact workflow revision
 // protect the decision; successful effects and configuration remain unchanged.
 func (r *Recovery) ConfirmNotCompleted(
 	ctx context.Context, scope api.WorkflowScope, revision api.WorkflowRevision, actionID api.RequiredActionID,
+) (api.ReleaseWorkflow, error) {
+	return r.markNotCompleted(ctx, scope, revision, actionID, "recover:")
+}
+
+func (r *Recovery) markNotCompleted(
+	ctx context.Context, scope api.WorkflowScope, revision api.WorkflowRevision, actionID api.RequiredActionID, receiptPrefix string,
 ) (api.ReleaseWorkflow, error) {
 	slot, err := r.module.ActiveInput(ctx, scope.OwnerID)
 	if err != nil {
@@ -87,7 +176,7 @@ func (r *Recovery) ConfirmNotCompleted(
 	result, err := r.module.Execute(ctx, scope.OwnerID, ResolveActionCommand{
 		WorkflowID:       scope.WorkflowID,
 		ExpectedRevision: revision,
-		IdempotencyKey:   "recover:" + string(actionID),
+		IdempotencyKey:   receiptPrefix + string(actionID),
 		Answer: api.RequiredActionAnswer{
 			ActionID:         actionID,
 			WorkflowRevision: revision,

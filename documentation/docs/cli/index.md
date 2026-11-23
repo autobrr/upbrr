@@ -73,9 +73,7 @@ States are `pending`, `running`, `completed`, `failed`, `interrupted` and `skipp
 .\upbrr.exe --queue uploads --retry-queue --limit-queue 5 "D:\upload-queue"
 ```
 
-Retry selection does not bypass input ownership, confirmed-upload exclusions or uncertain-submission reconciliation. A tracker submission with an unknown outcome still requires the existing recovery process; no remote submission is retried automatically. Confirmed tracker uploads are recorded separately from item progress, including partial failures. `completed` means the requested processing finished: Input-only and debug/site-check runs can complete without uploading. Skips and declined actions do not prove an upload. Use a different queue name when starting a different task, such as switching a completed Input-only queue to uploads.
-
-An unknown tracker outcome leaves the affected queue item interrupted while independent pending items continue. Legacy attempts without durable submission protection still block new inputs until reconciled. The affected item's original workflow and submission protection remain available after restart. Reopen that source interactively or with `--unattended_confirm` only after checking the remote outcome; declining reconciliation leaves its outcome unresolved. If a retained workflow's source cannot be identified reliably, manual recovery is still required.
+Retry selection does not bypass input ownership, confirmed-upload exclusions, or normal submission checks. An interrupted item remains interrupted until selected for retry; independent pending items can continue. Recovery settles its saved attempt without submitting, and recorded successes stay excluded from another upload. `completed` means processing finished, which can also mean an Input-only or debug/site-check run completed. Skips and declined actions do not prove an upload. Use a different queue name when starting a different task, such as switching a completed Input-only queue to uploads.
 
 Membership stays unchanged until explicitly refreshed:
 
@@ -129,11 +127,7 @@ The CLI shares one active-input slot with every process using its database. Queu
 
 Tracker preflight can automatically log in or refresh sessions using saved credentials and a configured TOTP where supported, persist refreshed authentication, or remove confirmed-invalid sessions. The CLI does not prompt for tracker login or manual 2FA. If automatic recovery cannot complete, resolve the blocked tracker in [Tracker authentication](../web-ui/settings/tracker-auth.md), then retry preparation.
 
-After an interrupted legacy workflow, check the tracker or torrent client before answering the recovery confirmation. Confirm that the operation did not complete only when you have verified its outcome. Interactive mode and `--unattended_confirm` can ask this question; `--unattended` exits without prompting or starting a new submission. Recovery does not submit anything by itself.
-
-If a configuration change blocks startup because an external outcome is unresolved, stop other processes using that database and run `upbrr recover`. Pass the same `--config` option and environment as the original command so recovery selects the existing database. Check each tracker, image host or torrent client before confirming that its action did not complete; answer No for completed or uncertain outcomes.
-
-This maintenance command does not activate configuration or start external work. It opens the retained local artifacts and saves each confirmation together with its workflow checkpoint in one database transaction. After recovery succeeds, rerun the original command to activate configuration and continue through the normal preparation and review checks. Keep the database if recovery reports an error and follow its diagnostic before retrying.
+Startup and reopening an affected source recover interrupted external effects without prompting, including in `--unattended`. Recorded successes are preserved; attempts without a success receipt are marked not completed and logged. Recovery does not repeat an external operation. An interrupted upload might have reached the tracker before upbrr could save its receipt, so check the remote result before retrying if in doubt. If recovery fails, retain the database and check the diagnostic for the affected workflow.
 
 Language review identifies the inspected source, resource and track, shows detected and effective languages, and gives the correction flag for that track. Playlist and metadata choices show the current candidates. Tracker questions show the reviewed upload name, current value and accepted answers; a displayed value may be a default, so review it before submitting your answer.
 
@@ -723,7 +717,7 @@ See the [API reference](../api/index.md) before granting `workflow:execute`.
 
 ## `recover`
 
-`upbrr recover [--config <path>]` accepts `--help` and no other options or positional arguments. It requires the existing database and uses interactive confirmations; it has no unattended switch. See [interaction and safety](#interaction-and-safety) before confirming any remote outcome.
+`upbrr recover [--config <path>]` accepts `--help` and no other options or positional arguments. This optional maintenance command uses the existing database and asks for explicit confirmation before resolving an effect. Normal startup and input reopening do not require it. The command does not activate configuration or start external work.
 
 ## `live-test`
 

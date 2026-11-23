@@ -18,12 +18,19 @@ import (
 	"github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/webserver"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestRecoverCommandUnblocksChangedConfigWithoutActivatingIt(t *testing.T) {
+func TestStartupAutomaticallyRecoversInterruptedExternalEffects(t *testing.T) {
 	t.Parallel()
-	repo, cfg, configPath := newRecoveryCLIFixture(t)
+	t.Run("CLI", func(t *testing.T) { checkStartupAutomaticRecovery(t, false) })
+	t.Run("WebUI", func(t *testing.T) { checkStartupAutomaticRecovery(t, true) })
+}
+
+func checkStartupAutomaticRecovery(t *testing.T, web bool) {
+	t.Helper()
+	repo, cfg, _ := newRecoveryCLIFixture(t)
 	for _, effect := range []struct {
 		owner  string
 		id     string
@@ -58,44 +65,27 @@ func TestRecoverCommandUnblocksChangedConfigWithoutActivatingIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var storedBefore map[string]json.RawMessage
-	if err := repo.LoadFullConfig(t.Context(), &storedBefore); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := cliConfigActivation(t.Context(), cfg, repo.DBPath(), api.NopLogger{}); !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) ||
-		!strings.Contains(err.Error(), "upbrr recover") {
-		t.Fatalf("changed-config startup before recovery = %v", err)
-	}
-	var output bytes.Buffer
-	if err := executeCLI(t.Context(), []string{"recover", "-config", configPath}, cliIO{
-		in:  strings.NewReader("yes\nyes\nyes\n"),
-		out: &output,
-	}); err != nil {
-		t.Fatalf("recover: %v\n%s", err, output.String())
-	}
-	if strings.Count(output.String(), "Confirm it did not complete?") != 3 || !strings.Contains(output.String(), "Interrupted effects reconciled") ||
-		!strings.Contains(output.String(), "Source: Unavailable.Release.2026-GRP.mkv") || !strings.Contains(output.String(), "scope=imgbb") ||
-		!strings.Contains(output.String(), "scope=upload:ANT") {
-		t.Fatalf("recovery did not confirm each retained effect: %s", output.String())
+	if web {
+		backend, err := webserver.NewBackendWithContext(t.Context(), cfg, nil)
+		if err != nil {
+			t.Fatalf("WebUI startup after automatic recovery: %v", err)
+		}
+		if err := backend.CloseContext(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		logger := &cliProgressTestLogger{}
+		if _, _, err := cliConfigActivation(t.Context(), cfg, repo.DBPath(), logger); err != nil {
+			t.Fatalf("CLI startup after automatic recovery: %v", err)
+		}
+		if got := strings.Join(logger.snapshot(), "\n"); strings.Count(got, "marked not completed") != 3 ||
+			!strings.Contains(got, "workflow=images") || !strings.Contains(got, "workflow=injection") {
+			t.Fatalf("automatic recovery did not report each affected workflow: %s", got)
+		}
 	}
 	after, err := repo.LoadConfigActivation(t.Context())
-	if err != nil || after.ActiveGeneration != before.ActiveGeneration || after.Fingerprint != before.Fingerprint {
-		t.Fatalf("recovery changed activation: %#v, err=%v", after, err)
-	}
-	var storedAfter map[string]json.RawMessage
-	if err := repo.LoadFullConfig(t.Context(), &storedAfter); err != nil {
-		t.Fatal(err)
-	}
-	beforeJSON, err := json.Marshal(storedBefore)
-	if err != nil {
-		t.Fatal(err)
-	}
-	afterJSON, err := json.Marshal(storedAfter)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(beforeJSON, afterJSON) {
-		t.Fatal("recovery changed stored configuration")
+	if err != nil || after.ActiveGeneration != before.ActiveGeneration+1 || after.Fingerprint == before.Fingerprint {
+		t.Fatalf("startup did not activate the changed configuration: %+v err=%v", after, err)
 	}
 	var uncertain, succeeded, fences int
 	if err := repo.RawDB().QueryRowContext(t.Context(), `SELECT count(*) FROM release_workflow_effects WHERE status IN ('started', 'unknown')`).Scan(&uncertain); err != nil || uncertain != 0 {
@@ -110,9 +100,43 @@ func TestRecoverCommandUnblocksChangedConfigWithoutActivatingIt(t *testing.T) {
 	if err := repo.RawDB().QueryRowContext(t.Context(), `SELECT count(*) FROM submission_fences WHERE status IN ('started', 'unknown')`).Scan(&fences); err != nil || fences != 0 {
 		t.Fatalf("uncertain submission fences=%d, err=%v", fences, err)
 	}
-	generation, fingerprint, err := cliConfigActivation(t.Context(), cfg, repo.DBPath(), api.NopLogger{})
-	if err != nil || generation != before.ActiveGeneration+1 || fingerprint == before.Fingerprint {
-		t.Fatalf("same PR configuration after recovery: generation=%d fingerprint=%q err=%v", generation, fingerprint, err)
+	again := &cliProgressTestLogger{}
+	nextGeneration, nextFingerprint, err := cliConfigActivation(t.Context(), cfg, repo.DBPath(), again)
+	if err != nil || nextGeneration != after.ActiveGeneration || nextFingerprint != after.Fingerprint ||
+		strings.Contains(strings.Join(again.snapshot(), "\n"), "marked not completed") {
+		t.Fatalf("repeated startup was not a no-op: generation=%d fingerprint=%q err=%v", nextGeneration, nextFingerprint, err)
+	}
+}
+
+func TestStartupRecoveryAfterInterruptedCommitDoesNotRepeatSettledEffects(t *testing.T) {
+	t.Parallel()
+	repo, cfg, _ := newRecoveryCLIFixture(t)
+	for _, workflow := range []string{"first", "second"} {
+		insertRecoveryCLIWorkflow(t, repo, "cli", workflow, "tracker_submission", api.WorkflowEffectStatusUnknown)
+	}
+	if _, err := repo.RawDB().ExecContext(t.Context(), `CREATE TRIGGER interrupt_auto_recovery
+		BEFORE UPDATE ON release_workflow_effects
+		WHEN NEW.workflow_id = 'second' AND NEW.status = 'failed'
+		BEGIN SELECT RAISE(ABORT, 'synthetic recovery write failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	first := &cliProgressTestLogger{}
+	if _, _, err := cliConfigActivation(t.Context(), cfg, repo.DBPath(), first); err == nil || !strings.Contains(err.Error(), "workflow second") {
+		t.Fatalf("startup did not report the affected workflow: %v", err)
+	}
+	scopes, err := repo.ListReleaseWorkflowRecoveryScopes(t.Context())
+	if err != nil || len(scopes) != 1 || scopes[0].WorkflowID != "second" {
+		t.Fatalf("failed recovery did not preserve exactly the interrupted scope: %v err=%v", scopes, err)
+	}
+	if _, err := repo.RawDB().ExecContext(t.Context(), `DROP TRIGGER interrupt_auto_recovery`); err != nil {
+		t.Fatal(err)
+	}
+	next := &cliProgressTestLogger{}
+	if _, _, err := cliConfigActivation(t.Context(), cfg, repo.DBPath(), next); err != nil {
+		t.Fatal(err)
+	}
+	if logs := strings.Join(next.snapshot(), "\n"); strings.Count(logs, "marked not completed") != 1 || !strings.Contains(logs, "workflow=second") {
+		t.Fatalf("restart repeated a settled effect or missed the pending one: %s", logs)
 	}
 }
 
@@ -298,7 +322,7 @@ func TestRecoverCommandDeclineRetainsBlocker(t *testing.T) {
 	for _, input := range []string{"no\n", ""} {
 		t.Run(input, func(t *testing.T) {
 			t.Parallel()
-			repo, cfg, configPath := newRecoveryCLIFixture(t)
+			repo, _, configPath := newRecoveryCLIFixture(t)
 			insertRecoveryCLIWorkflow(t, repo, "cli", "declined", "tracker_submission", api.WorkflowEffectStatusUnknown)
 			var output bytes.Buffer
 			err := executeCLI(t.Context(), []string{"recover", "--config", configPath}, cliIO{in: strings.NewReader(input), out: &output})
@@ -309,8 +333,8 @@ func TestRecoverCommandDeclineRetainsBlocker(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), wantError) {
 				t.Fatalf("declined recovery = %v", err)
 			}
-			if _, _, err := cliConfigActivation(t.Context(), cfg, repo.DBPath(), api.NopLogger{}); !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
-				t.Fatalf("declined recovery removed activation blocker: %v", err)
+			if scopes, err := repo.ListReleaseWorkflowRecoveryScopes(t.Context()); err != nil || len(scopes) != 1 {
+				t.Fatalf("manual decline removed recovery scope: %v, err=%v", scopes, err)
 			}
 			slot, err := repo.LoadActiveInput(t.Context())
 			if err != nil || slot.LeaseExpiresAt.After(time.Now().UTC()) {
@@ -545,6 +569,13 @@ func insertRecoveryCLIWorkflow(t *testing.T, repo *db.SQLiteRepository, owner, i
 	}
 	payload, err := json.Marshal(state)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(ctx, db.FileMetadata{
+		Path:       state.SourcePath,
+		SourceSize: 1,
+		UpdatedAt:  now,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := repo.CreateReleaseWorkflowState(ctx, api.ReleaseWorkflowStateRecord{

@@ -21,12 +21,18 @@ func TestOpenInputScopesDetachedUncertaintyToItsSource(t *testing.T) {
 		missing   bool
 		ambiguous bool
 		blocked   bool
+		automatic bool
 		foreign   bool
 		unfenced  bool
 		kind      api.WorkflowExternalEffectKind
 	}{
 		{name: "same source", blocked: true},
-		{name: "unrelated source", other: true},
+		{name: "reopen automatically", automatic: true},
+		{
+			name:      "unrelated source",
+			other:     true,
+			automatic: true,
+		},
 		{name: "foreign tracker owner", foreign: true},
 		{
 			name:     "foreign unfenced tracker owner",
@@ -150,13 +156,25 @@ func TestOpenInputScopesDetachedUncertaintyToItsSource(t *testing.T) {
 				source = sourceB
 			}
 			next, err := module.OpenInput(ctx, nextOwner, OpenInputRequest{
-				ExpectedRevision: closed.Revision,
-				Input:            api.PrepareInput{SourcePath: source},
-				IdempotencyKey:   "open-next",
+				ExpectedRevision:   closed.Revision,
+				Input:              api.PrepareInput{SourcePath: source},
+				RecoverInterrupted: test.automatic,
+				IdempotencyKey:     "open-next",
 			})
 			if test.blocked {
 				if !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) || verifier.calls != 1 {
 					t.Fatalf("affected/unknown source admission: err=%v verifications=%d", err, verifier.calls)
+				}
+				return
+			}
+			if test.automatic && !test.other {
+				if err != nil || next.State != api.ActiveInputActive {
+					t.Fatalf("affected source did not reopen automatically: slot=%+v err=%v", next, err)
+				}
+				var status string
+				if err := repo.RawDB().QueryRowContext(ctx, `SELECT status FROM release_workflow_effects WHERE effect_id = 'submission-A'`).Scan(&status); err != nil ||
+					status != "failed" {
+					t.Fatalf("automatic recovery did not settle the interrupted attempt: status=%q err=%v", status, err)
 				}
 				return
 			}

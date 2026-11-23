@@ -40,6 +40,7 @@ type OpenInputRequest struct {
 	Input               api.PrepareInput
 	CorrectionPatch     *api.ReleaseCorrectionPatch
 	ReuseVerifiedSource bool
+	RecoverInterrupted  bool
 	IdempotencyKey      string
 	TrackerDecisionMode TrackerDecisionMode
 	Composite           *compositeUploadSession
@@ -298,6 +299,13 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 	if m.activeInputs == nil || m.inputVerifier == nil || strings.TrimSpace(owner) == "" ||
 		strings.TrimSpace(request.IdempotencyKey) == "" || strings.TrimSpace(request.Input.SourcePath) == "" {
 		return api.ActiveInputRecord{}, errors.New("release workflow: complete active input request is required")
+	}
+	if request.RecoverInterrupted {
+		revision, err := m.recoverSourceBeforeOpen(ctx, owner, request.Input.SourcePath, request.ExpectedRevision)
+		if err != nil {
+			return api.ActiveInputRecord{}, err
+		}
+		request.ExpectedRevision = revision
 	}
 	m.activeMu.Lock()
 	defer m.activeMu.Unlock()

@@ -66,7 +66,7 @@ Saving effective settings reuses the running process's startup maintenance. It d
 
 After prior-process input and work leases expire, startup retains completed checkpoints and marks unfinished operations interrupted. It preserves unresolved external attempts as uncertain and retains their retry protection. An interrupted local operation does not prove that the tracker upload or client operation failed remotely. Check the tracker or torrent client before retrying an interrupted stage.
 
-If **Legacy workflow recovery** still lists an unresolved external outcome, choose **Recover workflow** and inspect the remote result before resolving the action. Choose **Confirmed not completed; allow a fresh exact attempt** only when you have verified that the operation did not complete. Recovery itself does not resubmit anything.
+Startup recovers interrupted attempts automatically before activating changed configuration. It preserves recorded successes and does not resubmit anything. Check the remote result before retrying if the previous attempt may have completed without a saved receipt.
 
 The CLI presents the same confirmation for a remaining recovery action when run interactively or with `--unattended_confirm`. Strict `--unattended` exits without prompting. Deleting the associated release from History removes its local workflow and effect records; it does not establish whether the external operation completed.
 

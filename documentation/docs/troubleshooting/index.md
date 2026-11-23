@@ -54,11 +54,9 @@ During legacy recovery, retained proof for the exact accepted attempt settles th
 
 An upload blocked by an older uncertain attempt offers confirmation only when the exact receipt belongs to the current workflow. A fence owned by another workflow remains protected and cannot be confirmed from the new workflow.
 
-An unresolved tracker submission does not prevent independent CLI queue items from running when its durable submission protection remains available. Legacy attempts without that protection still require reconciliation before new inputs. The affected source remains protected until reconciliation; resuming the queue selects its other pending items. Missing or contradictory retained source information still requires manual recovery.
+Startup recovers interrupted external effects once prior work is no longer active, even when configuration changed while the application was stopped. Reopening an affected input also runs recovery. upbrr preserves recorded successes and logs interrupted attempts it marked not completed. It does not submit an upload, host images, or inject a torrent during recovery.
 
-If configuration also changed while an external outcome is uncertain, startup keeps the existing activation blocked rather than clearing the outcome. Resolve the uncertainty before activating the changed configuration.
-
-If **Legacy workflow recovery** still appears, inspect each listed remote outcome. Choose **Confirmed not completed; allow a fresh exact attempt** only after confirming it did not complete. Do not delete History simply to bypass an uncertain outcome: deletion also removes local repeat-submission protection.
+A remote service may have accepted an action before upbrr recorded the result. Check the tracker, image host, or client before retrying when that is possible. Queue recovery does not automatically select previously interrupted items for retry. If recovery failed, keep the database and use the affected workflow ID in the error to locate its log entries. Do not delete History to bypass an error: doing so removes local repeat-submission protection.
 
 ## FFmpeg is not found
 

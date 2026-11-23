@@ -4,9 +4,11 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -14,6 +16,49 @@ import (
 	dupechecking "github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+// RecoverInterruptedWorkflows settles expired local effects before a new
+// runtime is activated. The maintenance module has no external services.
+func RecoverInterruptedWorkflows(ctx context.Context, repo *db.SQLiteRepository, logger api.Logger) (result error) {
+	scopes, err := repo.ListReleaseWorkflowRecoveryScopes(ctx)
+	if err != nil {
+		return fmt.Errorf("list interrupted workflows: %w", err)
+	}
+	if len(scopes) == 0 {
+		return nil
+	}
+	persistent, err := releaseworkflow.NewPersistentRepository(repo)
+	if err != nil {
+		return fmt.Errorf("open retained workflow state: %w", err)
+	}
+	vault, err := NewRecoveryPrivateArtifactVault(repo)
+	if err != nil {
+		return err
+	}
+	recovery, err := releaseworkflow.NewRecovery(persistent, repo, vault)
+	if err != nil {
+		return fmt.Errorf("open interrupted workflow recovery: %w", err)
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		result = errors.Join(result, recovery.Shutdown(cleanup))
+	}()
+	for _, scope := range scopes {
+		if err := recovery.RecoverAutomatically(ctx, scope, logger); err != nil {
+			return fmt.Errorf("recover interrupted workflow %s: %w", scope.WorkflowID, err)
+		}
+	}
+	scopes, err = repo.ListReleaseWorkflowRecoveryScopes(ctx)
+	if err != nil {
+		return fmt.Errorf("inspect remaining interrupted workflows: %w", err)
+	}
+	if len(scopes) != 0 {
+		return fmt.Errorf("workflow %s still has an interrupted effect without an exact recovery action: %w",
+			scopes[0].WorkflowID, api.ErrReleaseWorkflowEffectOutcomeUnknown)
+	}
+	return nil
+}
 
 // NewRecoveryPrivateArtifactVault opens retained workflow resources without
 // activating configuration or constructing external services.
