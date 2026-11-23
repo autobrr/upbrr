@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -161,6 +162,32 @@ func (s *Service) logStatus(operation string, status api.TrackerAuthStatus) {
 	)
 }
 
+func (s *Service) logLocalValidation(spec trackerSpec, status api.TrackerAuthStatus) {
+	logf := s.logDebugf
+	decision, reason := "ready", "none"
+	if !IsReadyStatus(status) {
+		logf = s.logWarnf
+		decision, reason = "blocked", "requirements_unsatisfied"
+		if len(spec.requirements.Alternatives) == 1 {
+			requirements := spec.requirements.Alternatives[0].AllOf
+			cfg := mustTrackerConfig(s.cfg, spec.id)
+			switch {
+			case slices.Contains(requirements, trackerscatalog.AuthRequirementPasskey) && strings.TrimSpace(cfg.Passkey) == "":
+				reason = "missing_passkey"
+			case slices.Contains(requirements, trackerscatalog.AuthRequirementStoredCookie):
+				switch {
+				case status.State == StateEncryptedStorageUnavailable || status.LastError != "":
+					reason = "cookie_storage_unavailable"
+				case status.CookieCount == 0:
+					reason = "missing_stored_cookies"
+				}
+			}
+		}
+	}
+	logf("tracker auth validation completed tracker=%s mode=%s validation=local state=%s decision=%s reason=%s",
+		trackerLogID(status.TrackerID), spec.requirements.Mode, status.State, decision, reason)
+}
+
 // trackerLogID normalizes tracker IDs for log messages and avoids empty tracker
 // fields when validation fails before a concrete tracker is resolved.
 func trackerLogID(trackerID string) string {
@@ -265,9 +292,7 @@ func (s *Service) Validate(ctx context.Context, trackerID string) (status api.Tr
 	defer func() {
 		if err != nil {
 			s.logWarnf("tracker auth: validation failed tracker=%s: %v", trackerLogID(trackerID), err)
-			return
 		}
-		s.logStatus("validation completed", status)
 	}()
 	if err := s.validateTrackerConfigIDs(); err != nil {
 		return api.TrackerAuthStatus{}, err
@@ -281,8 +306,10 @@ func (s *Service) Validate(ctx context.Context, trackerID string) (status api.Tr
 	// Imported-cookie or passkey requirements can be checked locally when
 	// the tracker has no session resolver. Retain any local read errors.
 	if s.localPasskeyOrCookieRequirements(spec) {
+		s.logLocalValidation(spec, status)
 		return status, nil
 	}
+	defer func() { s.logStatus("validation completed", status) }()
 
 	if _, ok := s.adapterFor(spec.id); ok {
 		validationCtx, cancel := context.WithTimeout(ctx, trackerAuthValidationTimeout)

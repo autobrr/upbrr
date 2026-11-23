@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -19,6 +20,7 @@ import (
 	"github.com/autobrr/upbrr/internal/authmaterial/authfixture"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/logging"
 	servicedb "github.com/autobrr/upbrr/internal/services/db"
 	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
 	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
@@ -42,46 +44,57 @@ func TestTLPreflightChecksLocalAuthRequirements(t *testing.T) {
 	for _, tc := range []struct {
 		name                                    string
 		apiUpload, passkey, storedCookie, ready bool
-		noCookieStorage, badCookieStorage bool
+		noCookieStorage, badCookieStorage       bool
+		blockedReason                           string
 	}{
 		{
-name: "API upload with passkey",
- apiUpload: true,
- passkey: true,
- ready: true,
-},
+			name:      "API upload with passkey",
+			apiUpload: true,
+			passkey:   true,
+			ready:     true,
+		},
 		{
-name: "API upload without cookie storage",
- apiUpload: true,
- passkey: true,
- ready: true,
- noCookieStorage: true,
-},
+			name:            "API upload without cookie storage",
+			apiUpload:       true,
+			passkey:         true,
+			ready:           true,
+			noCookieStorage: true,
+		},
 		{
-name: "API upload with unreadable optional cookies",
- apiUpload: true,
- passkey: true,
- badCookieStorage: true,
- ready: true,
-},
+			name:             "API upload with unreadable optional cookies",
+			apiUpload:        true,
+			passkey:          true,
+			badCookieStorage: true,
+			ready:            true,
+		},
 		{
-name: "form upload with unreadable required cookies",
- passkey: true,
- badCookieStorage: true,
-},
+			name:             "form upload with unreadable required cookies",
+			passkey:          true,
+			badCookieStorage: true,
+			blockedReason:    "cookie_storage_unavailable",
+		},
 		{
-name: "API upload without passkey",
- apiUpload: true,
- storedCookie: true,
-},
+			name:          "API upload without passkey",
+			apiUpload:     true,
+			storedCookie:  true,
+			blockedReason: "missing_passkey",
+		},
 		{
-name: "form upload with passkey and cookie",
- passkey: true,
- storedCookie: true,
- ready: true,
-},
-		{name: "form upload missing cookie", passkey: true},
-		{name: "form upload missing passkey", storedCookie: true},
+			name:         "form upload with passkey and cookie",
+			passkey:      true,
+			storedCookie: true,
+			ready:        true,
+		},
+		{
+			name:          "form upload missing cookie",
+			passkey:       true,
+			blockedReason: "missing_stored_cookies",
+		},
+		{
+			name:          "form upload missing passkey",
+			storedCookie:  true,
+			blockedReason: "missing_passkey",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -121,7 +134,12 @@ name: "form upload with passkey and cookie",
 			if err := registry.Register(tl.New()); err != nil {
 				t.Fatal(err)
 			}
-			auth := trackerauth.NewServiceWithRegistryAndLogger(cfg, registry, api.NopLogger{})
+			logger, err := logging.New(config.LoggingConfig{Level: "debug"}, dbPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			logger.SetConsoleOutput(io.Discard, io.Discard)
+			auth := trackerauth.NewServiceWithRegistryAndLogger(cfg, registry, logger)
 			builder := workflowPreflightBuilder{
 				auth:     auth,
 				registry: registry,
@@ -150,6 +168,21 @@ name: "form upload with passkey and cookie",
 				if len(result.Failures) != 1 || result.Failures[0].Failure.Code != api.OperationFailureTrackerAuthRequired {
 					t.Fatalf("failed local inputs must remain blocked, got %+v", result.Failures)
 				}
+			}
+			mode := "form_upload"
+			if tc.apiUpload {
+				mode = "api_upload"
+			}
+			level, decision, reason := "debug", "ready", "none"
+			if !tc.ready {
+				level, decision, reason = "warn", "blocked", tc.blockedReason
+			}
+			entries := logger.Recent(0)
+			if len(entries) != 1 || entries[0].Level != level ||
+				!strings.Contains(entries[0].Message, "tracker=TL mode="+mode+" validation=local") ||
+				!strings.Contains(entries[0].Message, "decision="+decision+" reason="+reason) ||
+				strings.Contains(entries[0].Message, "synthetic") {
+				t.Fatalf("local auth log = %#v, want %s decision=%s reason=%s without credential values", entries, level, decision, reason)
 			}
 		})
 	}

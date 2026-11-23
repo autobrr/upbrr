@@ -65,6 +65,46 @@ func TestNewBackendKeepsSharedRepositoryUsableAfterCoreClose(t *testing.T) {
 	}
 }
 
+func TestNewBackendPublishesBuildInRecentAndFileLogs(t *testing.T) {
+	api.SetApplicationBuild("v0.0.0-test", "123456789abc")
+	t.Cleanup(func() { api.SetApplicationBuild("", "") })
+
+	cfg := backendConfigTestConfig(filepath.Join(t.TempDir(), "startup.db"))
+	cfg.Logging = config.LoggingConfig{
+		Level:          "info",
+		FileEnabled:    true,
+		MaxTotalSizeMB: 1,
+		MaxFiles:       1,
+	}
+	backend, err := NewBackendWithContext(t.Context(), cfg, newEventHub())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+
+	want := "version=\"v0.0.0-test\" commit=\"123456789abc\""
+	entries, err := backend.GetRecentLogs(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(entries, func(entry logging.Entry) bool {
+		return entry.Level == "info" && strings.Contains(entry.Message, want)
+	}) {
+		t.Fatalf("recent logs missing build metadata: %+v", entries)
+	}
+	logPath, err := backend.GetLogPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := strings.Count(string(contents), want); count != 1 {
+		t.Fatalf("logfile build entries = %d, want 1", count)
+	}
+}
+
 func TestNewBackendInitializesConfigActivationFingerprint(t *testing.T) {
 	t.Parallel()
 
