@@ -775,6 +775,8 @@ type workflowEffectScanner interface {
 	Scan(...any) error
 }
 
+// Receipt timestamps are stored as UTC RFC3339Nano. Drop the trailing Z when
+// sorting so a shorter fractional-second prefix sorts before its extensions.
 func loadLatestReleaseWorkflowEffect(
 	ctx context.Context,
 	queryer workflowStateQueryer,
@@ -788,7 +790,7 @@ func loadLatestReleaseWorkflowEffect(
 			semantic_fingerprint, status, started_at, updated_at, completed_at
 		FROM release_workflow_effects
 		WHERE owner_id = ? AND workflow_id = ? AND kind = ? AND scope_id = ?
-		ORDER BY started_at DESC, effect_id DESC
+		ORDER BY rtrim(started_at, 'Z') DESC, effect_id DESC
 		LIMIT 1
 	`, ownerID, workflowID, kind, scopeID))
 }
