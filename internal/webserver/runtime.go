@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -140,7 +141,15 @@ func buildRuntimeGenerationWithCoordinator(
 		return RuntimeGeneration{}, errors.New("webserver: context is required")
 	}
 
-	logger, err := logging.New(cfg.Logging, cfg.MainSettings.DBPath)
+	// The Web UI captures all levels by default. Keep legacy configuration
+	// for server console verbosity without making it gate retained records.
+	logConfig := cfg.Logging
+	logConfig.Level = "trace"
+	consoleLevel := cfg.Logging.Level
+	if strings.TrimSpace(consoleLevel) == "" {
+		consoleLevel = "info"
+	}
+	logger, err := logging.NewWithConsoleLevel(logConfig, cfg.MainSettings.DBPath, consoleLevel)
 	if err != nil {
 		return RuntimeGeneration{}, fmt.Errorf("web: %w", err)
 	}

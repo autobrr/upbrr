@@ -842,13 +842,13 @@ func (b *Backend) GetImageHostPolicyMetadata() (imagehostpolicy.Metadata, error)
 }
 
 // ListHistory returns persisted release history in repository-defined order.
-func (b *Backend) ListHistory() ([]api.HistoryEntry, error) {
+func (b *Backend) ListHistory(ctx context.Context) ([]api.HistoryEntry, error) {
 	rt := b.runtimeSnapshot()
 	history, err := rt.historyCore()
 	if err != nil {
 		return nil, err
 	}
-	return wrapWebResult(history.ListHistory(context.Background()))
+	return wrapWebResult(history.ListHistory(ctx))
 }
 
 // GetHistoryOverview returns persisted upload and asset detail for one source path.

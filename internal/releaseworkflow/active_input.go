@@ -369,6 +369,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		return api.ActiveInputRecord{}, api.ErrActiveInputBusy
 	}
 	ctx, finishLogs := m.beginInputLog(ctx, request.Input.SourcePath, "open input")
+	logging.FromContext(ctx, m.logger).Debugf("input: opening source")
 	logPath := ""
 	defer func() {
 		outcome := "completed"

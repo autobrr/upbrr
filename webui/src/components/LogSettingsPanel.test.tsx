@@ -40,48 +40,23 @@ describe("LogSettingsPanel", () => {
     vi.clearAllMocks();
   });
 
-  it("renders log path and updates logging level", async () => {
+  it("shows the log path and keeps display filters separate from file settings", async () => {
     installLogAPI();
-    const updateConfigValue = vi.fn();
-
     render(
       <LogSettingsPanel
         configData={{ Logging: { Level: "info" } }}
-        fieldMeta={{ Level: { key: "Level", label: "Runtime log level" } }}
+        fieldMeta={{}}
         renderField={(label) => <div key={label}>{label}</div>}
-        updateConfigValue={updateConfigValue}
       />,
     );
 
-    await waitFor(() => expect(screen.getByText("C:/logs/upbrr.log")).toBeInTheDocument());
-
-    expect(screen.getByLabelText("Runtime log level")).toHaveAccessibleDescription(/after Save/);
+    expect(await screen.findByText("C:/logs/upbrr.log")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Runtime log level")).not.toBeInTheDocument();
     await userEvent.hover(screen.getByRole("button", { name: "Help for Visible log levels" }));
     expect(await screen.findByRole("tooltip")).toHaveTextContent("do not change which events");
     await userEvent.keyboard("{Escape}");
     expect(screen.getByLabelText("INFO", { exact: true })).toBeChecked();
-    expect(updateConfigValue).not.toHaveBeenCalled();
     expect(loggingClient.updateExclusions).not.toHaveBeenCalled();
-    await userEvent.selectOptions(screen.getByLabelText("Runtime log level"), "debug");
-
-    expect(updateConfigValue).toHaveBeenCalledWith(["Logging", "Level"], "debug");
-  });
-
-  it("shows an unrecognized saved log level until the user changes it", () => {
-    installLogAPI();
-
-    render(
-      <LogSettingsPanel
-        configData={{ Logging: { Level: "TRACE_LEGACY" } }}
-        fieldMeta={{ Level: { key: "Level", label: "Runtime log level" } }}
-        renderField={(label) => <div key={label}>{label}</div>}
-        updateConfigValue={vi.fn()}
-      />,
-    );
-
-    const level = screen.getByRole("combobox", { name: "Runtime log level" });
-    expect(level).toHaveValue("TRACE_LEGACY");
-    expect(screen.getByRole("option", { name: "TRACE_LEGACY (saved)" })).toBeInTheDocument();
   });
 
   it("keeps distinct rows when a restarted log stream reuses IDs", async () => {
@@ -106,9 +81,8 @@ describe("LogSettingsPanel", () => {
     render(
       <LogSettingsPanel
         configData={{ Logging: { Level: "info" } }}
-        fieldMeta={{ Level: { key: "Level", label: "Runtime log level" } }}
+        fieldMeta={{}}
         renderField={(label) => <div key={label}>{label}</div>}
-        updateConfigValue={vi.fn()}
       />,
     );
 
@@ -139,9 +113,8 @@ describe("LogSettingsPanel", () => {
     render(
       <LogSettingsPanel
         configData={{ Logging: { Level: "info" } }}
-        fieldMeta={{ Level: { key: "Level", label: "Runtime log level" } }}
+        fieldMeta={{}}
         renderField={(label) => <div key={label}>{label}</div>}
-        updateConfigValue={vi.fn()}
       />,
     );
 
@@ -155,9 +128,8 @@ describe("LogSettingsPanel", () => {
     render(
       <LogSettingsPanel
         configData={{ Logging: { Level: "info" } }}
-        fieldMeta={{ Level: { key: "Level", label: "Runtime log level" } }}
+        fieldMeta={{}}
         renderField={(label) => <div key={label}>{label}</div>}
-        updateConfigValue={vi.fn()}
       />,
     );
 
@@ -179,9 +151,8 @@ describe("LogSettingsPanel", () => {
     render(
       <LogSettingsPanel
         configData={{ Logging: { Level: "info" } }}
-        fieldMeta={{ Level: { key: "Level", label: "Runtime log level" } }}
+        fieldMeta={{}}
         renderField={(label) => <div key={label}>{label}</div>}
-        updateConfigValue={vi.fn()}
       />,
     );
 

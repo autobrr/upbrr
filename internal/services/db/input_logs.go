@@ -6,11 +6,14 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/autobrr/upbrr/internal/pathing"
 )
 
 // InputLogAttempt locates an input's shared log records without storing their contents.
@@ -52,8 +55,29 @@ func (r *SQLiteRepository) FinishInputLog(ctx context.Context, id, path, outcome
 
 // InputLogs lists attempts for a stored path, or finds one exact attempt by its opaque ID.
 func (r *SQLiteRepository) InputLogs(ctx context.Context, source, id string) ([]InputLogAttempt, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id, source_path, kind, outcome, started_at FROM input_log_attempts
-		WHERE source_path=? OR requested_path=? OR id=? ORDER BY rtrim(started_at,'Z') DESC, id DESC LIMIT 100`, source, source, id)
+	return r.inputLogs(ctx, source, id, false)
+}
+
+func (r *SQLiteRepository) inputLogs(ctx context.Context, source, id string, includeRequested bool) ([]InputLogAttempt, error) {
+	query := r.historyQuery(ctx)
+	filter, args := "id = ?", []any{id}
+	if id == "" {
+		paths, err := inputLogSourceAliases(ctx, query, source)
+		if err != nil {
+			return nil, err
+		}
+		encoded, err := json.Marshal(paths)
+		if err != nil {
+			return nil, fmt.Errorf("encode input log aliases: %w", err)
+		}
+		filter, args = "source_path IN (SELECT value FROM json_each(?))", []any{string(encoded)}
+		if includeRequested {
+			filter += " OR requested_path = ?"
+			args = append(args, source)
+		}
+	}
+	rows, err := query.QueryContext(ctx, `SELECT id, source_path, kind, outcome, started_at FROM input_log_attempts
+		WHERE `+filter+` ORDER BY rtrim(started_at,'Z') DESC, id DESC`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("db list input logs: %w", err)
 	}
@@ -102,28 +126,59 @@ func ReadOnlyInputLogs(ctx context.Context, dbPath, source string) ([]InputLogAt
 		return nil, nil
 	}
 	repo := &SQLiteRepository{db: conn}
-	return repo.InputLogs(ctx, source, "")
+	return repo.inputLogs(ctx, source, "", true)
 }
 
-// InputLogSources returns recently attempted inputs even when verification did
-// not get far enough to create a regular History record.
-func (r *SQLiteRepository) InputLogSources(ctx context.Context) ([]string, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT source_path FROM input_log_attempts
-		GROUP BY source_path ORDER BY max(rtrim(started_at, 'Z')) DESC, source_path LIMIT 100`)
+// InputLogSources returns up to 100 recent log-only inputs in recency order,
+// excluding equivalent paths already displayed by regular History.
+func (r *SQLiteRepository) InputLogSources(ctx context.Context, storedPaths []string) ([]string, error) {
+	seen := make(map[string]struct{}, len(storedPaths))
+	for _, p := range storedPaths {
+		seen[pathing.LexicalPathKey(p)] = struct{}{}
+	}
+	rows, err := r.historyQuery(ctx).QueryContext(ctx, `SELECT source_path FROM input_log_attempts
+		GROUP BY source_path ORDER BY max(rtrim(started_at, 'Z')) DESC, source_path`)
 	if err != nil {
 		return nil, fmt.Errorf("list input log sources: %w", err)
 	}
 	defer rows.Close()
 	paths := make([]string, 0)
-	for rows.Next() {
+	for len(paths) < 100 && rows.Next() {
 		var path string
 		if err := rows.Scan(&path); err != nil {
 			return nil, fmt.Errorf("read input log source: %w", err)
 		}
-		paths = append(paths, path)
+		key := pathing.LexicalPathKey(path)
+		if _, duplicate := seen[key]; key != "" && !duplicate {
+			seen[key] = struct{}{}
+			paths = append(paths, path)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate input log sources: %w", err)
+	}
+	return paths, nil
+}
+
+func inputLogSourceAliases(ctx context.Context, query historyQueryer, source string) ([]string, error) {
+	key := pathing.LexicalPathKey(source)
+	rows, err := query.QueryContext(ctx, `SELECT DISTINCT source_path FROM input_log_attempts`)
+	if err != nil {
+		return nil, fmt.Errorf("list input log aliases: %w", err)
+	}
+	defer rows.Close()
+	var paths []string
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, fmt.Errorf("read input log alias: %w", err)
+		}
+		if key != "" && key == pathing.LexicalPathKey(path) {
+			paths = append(paths, path)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate input log aliases: %w", err)
 	}
 	return paths, nil
 }

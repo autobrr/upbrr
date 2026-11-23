@@ -77,34 +77,12 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
     queryKey: ["history", "list"],
     queryFn: ({ signal }) => historyClient.list(signal),
   });
-  const logSourcesQuery = useQuery({
-    queryKey: ["history", "log-sources"],
-    queryFn: ({ signal }) => historyClient.logSources(signal),
-  });
-  const storedEntries = historyQuery.data ?? emptyHistory;
-  const entries = useMemo(() => {
-    const seen = new Set(storedEntries.map((entry) => entry.SourcePath));
-    return [
-      ...storedEntries,
-      ...(logSourcesQuery.data ?? [])
-        .filter((path) => !seen.has(path))
-        .map((path) => ({
-          SourcePath: path,
-          ReleaseTitle: path.split(/[\\/]/).pop() || path,
-          ReleaseSource: "",
-          ReleaseResolution: "",
-          MetadataUpdatedAt: "",
-          LatestUploadStatus: "Processing logs only",
-          LatestUploadAt: "",
-          RuleFailureCount: 0,
-        })),
-    ];
-  }, [storedEntries, logSourcesQuery.data]);
-  const loading = historyQuery.isPending || logSourcesQuery.isPending;
+  const entries = historyQuery.data?.Entries ?? emptyHistory;
+  const logsUnavailable = historyQuery.data?.LogsUnavailable === true;
+  const loading = historyQuery.isPending;
   const [selectedPath, setSelectedPath] = useState("");
   const [logsPath, setLogsPath] = useState("");
-  const logOnly =
-    selectedPath !== "" && !storedEntries.some((entry) => entry.SourcePath === selectedPath);
+  const logOnly = entries.find((entry) => entry.SourcePath === selectedPath)?.LogsOnly === true;
   const showingLogs = logOnly || logsPath === selectedPath;
   const [searchQuery, setSearchQuery] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -176,14 +154,8 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
       await deleteHistoryRelease(deletedPath);
       onReleaseDeleted?.(deletedPath);
       queryClient.removeQueries({ queryKey: ["history", "overview", deletedPath] });
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["history", "list"] }),
-        queryClient.invalidateQueries({ queryKey: ["history", "log-sources"] }),
-      ]);
-      const refreshed = queryClient.getQueryData<HistoryEntry[]>(["history", "list"]) ?? [];
-      if (!refreshed.length) {
-        setSelectedPath("");
-      }
+      queryClient.removeQueries({ queryKey: ["history", "log", deletedPath] });
+      await queryClient.invalidateQueries({ queryKey: ["history", "list"] });
     } catch (err) {
       setError(String(err));
     } finally {
@@ -246,11 +218,12 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
             </label>
           </div>
 
-          {logSourcesQuery.isError && (
+          {historyQuery.isError && <p role="alert">{String(historyQuery.error)}</p>}
+          {logsUnavailable && (
             <p role="alert">Could not find input logs. Refresh History to try again.</p>
           )}
           {loading ? <p className="text-muted-foreground">Loading history...</p> : null}
-          {!loading && !logSourcesQuery.isError && entries.length === 0 ? (
+          {!loading && !historyQuery.isError && !logsUnavailable && entries.length === 0 ? (
             <p className="text-muted-foreground">No stored releases found.</p>
           ) : null}
           {!loading && entries.length > 0 && filteredEntries.length === 0 ? (
@@ -275,7 +248,9 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
                   {entry.SourcePath === selectedPath ? <span aria-hidden="true">✓ </span> : null}
                   {releaseLabel(entry)}
                 </span>
-                <span className="text-xs">{entry.LatestUploadStatus || "Stored"}</span>
+                <span className="text-xs">
+                  {entry.LogsOnly ? "Processing logs only" : entry.LatestUploadStatus || "Stored"}
+                </span>
                 <span className="text-xs">Updated {formatDate(entry.MetadataUpdatedAt)}</span>
               </button>
             ))}

@@ -9,6 +9,8 @@ import (
 )
 
 type HistoryEntry struct {
+	// LogsOnly identifies an input whose attempts never produced stored release metadata.
+	LogsOnly           bool `json:",omitempty"`
 	SourcePath         string
 	ReleaseTitle       string
 	ReleaseSource      string

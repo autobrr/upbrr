@@ -2,18 +2,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { FieldHelp } from "./ui/field-help";
-import { settingsFieldPresentation } from "../settings/fieldPresentation";
 import { pageStyle } from "./ui/pageStyle";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import { Checkbox } from "./ui/checkbox";
-import { Select } from "./ui/select";
 import { Switch } from "./ui/switch";
 import { loggingClient } from "../api/app";
 import { subscribeWebEvent } from "../api/client";
 import type { ConfigMap, ConfigValue, FieldMeta } from "../types";
 import { cn } from "../utils/cn";
-import { settingsStyle } from "../settings/style";
 import { SettingsFieldGroups } from "../settings/FieldGroups";
 
 type LogEntry = {
@@ -31,7 +28,6 @@ type LogSettingsPanelProps = Readonly<{
     path: string[],
     meta?: FieldMeta,
   ) => ReactElement;
-  updateConfigValue: (path: string[], value: ConfigValue) => void;
   fieldMeta: Record<string, FieldMeta>;
 }>;
 
@@ -98,7 +94,6 @@ const logEntryKey = (entry: LogEntry) =>
 export default function LogSettingsPanel({
   configData,
   renderField,
-  updateConfigValue,
   fieldMeta,
 }: LogSettingsPanelProps) {
   const [logPath, setLogPath] = useState("");
@@ -124,7 +119,6 @@ export default function LogSettingsPanel({
     !Array.isArray(loggingConfigValue)
       ? loggingConfigValue
       : {};
-  const levelValue = String(loggingConfig.Level ?? "info");
 
   const filteredEntries = useMemo(() => {
     const searchTerm = search.trim().toLowerCase();
@@ -329,46 +323,15 @@ export default function LogSettingsPanel({
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className={pageStyle.label}>Logging</p>
-            <p className="helper">Adjust log verbosity and file rotation.</p>
+            <p className="helper">Configure log files and rotation.</p>
           </div>
         </div>
         <SettingsFieldGroups
           section="Logging"
-          fields={["Level", "FileEnabled", "MaxTotalSizeMB", "MaxFiles"].map((key) => {
-            const meta = fieldMeta[key];
-            if (key === "Level") {
-              const { label, help } = settingsFieldPresentation.Logging.Level;
-              return [
-                key,
-                <div className={settingsStyle.field} key="Logging.Level">
-                  <span className="flex flex-wrap items-center gap-1">
-                    <label htmlFor="logging-runtime-level">{label}</label>
-                    <FieldHelp label={label!} id="logging-runtime-level-help">
-                      {help}
-                    </FieldHelp>
-                  </span>
-                  <Select
-                    id="logging-runtime-level"
-                    aria-describedby="logging-runtime-level-help"
-                    value={levelValue}
-                    onChange={(event) =>
-                      updateConfigValue(["Logging", "Level"], event.target.value)
-                    }
-                  >
-                    {!levelOrder.includes(levelValue) ? (
-                      <option value={levelValue}>{levelValue} (saved)</option>
-                    ) : null}
-                    {levelOrder.map((level) => (
-                      <option key={level} value={level}>
-                        {level.toUpperCase()}
-                      </option>
-                    ))}
-                  </Select>
-                </div>,
-              ];
-            }
-            return [key, renderField(key, loggingConfig[key], ["Logging", key], meta)];
-          })}
+          fields={["FileEnabled", "MaxTotalSizeMB", "MaxFiles"].map((key) => [
+            key,
+            renderField(key, loggingConfig[key], ["Logging", key], fieldMeta[key]),
+          ])}
         />
         <div className="grid min-w-0 gap-1 rounded-md border border-border bg-muted px-3 py-2 text-foreground">
           <span className="text-sm font-medium text-muted-foreground">Log path</span>
@@ -435,8 +398,7 @@ export default function LogSettingsPanel({
                 Visible levels
                 <FieldHelp label="Visible log levels" id="log-visible-levels-help">
                   Show or hide each level in this browser's retained entries. These checkboxes do
-                  not change which events the application records; choose Runtime log level and Save
-                  to change that threshold.
+                  not change which events the application records.
                 </FieldHelp>
               </span>
             </legend>

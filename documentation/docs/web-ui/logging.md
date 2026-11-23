@@ -1,6 +1,6 @@
 ---
 title: Logging
-description: Configure runtime logging and use the Web UI live log viewer.
+description: Configure log files and use the Web UI live log viewer.
 ---
 
 # Logging
@@ -15,12 +15,11 @@ These edits require **Save** before they become active.
 
 | Field                          | Default | Effect                                                                                                                   |
 | ------------------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------ |
-| **Runtime log level**          | `info`  | Sets runtime verbosity from `trace` through `error`. `trace` records the most detail.                                    |
 | **Write log files**            | Off     | Writes application logs to the displayed host path.                                                                      |
-| **Total log-file budget (MB)** | `20 MB` | Sets the approximate total file budget. The per-file rotation threshold is this value divided by **Retained log files**. |
+| **Total log-file budget (MB)** | `50 MB` | Sets the approximate total file budget. The per-file rotation threshold is this value divided by **Retained log files**. |
 | **Retained log files**         | `3`     | Sets the file-rotation depth used with the total-size budget.                                                            |
 
-File logging requires positive **Total log-file budget (MB)** and **Retained log files** values. The log path is `<database directory>/logs/upbrr.log`; displaying a path does not mean file logging is enabled. When enabled, files receive every level through TRACE. Runtime and per-run levels still control the live viewer and recent entries; they do not reduce what is written to disk.
+File logging requires positive **Total log-file budget (MB)** and **Retained log files** values. The log path is `<database directory>/logs/upbrr.log`; displaying a path does not mean file logging is enabled. When enabled, files receive every level through TRACE. The live viewer receives TRACE by default. An explicit upload-run level can filter that run’s live and recent entries but does not reduce what is written to disk. An existing custom file budget is unchanged.
 
 ## Choosing a level
 
@@ -33,13 +32,13 @@ File logging requires positive **Total log-file budget (MB)** and **Retained log
 
 On **Upload**, choose **Run options → Log level** before starting a dry run or upload. The selected level applies to that run's application logs, including background work and resumed work. It reaches the live viewer and recent entries. An enabled log file already records TRACE.
 
-This choice does not save the global logging setting or change another operation's verbosity. The server console keeps its configured threshold. The live viewer's level checkboxes still control which retained entries are displayed.
+This choice does not change another operation’s verbosity. The server console keeps its configured threshold. The live viewer's level checkboxes still control which retained entries are displayed.
 
 ## View or download one input's logs
 
-In **History**, select the input, choose **Logs**, then choose a processing attempt by time and outcome. An attempt is one Web UI operation, such as opening, preparing or uploading, or one complete CLI input run. **Download log** hands a text `.log` file to your browser's normal download handling. Attempts that failed before metadata was stored can appear as entries with processing logs only.
+In **History**, select the input and choose **Logs**. Opening, preparation, upload, and other retained operations for that input appear together in one log. **Download log** saves a text `.log` file through your browser, including earlier retained lines when the preview only shows the end. An input that failed before metadata was stored can still appear with processing logs only.
 
-upbrr reads matching entries from the active and rotated application logs. When no matching disk entries remain, it can show entries still in the current session's recent buffer. The page labels memory-only, partial and expired logs; it cannot attribute older, untagged records to an input. Removing a History entry removes its log association, not the lines already written to the shared rotating files. Inspect and sanitize exports before sharing them.
+upbrr reads matching entries from the active and rotated application logs. When no matching disk entries remain, it can show entries still in the current session's recent buffer. The page labels memory-only, partial and expired logs. Exports include up to 50 MB of log entries and are marked partial if entries are omitted; it cannot attribute older, untagged records to an input. Removing a History entry removes its log association, not the lines already written to the shared rotating files. Inspect and sanitize exports before sharing them.
 
 ## Live viewer
 

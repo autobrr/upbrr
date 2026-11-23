@@ -54,6 +54,9 @@ test("downloads the current input history log through the browser with file logg
     const body = await readFile(file!, "utf8");
     expect(body).toContain(`Input: ${workspace.sourcePath}`);
     expect(body).toContain("Coverage: memory");
+    expect(body).toContain("input: opening source");
+    expect(body).toContain("input: running operation kind=preparation");
+    expect(page.getByText("Processing logs only")).toHaveCount(0);
     expect(workspace.fake.counters.trackerUploads).toBe(0);
   } finally {
     await app?.stop();

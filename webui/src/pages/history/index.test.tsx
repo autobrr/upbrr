@@ -13,8 +13,13 @@ import HistoryPage from ".";
 
 afterEach(cleanup);
 
-const installHistoryMocks = (operations: AppOperationMocks) =>
-  installAppOperationMocks({ ListInputLogSources: async () => [], ...operations });
+const installHistoryMocks = (operations: AppOperationMocks) => {
+  const { ListHistory, ...rest } = operations;
+  return installAppOperationMocks({
+    ListInputHistory: async () => ({ Entries: await ListHistory?.() }),
+    ...rest,
+  });
+};
 
 const renderHistory = (props: ComponentProps<typeof HistoryPage> = {}) => {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -72,12 +77,12 @@ describe("HistoryPage", () => {
     const id = "00000000000000000000001a";
     const loadOverview = vi.fn();
     installHistoryMocks({
-      ListHistory: async () => [],
-      ListInputLogSources: async () => [sourcePath],
-      ListInputLogs: async () => [
-        { ID: id, StartedAt: "2026-08-05T00:00:00Z", Kind: "open input", Outcome: "failed" },
-      ],
-      [`InputLog/${id}`]: async () => ({ Coverage: "memory", Text: "Input validation failed." }),
+      ListHistory: async () => [{ ...entry(sourcePath, "Missing Release"), LogsOnly: true }],
+      GetInputLog: async () => ({
+        Coverage: "memory",
+        Text: "Input validation failed.",
+        DownloadID: id,
+      }),
       GetHistoryOverview: loadOverview,
     });
 
@@ -86,19 +91,19 @@ describe("HistoryPage", () => {
     expect(screen.getByText(/Recent entries from this session only/)).toBeInTheDocument();
     const download = screen.getByRole("link", { name: "Download log" });
     expect(download).toHaveAttribute("download");
-    expect(download).toHaveAttribute("href", `/api/app/InputLog/${id}?download=1`);
+    expect(download).toHaveAttribute("href", `/api/app/InputLog/${id}`);
     expect(loadOverview).not.toHaveBeenCalled();
   });
 
-  it("shows log discovery failure instead of reporting empty history", async () => {
+  it("keeps stored releases visible when log discovery fails", async () => {
+    const saved = entry("/media/Stored.mkv", "Stored Release");
     installHistoryMocks({
-      ListHistory: async () => [],
-      ListInputLogSources: async () => {
-        throw new Error("unavailable");
-      },
+      ListInputHistory: async () => ({ Entries: [saved], LogsUnavailable: true }),
+      GetHistoryOverview: async () => overview(saved.SourcePath, saved.ReleaseTitle),
     });
     renderHistory();
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not find input logs");
+    expect(screen.getByRole("button", { name: /Stored Release/ })).toBeInTheDocument();
     expect(screen.queryByText("No stored releases found.")).not.toBeInTheDocument();
   });
 

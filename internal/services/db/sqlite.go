@@ -4019,7 +4019,6 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 		{sql: `DELETE FROM media_reusable_commits WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM input_records WHERE canonical_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM upload_records WHERE source_path = ?`, args: []any{trimmedPath}},
-		{sql: `DELETE FROM input_log_attempts WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM file_metadata WHERE path = ?`, args: []any{trimmedPath}},
 	}
 
@@ -4029,6 +4028,18 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 			return err
 		}
 		totalRemoved = 0
+		logPaths, err := inputLogSourceAliases(ctx, tx, trimmedPath)
+		if err != nil {
+			return err
+		}
+		for _, logPath := range logPaths {
+			result, err := tx.ExecContext(ctx, `DELETE FROM input_log_attempts WHERE source_path = ?`, logPath)
+			if err != nil {
+				return fmt.Errorf("db purge input logs: %w", err)
+			}
+			removed, _ := result.RowsAffected()
+			totalRemoved += removed
+		}
 		workflowStates, err := matchingStoredReleaseWorkflowStates(ctx, tx, trimmedPath)
 		if err != nil {
 			return err

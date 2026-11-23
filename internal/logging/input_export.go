@@ -18,80 +18,116 @@ import (
 	"github.com/autobrr/upbrr/internal/services/db"
 )
 
-const inputExportLimit = 8 * 1024 * 1024
+const inputExportLimit = 50 * 1024 * 1024
 
-// InputLogExport contains an immutable view of the retained entries and coverage.
+// InputLogExport contains the retained entries and their coverage.
 type InputLogExport struct {
 	Text     string
 	Coverage string
 }
 
-// ReadInputLog uses existing application log files and, when no disk entries
-// survive, the existing recent buffer. Only a gap-free begin-to-end disk
-// sequence is marked complete.
+// ReadInputLog exports one attempt, preserving the CLI's per-run behavior.
 func ReadInputLog(ctx context.Context, logger *Logger, dbPath string, a db.InputLogAttempt) (InputLogExport, error) {
+	return ReadInputLogs(ctx, logger, dbPath, []db.InputLogAttempt{a})
+}
+
+// ReadInputLogs reads the rotating files once for all selected attempts, then
+// assembles their retained records in chronological attempt order. An attempt
+// is complete only when both markers and every numbered disk entry survive.
+func ReadInputLogs(ctx context.Context, logger *Logger, dbPath string, attempts []db.InputLogAttempt) (InputLogExport, error) {
+	if len(attempts) == 0 {
+		return InputLogExport{Coverage: "expired"}, nil
+	}
 	dir, err := db.RootDir(dbPath)
 	if err != nil {
 		return InputLogExport{}, fmt.Errorf("resolve input log root: %w", err)
 	}
-	records := &inputLogRecords{
-		id: a.ID,
+	budget := inputExportLimit
+	reader := inputLogReader{records: make(map[string]*inputLogRecords, len(attempts))}
+	for _, a := range attempts {
+		reader.records[a.ID] = &inputLogRecords{remaining: &budget}
 	}
-	if err := records.readFiles(ctx, filepath.Join(dir, "logs")); err != nil {
+	if err := reader.readFiles(ctx, filepath.Join(dir, "logs")); err != nil {
 		return InputLogExport{}, err
 	}
-	coverage := "expired"
-	if records.text.Len() != 0 {
-		coverage = "partial"
-		if records.started && records.ended && !records.incomplete && a.Outcome != "" {
-			coverage = "complete"
+	for _, e := range logger.Recent(0) {
+		records := reader.records[e.attempt]
+		if records != nil && !records.sawDiskRecord {
+			records.memory = true
+			records.add(fmt.Sprintf("%s %s: %s\n", e.Time.Format("2006/01/02 15:04:05"), strings.ToUpper(e.Level), e.Message))
 		}
-	} else {
-		for _, e := range logger.Recent(0) {
-			if e.attempt == a.ID {
-				records.add(fmt.Sprintf("%s %s: %s\n",
-					e.Time.Format("2006/01/02 15:04:05"), strings.ToUpper(e.Level), e.Message))
-			}
-		}
+	}
+	var text strings.Builder
+	aggregate := ""
+	for _, a := range slices.Backward(attempts) {
+		records := reader.records[a.ID]
+		coverage := "expired"
 		if records.text.Len() > 0 {
-			coverage = "memory"
+			switch {
+			case records.memory:
+				coverage = "memory"
+			case records.started && records.ended && !records.incomplete && !reader.incomplete && a.Outcome != "":
+				coverage = "complete"
+			default:
+				coverage = "partial"
+			}
+			if text.Len() != 0 {
+				text.WriteString("\n")
+			}
+			outcome := a.Outcome
+			if outcome == "" {
+				outcome = "no recorded outcome"
+			}
+			fmt.Fprintf(&text, "Input: %s\nAttempt: %s (%s)\nStarted: %s\nOutcome: %s\nCoverage: %s\n\n",
+				SanitizeMessage(diskLogMessage(a.SourcePath)), a.ID, a.Kind, a.StartedAt.UTC().Format("2006-01-02T15:04:05Z"), outcome, coverage)
+			text.WriteString(records.text.String())
+		}
+		switch {
+		case aggregate == "":
+			aggregate = coverage
+		case coverage != aggregate:
+			aggregate = "partial"
 		}
 	}
-	if records.text.Len() == 0 {
-		return InputLogExport{Coverage: coverage}, nil
+	if text.Len() == 0 {
+		aggregate = "expired"
 	}
-	var outcome = a.Outcome
-	if outcome == "" {
-		outcome = "no recorded outcome"
+	if aggregate == "partial" && len(attempts) > 1 {
+		text.WriteString("\nSome input log entries were not retained or could not be exported.\n")
 	}
-	header := fmt.Sprintf("Input: %s\nAttempt: %s (%s)\nStarted: %s\nOutcome: %s\nCoverage: %s\n\n",
-		SanitizeMessage(diskLogMessage(a.SourcePath)), a.ID, a.Kind, a.StartedAt.UTC().Format("2006-01-02T15:04:05Z"), outcome, coverage)
-	return InputLogExport{Text: header + records.text.String(), Coverage: coverage}, nil
+	return InputLogExport{Text: text.String(), Coverage: aggregate}, nil
 }
 
 type inputLogRecords struct {
-	id                                              string
-	text                                            strings.Builder
-	next                                            uint64
-	started, ended, incomplete, includeContinuation bool
+	text                                              strings.Builder
+	remaining                                         *int
+	next                                              uint64
+	started, ended, incomplete, memory, sawDiskRecord bool
 }
 
 func (r *inputLogRecords) add(line string) {
-	if r.text.Len()+len(line) > inputExportLimit {
+	if len(line) > *r.remaining {
 		r.incomplete = true
 		return
 	}
+	*r.remaining -= len(line)
 	r.text.WriteString(line)
 }
 
-func (r *inputLogRecords) accept(line string) {
+type inputLogReader struct {
+	records      map[string]*inputLogRecords
+	continuation *inputLogRecords
+	incomplete   bool
+}
+
+func (r *inputLogReader) accept(line string) {
 	if rest, ok := strings.CutPrefix(line, "\t"); ok {
-		if r.includeContinuation {
-			r.add(rest)
+		if r.continuation != nil {
+			r.continuation.add(rest)
 		}
 		return
 	}
-	r.includeContinuation = false
+	r.continuation = nil
 	// Accept only a marker immediately after the fixed timestamp and severity.
 	if len(line) <= 20 || line[4] != '/' || line[7] != '/' || line[10] != ' ' {
 		return
@@ -100,8 +136,13 @@ func (r *inputLogRecords) accept(line string) {
 	if !ok || (severity != "TRACE" && severity != "DEBUG" && severity != "INFO" && severity != "WARN" && severity != "ERROR") {
 		return
 	}
-	payload, ok = strings.CutPrefix(payload, "[input-log "+r.id+" ")
+	payload, ok = strings.CutPrefix(payload, "[input-log ")
 	if !ok {
+		return
+	}
+	id, payload, _ := strings.Cut(payload, " ")
+	records := r.records[id]
+	if records == nil {
 		return
 	}
 	marker, body, ok := strings.Cut(payload, "] ")
@@ -113,20 +154,21 @@ func (r *inputLogRecords) accept(line string) {
 	if !ok || err != nil || sequence == 0 {
 		return
 	}
-	if sequence != r.next+1 || r.ended {
-		r.incomplete = true
+	if sequence != records.next+1 || records.ended {
+		records.incomplete = true
 	}
-	r.next = sequence
+	records.next = sequence
 	switch kind {
 	case "begin":
-		r.started = sequence == 1
+		records.started = sequence == 1
 	case "end":
-		r.ended = true
+		records.ended = true
 	case "record":
-		r.includeContinuation = true
-		r.add(line[:20] + severity + ": " + body)
+		records.sawDiskRecord = true
+		r.continuation = records
+		records.add(line[:20] + severity + ": " + body)
 	default:
-		r.incomplete = true
+		records.incomplete = true
 	}
 }
 
@@ -136,7 +178,7 @@ type retainedLogFile struct {
 	info os.FileInfo
 }
 
-func (r *inputLogRecords) readFiles(ctx context.Context, dir string) error {
+func (r *inputLogReader) readFiles(ctx context.Context, dir string) error {
 	root, err := os.OpenRoot(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -201,7 +243,7 @@ func (r *inputLogRecords) readFiles(ctx context.Context, dir string) error {
 	return nil
 }
 
-func (r *inputLogRecords) readFile(ctx context.Context, root *os.Root, f retainedLogFile) error {
+func (r *inputLogReader) readFile(ctx context.Context, root *os.Root, f retainedLogFile) error {
 	file, err := root.Open(f.name)
 	if errors.Is(err, os.ErrNotExist) {
 		r.incomplete = true
@@ -218,7 +260,7 @@ func (r *inputLogRecords) readFile(ctx context.Context, root *os.Root, f retaine
 	}
 	scanner := bufio.NewScanner(io.LimitReader(file, f.info.Size()))
 	scanner.Buffer(make([]byte, 64*1024), inputExportLimit)
-	r.includeContinuation = false
+	r.continuation = nil
 	for scanner.Scan() {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("read retained logs canceled: %w", err)
