@@ -103,8 +103,8 @@ func (c *inputCapture) write(label, kind, message string) {
 		return
 	}
 	c.sequence++
-	c.root.file.Printf("%s: [input-log %s %d %s] %s",
-		label, c.id, c.sequence, kind, diskLogMessage(message))
+	c.root.file.Printf("%s: [input-log %s %d %s %d] %s",
+		label, c.id, c.sequence, kind, time.Now().UnixNano(), diskLogMessage(message))
 }
 
 func diskLogMessage(message string) string {

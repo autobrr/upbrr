@@ -5,6 +5,7 @@ package logging
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -147,6 +148,72 @@ func TestInputLogExportLimitKeepsNewestRecords(t *testing.T) {
 			if err != nil || data.Coverage != "partial" || !strings.Contains(data.Text, "latest failure detail") ||
 				strings.Contains(data.Text, "old detail") {
 				t.Fatalf("bounded export = %#v, %v", data, err)
+			}
+		})
+	}
+}
+
+func TestInputLogExportOrdersMemoryAfterOlderDiskInSameSecond(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name                  string
+		diskOffset            time.Duration
+		legacy, prefersMemory bool
+	}{
+		{
+			name:          "newer memory",
+			diskOffset:    100 * time.Millisecond,
+			prefersMemory: true,
+		},
+		{name: "newer disk", diskOffset: 950 * time.Millisecond},
+		{
+			name:          "legacy disk",
+			legacy:        true,
+			prefersMemory: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := t.Context()
+			database := filepath.Join(t.TempDir(), "upbrr.db")
+			source := filepath.Join(filepath.Dir(database), "Example.mkv")
+			logger, err := New(config.LoggingConfig{Level: "warn"}, database)
+			if err != nil {
+				t.Fatal(err)
+			}
+			logPath, err := LogPath(database)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Use the persisted format from before and after precise markers.
+			second := time.Date(2026, 10, 5, 12, 1, 2, 0, time.Local)
+			at := ""
+			if !test.legacy {
+				at = fmt.Sprintf(" %d", second.Add(test.diskOffset).UnixNano())
+			}
+			line := fmt.Sprintf("%s TRACE: [input-log disk 1 record%s] disk detail %s\n",
+				second.Format(inputLogTimeFormat), at, strings.Repeat("d", 60))
+			if err := os.WriteFile(logPath, []byte(line), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			store := &recordingAttempts{}
+			current, _, finish := logger.BeginInputLog(ctx, store, source, "upload")
+			FromContext(current, logger).Tracef("memory-only failure %s", strings.Repeat("m", 50))
+			finish("", "failed")
+			logger.inputLogs[0].Time = second.Add(900 * time.Millisecond)
+			attempts := []db.InputLogAttempt{store.attempts[0], {
+				ID:         "disk",
+				SourcePath: source,
+				Kind:       "preparation",
+				StartedAt:  second,
+			}}
+			result, err := readInputLogs(ctx, logger, database, attempts, 120)
+			if err != nil || result.Coverage != "partial" ||
+				strings.Contains(result.Text, "memory-only failure") != test.prefersMemory ||
+				strings.Contains(result.Text, "disk detail") == test.prefersMemory {
+				t.Fatalf("bounded same-second export = %#v, %v", result, err)
+			}
+			if strings.Contains(result.Text, "order within a second may be uncertain") != test.legacy {
+				t.Fatalf("expected ordering warning only for legacy disk records: %s", result.Text)
 			}
 		})
 	}

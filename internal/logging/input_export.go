@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/services/db"
 )
@@ -60,11 +61,10 @@ func readInputLogs(ctx context.Context, logger *Logger, dbPath string, attempts 
 		records := reader.records[e.attempt]
 		if records != nil && !records.sawDiskRecord {
 			records.memory = true
-			stamp := e.Time.Format(inputLogTimeFormat)
 			memory.add(inputLogLine{
 				records: records,
-				text:    fmt.Sprintf("%s %s: %s\n", stamp, strings.ToUpper(e.Level), e.Message),
-				stamp:   stamp,
+				text:    fmt.Sprintf("%s %s: %s\n", e.Time.Format(inputLogTimeFormat), strings.ToUpper(e.Level), e.Message),
+				stamp:   e.Time.UnixNano(),
 			})
 		}
 	}
@@ -110,6 +110,9 @@ func readInputLogs(ctx context.Context, logger *Logger, dbPath string, attempts 
 	}
 	if aggregate == "partial" && len(attempts) > 1 {
 		text.WriteString("\nSome input log entries were not retained or could not be exported.\n")
+		if reader.legacy && reader.bytes > 0 && memory.bytes > 0 && reader.bytes+memory.bytes > limit {
+			text.WriteString("Older disk entries only record whole seconds; the order within a second may be uncertain.\n")
+		}
 	}
 	return InputLogExport{Text: text.String(), Coverage: aggregate}, nil
 }
@@ -123,7 +126,7 @@ type inputLogRecords struct {
 type inputLogLine struct {
 	records      *inputLogRecords
 	text         string
-	stamp        string
+	stamp        int64
 	continuation bool
 }
 
@@ -134,6 +137,7 @@ type inputLogReader struct {
 	first        int
 	limit, bytes int
 	incomplete   bool
+	legacy       bool
 }
 
 func (r *inputLogReader) add(line inputLogLine) {
@@ -218,7 +222,8 @@ func (r *inputLogReader) accept(line string) {
 	if !ok {
 		return
 	}
-	number, kind, ok := strings.Cut(marker, " ")
+	number, kindAndStamp, ok := strings.Cut(marker, " ")
+	kind, precise, hasPrecise := strings.Cut(kindAndStamp, " ")
 	sequence, err := strconv.ParseUint(number, 10, 64)
 	if !ok || err != nil || sequence == 0 {
 		return
@@ -234,11 +239,26 @@ func (r *inputLogReader) accept(line string) {
 		records.ended = true
 	case "record":
 		records.sawDiskRecord = true
+		// Older files have only the displayed wall-clock second. New
+		// markers carry precise time without changing the exported text.
+		var stamp int64
+		if hasPrecise {
+			stamp, err = strconv.ParseInt(precise, 10, 64)
+		} else {
+			var seconds time.Time
+			seconds, err = time.ParseInLocation(inputLogTimeFormat, line[:len(inputLogTimeFormat)], time.Local)
+			stamp = seconds.UnixNano()
+			r.legacy = true
+		}
+		if err != nil {
+			records.incomplete = true
+			return
+		}
 		text := line[:20] + severity + ": " + body
 		record := inputLogLine{
 			records: records,
 			text:    text,
-			stamp:   text[:len(inputLogTimeFormat)],
+			stamp:   stamp,
 		}
 		if len(text) <= r.limit {
 			r.continuation = record
