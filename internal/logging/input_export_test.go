@@ -4,13 +4,19 @@
 package logging
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -131,7 +137,7 @@ func TestInputLogExportLimitKeepsNewestRecords(t *testing.T) {
 				}
 				// Put the earlier captured entry in a different timestamp second
 				// without depending on a sleep or the time the test starts.
-				logger.inputLogs[0].Time = time.Now().Add(-time.Hour)
+				logger.inputLogs.entries[0].Time = time.Now().Add(-time.Hour)
 			}
 			current, _, finishCurrent := logger.BeginInputLog(ctx, store, source, "upload")
 			FromContext(current, logger).Tracef("latest failure detail")
@@ -214,7 +220,7 @@ func TestInputLogExportOrdersMemoryAfterOlderDiskInSameSecond(t *testing.T) {
 			current, _, finish := logger.BeginInputLog(ctx, store, source, "upload")
 			FromContext(current, logger).Tracef("memory-only failure %s", payload)
 			finish("", "failed")
-			logger.inputLogs[0].Time = second.Add(900 * time.Millisecond)
+			logger.inputLogs.entries[0].Time = second.Add(900 * time.Millisecond)
 			attempts := []db.InputLogAttempt{store.attempts[0], {
 				ID:         "disk",
 				SourcePath: source,
@@ -274,6 +280,560 @@ func (s *recordingAttempts) BeginInputLog(_ context.Context, attempt db.InputLog
 	return nil
 }
 
-func (s *recordingAttempts) FinishInputLog(context.Context, string, string, string) error {
+func (s *recordingAttempts) FinishInputLog(context.Context, db.InputLogAttempt) error {
 	return nil
+}
+
+func TestInputLogReaderPropagatesReadError(t *testing.T) {
+	t.Parallel()
+	readErr := errors.New("synthetic disk read failure")
+	src := io.MultiReader(strings.NewReader("unrelated log line\n"), iotest.ErrReader(readErr))
+	reader := &inputLogReader{}
+	if err := reader.readLogRecords(t.Context(), src); !errors.Is(err, readErr) {
+		t.Fatalf("readLogRecords error = %v, want %v", err, readErr)
+	}
+}
+
+func TestInputLogSnapshotGrowthAndInvalidation(t *testing.T) {
+	t.Parallel()
+
+	newFixture := func(t *testing.T, maxFiles int) (*Logger, *rotatingWriter, string, string) {
+		t.Helper()
+		ctx := t.Context()
+		root := t.TempDir()
+		database := filepath.Join(root, "upbrr.db")
+		logger, err := New(config.LoggingConfig{
+			Level:          "warn",
+			FileEnabled:    true,
+			MaxTotalSizeMB: 1,
+			MaxFiles:       maxFiles,
+		}, database)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = logger.Close() })
+		logger.SetConsoleOutput(io.Discard, io.Discard)
+		writer, ok := logger.closer.(*rotatingWriter)
+		if !ok {
+			t.Fatal("expected rotating file sink")
+		}
+		store := &recordingAttempts{}
+		source := filepath.Join(root, "Example.mkv")
+		scoped, id, finish := logger.BeginInputLog(ctx, store, source, "open input")
+		FromContext(scoped, logger).Tracef("captured detail")
+		finish("", "completed")
+		return logger, writer, filepath.Dir(writer.path), id
+	}
+
+	t.Run("ordinary active appends preserve snapshot completeness", func(t *testing.T) {
+		t.Parallel()
+		logger, writer, logDir, id := newFixture(t, 4)
+		// Force a rotated file as well so both active and rotated files are present.
+		if err := writer.rotate(); err != nil {
+			t.Fatal(err)
+		}
+		logger.Infof("active baseline line")
+
+		root, err := os.OpenRoot(logDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+		reader := inputLogReader{
+			records: map[string]*inputLogRecords{id: {}},
+			limit:   inputExportLimit,
+		}
+		files, err := reader.snapshotFiles(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Append to active upbrr.log before reading, including a line that would
+		// corrupt the attempt if reads were not bounded to the snapshot size.
+		logger.Infof("[input-log %s 99 record %d] post-snapshot line", id, time.Now().UnixNano())
+		for _, f := range files {
+			if err := reader.readFile(t.Context(), root, f); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Append again after reading and before verification.
+		logger.Infof("post-read unrelated append")
+		reader.verifyFiles(root, files)
+
+		rec := reader.records[id]
+		if reader.incomplete || !rec.started || !rec.ended || rec.incomplete {
+			t.Fatalf("ordinary active appends invalidated snapshot: reader.incomplete=%t rec=%+v", reader.incomplete, rec)
+		}
+		for _, line := range reader.lines[reader.first:] {
+			if strings.Contains(line.text, "post-snapshot line") {
+				t.Fatalf("reader scanned past snapshot size: %q", line.text)
+			}
+		}
+	})
+
+	t.Run("active file replacement invalidates snapshot", func(t *testing.T) {
+		t.Parallel()
+		logger, writer, logDir, id := newFixture(t, 4)
+		root, err := os.OpenRoot(logDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+		reader := inputLogReader{records: map[string]*inputLogRecords{id: {}}, limit: inputExportLimit}
+		files, err := reader.snapshotFiles(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := writer.rotate(); err != nil {
+			t.Fatal(err)
+		}
+		logger.Infof("new active file after multi-file rotation")
+		for _, f := range files {
+			if err := reader.readFile(t.Context(), root, f); err != nil {
+				t.Fatal(err)
+			}
+		}
+		reader.verifyFiles(root, files)
+		if !reader.incomplete {
+			t.Fatal("expected replaced active file to mark snapshot incomplete")
+		}
+	})
+
+	t.Run("single file rotation shrink invalidates snapshot", func(t *testing.T) {
+		t.Parallel()
+		logger, writer, logDir, id := newFixture(t, 1)
+		root, err := os.OpenRoot(logDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+		reader := inputLogReader{records: map[string]*inputLogRecords{id: {}}, limit: inputExportLimit}
+		files, err := reader.snapshotFiles(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := writer.rotate(); err != nil {
+			t.Fatal(err)
+		}
+		logger.Infof("short")
+		for _, f := range files {
+			if err := reader.readFile(t.Context(), root, f); err != nil {
+				t.Fatal(err)
+			}
+		}
+		reader.verifyFiles(root, files)
+		if !reader.incomplete {
+			t.Fatal("expected single-file truncation shrink to mark snapshot incomplete")
+		}
+	})
+
+	t.Run("single file rotation regrown past snapshot invalidates snapshot", func(t *testing.T) {
+		t.Parallel()
+		logger, writer, logDir, id := newFixture(t, 1)
+		root, err := os.OpenRoot(logDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+		reader := inputLogReader{records: map[string]*inputLogRecords{id: {}}, limit: inputExportLimit}
+		files, err := reader.snapshotFiles(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Read intact snapshot first, then truncate in-place and write more bytes
+		// than the initial snapshot size so same-inode size grows past f.info.Size().
+		for _, f := range files {
+			if err := reader.readFile(t.Context(), root, f); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := writer.rotate(); err != nil {
+			t.Fatal(err)
+		}
+		logger.Infof("regrown after single-file truncation %s", strings.Repeat("x", int(files[0].info.Size())+64))
+		reader.verifyFiles(root, files)
+		if !reader.incomplete {
+			t.Fatal("expected single-file truncation regrown past snapshot to mark snapshot incomplete")
+		}
+	})
+
+	t.Run("changed rotated file invalidates snapshot", func(t *testing.T) {
+		t.Parallel()
+		logger, writer, logDir, id := newFixture(t, 4)
+		if err := writer.rotate(); err != nil {
+			t.Fatal(err)
+		}
+		logger.Infof("active line")
+		root, err := os.OpenRoot(logDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+		reader := inputLogReader{records: map[string]*inputLogRecords{id: {}}, limit: inputExportLimit}
+		files, err := reader.snapshotFiles(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range files {
+			if err := reader.readFile(t.Context(), root, f); err != nil {
+				t.Fatal(err)
+			}
+		}
+		rotatedFile, err := os.OpenFile(writer.path+".1", os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.WriteString(rotatedFile, "2026/01/01 00:00:00 INFO: mutated rotated file\n"); err != nil {
+			_ = rotatedFile.Close()
+			t.Fatal(err)
+		}
+		if err := rotatedFile.Close(); err != nil {
+			t.Fatal(err)
+		}
+		reader.verifyFiles(root, files)
+		if !reader.incomplete {
+			t.Fatal("expected modified rotated file to mark snapshot incomplete")
+		}
+	})
+
+	t.Run("active file open errors surface while vanished files mark incomplete", func(t *testing.T) {
+		t.Parallel()
+		_, writer, logDir, id := newFixture(t, 4)
+		root, err := os.OpenRoot(logDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		info, err := root.Lstat("upbrr.log")
+		if err != nil {
+			_ = root.Close()
+			t.Fatal(err)
+		}
+		if _, _, ok, err := snapshotActiveLogFile(root, "missing.log", info); err != nil || ok {
+			_ = root.Close()
+			t.Fatalf("vanished active file = (ok=%t, err=%v), want (false, nil)", ok, err)
+		}
+		if err := root.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, ok, err := snapshotActiveLogFile(root, "upbrr.log", info); !errors.Is(err, os.ErrClosed) || ok {
+			t.Fatalf("non-NotExist active open = (ok=%t, err=%v), want (false, os.ErrClosed)", ok, err)
+		}
+		if runtime.GOOS != "windows" && os.Geteuid() != 0 {
+			if err := os.Chmod(writer.path, 0o000); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(writer.path, 0o600) })
+			database := filepath.Join(filepath.Dir(logDir), "upbrr.db")
+			_, err := ReadInputLog(t.Context(), nil, database, db.InputLogAttempt{
+				ID:         id,
+				SourcePath: filepath.Join(filepath.Dir(logDir), "Example.mkv"),
+				Kind:       "open input",
+				Outcome:    "completed",
+				StartedAt:  time.Now().UTC(),
+			})
+			if !errors.Is(err, os.ErrPermission) {
+				t.Fatalf("unreadable active log ReadInputLog err = %v, want os.ErrPermission", err)
+			}
+		}
+	})
+}
+
+func TestInputLogLateWritesAfterFinishUseOrdinaryLogging(t *testing.T) {
+	t.Parallel()
+
+	for _, fileEnabled := range []bool{true, false} {
+		name := "memory only"
+		if fileEnabled {
+			name = "file enabled"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx := t.Context()
+			root := t.TempDir()
+			database := filepath.Join(root, "upbrr.db")
+			logger, err := NewWithConsoleLevel(config.LoggingConfig{
+				Level:          "warn",
+				FileEnabled:    fileEnabled,
+				MaxTotalSizeMB: 1,
+				MaxFiles:       2,
+			}, database, "error")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer logger.Close()
+			var stdout, stderr bytes.Buffer
+			logger.SetConsoleOutput(&stdout, &stderr)
+			subID, sub := logger.Subscribe(10)
+			defer logger.Unsubscribe(subID)
+
+			store := &recordingAttempts{}
+			source := filepath.Join(root, "Example.mkv")
+			scopedCtx, id, finish := logger.BeginInputLog(ctx, store, source, "open input")
+			scoped := FromContext(scopedCtx, logger)
+
+			scoped.Tracef("before finish trace")
+			scoped.Warnf("before finish warn")
+			finish("", "completed")
+			store.attempts[0].Outcome = "completed"
+
+			scoped.Tracef("after finish trace")
+			scoped.Warnf("after finish warn")
+			scoped.Errorf("after finish error")
+
+			exported, err := ReadInputLog(ctx, logger, database, store.attempts[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantCoverage := "memory"
+			if fileEnabled {
+				wantCoverage = "complete"
+			}
+			if exported.Coverage != wantCoverage {
+				t.Fatalf("export coverage = %q, want %q", exported.Coverage, wantCoverage)
+			}
+			for _, want := range []string{"before finish trace", "before finish warn"} {
+				if !strings.Contains(exported.Text, want) {
+					t.Fatalf("missing active capture line %q in export:\n%s", want, exported.Text)
+				}
+			}
+			for _, unwanted := range []string{"after finish trace", "after finish warn", "after finish error"} {
+				if strings.Contains(exported.Text, unwanted) {
+					t.Fatalf("late write %q leaked into finished attempt export:\n%s", unwanted, exported.Text)
+				}
+			}
+			memEntries := logger.recentInputLogs()
+			if len(memEntries) != 2 || memEntries[0].Message != "before finish trace" || memEntries[1].Message != "before finish warn" {
+				t.Fatalf("memory input logs attached late writes: %#v", memEntries)
+			}
+			recent := logger.Recent(10)
+			if len(recent) != 3 || recent[0].Message != "before finish warn" ||
+				recent[1].Message != "after finish warn" || recent[2].Message != "after finish error" {
+				t.Fatalf("application buffer = %#v", recent)
+			}
+			if stdout.Len() != 0 || !strings.Contains(stderr.String(), "after finish error") ||
+				strings.Contains(stderr.String(), "warn") || strings.Contains(stderr.String(), "trace") {
+				t.Fatalf("console thresholds changed: stdout=%q stderr=%q", stdout.String(), stderr.String())
+			}
+			if len(sub) != 3 {
+				t.Fatalf("subscriber entries = %d, want 3", len(sub))
+			}
+			if fileEnabled {
+				logPath, err := LogPath(database)
+				if err != nil {
+					t.Fatal(err)
+				}
+				raw, err := os.ReadFile(logPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+				for _, want := range []string{"TRACE: after finish trace", "WARN: after finish warn", "ERROR: after finish error"} {
+					found := false
+					for _, line := range lines {
+						if strings.Contains(line, want) {
+							if strings.Contains(line, "[input-log "+id) {
+								t.Fatalf("late disk write retained attempt marker: %q", line)
+							}
+							found = true
+						}
+					}
+					if !found {
+						t.Fatalf("late write %q was dropped from disk log:\n%s", want, string(raw))
+					}
+				}
+			}
+		})
+	}
+
+	t.Run("concurrent writes across finish keep disk and memory consistent", func(t *testing.T) {
+		t.Parallel()
+		ctx := t.Context()
+		root := t.TempDir()
+		database := filepath.Join(root, "upbrr.db")
+		logger, err := New(config.LoggingConfig{
+			Level:          "warn",
+			FileEnabled:    true,
+			MaxTotalSizeMB: 1,
+			MaxFiles:       2,
+		}, database)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer logger.Close()
+		logger.SetConsoleOutput(io.Discard, io.Discard)
+		store := &recordingAttempts{}
+		scopedCtx, id, finish := logger.BeginInputLog(ctx, store, filepath.Join(root, "Example.mkv"), "open input")
+		scoped := FromContext(scopedCtx, logger)
+
+		start := make(chan struct{})
+		wroteOne := make(chan struct{}, 1)
+		var wg sync.WaitGroup
+		for worker := range 4 {
+			wg.Go(func() {
+				<-start
+				for i := range 25 {
+					scoped.Tracef("concurrent-%d-%d", worker, i)
+					if i == 0 {
+						select {
+						case wroteOne <- struct{}{}:
+						default:
+						}
+					}
+				}
+			})
+		}
+		close(start)
+		select {
+		case <-wroteOne:
+		case <-time.After(10 * time.Second):
+			finish("", "completed")
+			wg.Wait()
+			t.Fatal("concurrent logging worker did not write before finish")
+		}
+		finish("", "completed")
+		wg.Wait()
+		store.attempts[0].Outcome = "completed"
+		scoped.Tracef("strictly-after-finish")
+
+		diskOnly, err := ReadInputLog(ctx, nil, database, store.attempts[0])
+		if err != nil || diskOnly.Coverage != "complete" {
+			t.Fatalf("disk export = %#v, %v", diskOnly, err)
+		}
+		if strings.Contains(diskOnly.Text, "strictly-after-finish") {
+			t.Fatal("post-finish write entered disk attempt")
+		}
+		logPath, err := LogPath(database)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := os.ReadFile(logPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		type diskRecord struct {
+			stamp   int64
+			message string
+		}
+		var diskRecords []diskRecord
+		markerPrefix := "[input-log " + id + " "
+		for line := range strings.SplitSeq(strings.TrimSpace(string(raw)), "\n") {
+			_, rest, ok := strings.Cut(line, markerPrefix)
+			if !ok {
+				continue
+			}
+			meta, body, ok := strings.Cut(rest, "] ")
+			if !ok {
+				continue
+			}
+			parts := strings.Fields(meta)
+			if len(parts) != 3 || parts[1] != "record" {
+				continue
+			}
+			stamp, err := strconv.ParseInt(parts[2], 10, 64)
+			if err != nil {
+				t.Fatalf("parse disk marker timestamp %q: %v", meta, err)
+			}
+			diskRecords = append(diskRecords, diskRecord{stamp: stamp, message: body})
+		}
+		memEntries := logger.recentInputLogs()
+		if len(memEntries) != len(diskRecords) {
+			t.Fatalf("memory input logs count = %d, disk records = %d", len(memEntries), len(diskRecords))
+		}
+		for i, entry := range memEntries {
+			if entry.Message == "strictly-after-finish" {
+				t.Fatal("post-finish write entered memory input logs")
+			}
+			if entry.Message != diskRecords[i].message || entry.Time.UnixNano() != diskRecords[i].stamp {
+				t.Fatalf("record %d mismatch: memory=(%q, %d) disk=(%q, %d)",
+					i, entry.Message, entry.Time.UnixNano(), diskRecords[i].message, diskRecords[i].stamp)
+			}
+		}
+	})
+}
+
+func TestInputLogStorePreservesCapOrderAndIndependenceAcrossGenerations(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	root := t.TempDir()
+	database := filepath.Join(root, "upbrr.db")
+	store := newInputLogStore(3)
+
+	gen1, err := NewWithInputLogStore(config.LoggingConfig{
+		Level:       "warn",
+		FileEnabled: false,
+	}, database, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gen1.SetConsoleOutput(io.Discard, io.Discard)
+	sub1ID, sub1 := gen1.Subscribe(4)
+	defer gen1.Unsubscribe(sub1ID)
+
+	gen2, err := NewWithInputLogStore(config.LoggingConfig{
+		Level:          "info",
+		FileEnabled:    true,
+		MaxTotalSizeMB: 1,
+		MaxFiles:       2,
+	}, database, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gen2.Close()
+	gen2.SetConsoleOutput(io.Discard, io.Discard)
+	sub2ID, sub2 := gen2.Subscribe(4)
+	defer gen2.Unsubscribe(sub2ID)
+
+	attempts := &recordingAttempts{}
+	source := filepath.Join(root, "Example.mkv")
+	scoped1, _, finish1 := gen1.BeginInputLog(ctx, attempts, source, "open input")
+	FromContext(scoped1, gen1).Tracef("gen1-first")
+	FromContext(scoped1, gen1).Warnf("gen1-second")
+
+	// Still-live gen1 writes remain visible on gen2 before and after gen1 retires.
+	if got := gen2.recentInputLogs(); len(got) != 2 || got[0].Message != "gen1-first" || got[1].Message != "gen1-second" {
+		t.Fatalf("gen2 shared entries before retire = %#v", got)
+	}
+	finish1("", "failed")
+	FromContext(scoped1, gen1).Warnf("gen1-late-after-finish")
+	if err := gen1.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Independent app buffers, levels, and subscribers remain per-logger.
+	gen2.Infof("gen2-app-info")
+	if recent1 := gen1.Recent(10); len(recent1) != 2 || recent1[0].Message != "gen1-second" || recent1[1].Message != "gen1-late-after-finish" {
+		t.Fatalf("gen1 app buffer = %#v", recent1)
+	}
+	if recent2 := gen2.Recent(10); len(recent2) != 1 || recent2[0].Message != "gen2-app-info" {
+		t.Fatalf("gen2 app buffer = %#v", recent2)
+	}
+	if len(sub1) != 2 || len(sub2) != 1 {
+		t.Fatalf("subscriber isolation violated: sub1=%d sub2=%d", len(sub1), len(sub2))
+	}
+
+	// Cap and oldest-to-newest ordering hold across generations.
+	scoped2, _, finish2 := gen2.BeginInputLog(ctx, attempts, source, "open input")
+	FromContext(scoped2, gen2).Tracef("gen2-third")
+	FromContext(scoped2, gen2).Tracef("gen2-fourth")
+	finish2("", "completed")
+
+	got := gen2.recentInputLogs()
+	want := []string{"gen1-second", "gen2-third", "gen2-fourth"}
+	if len(got) != len(want) {
+		t.Fatalf("capped shared entries = %#v, want %v", got, want)
+	}
+	for i, msg := range want {
+		if got[i].Message != msg {
+			t.Fatalf("shared entry %d = %q, want %q", i, got[i].Message, msg)
+		}
+	}
+
+	// A separate logger with no shared store starts cleanly isolated.
+	isolated, err := New(config.LoggingConfig{Level: "info"}, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer isolated.Close()
+	if isolatedEntries := isolated.recentInputLogs(); len(isolatedEntries) != 0 {
+		t.Fatalf("isolated logger saw shared store entries: %#v", isolatedEntries)
+	}
 }

@@ -105,15 +105,17 @@ func TestHistoryOrphanCleanupPreservesFailedInputLog(t *testing.T) {
 		VALUES ('fixture', ?, 'fixture', '{}', '2026-01-01T00:00:00Z')`, source); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.BeginInputLog(ctx, db.InputLogAttempt{
+	attempt := db.InputLogAttempt{
 		ID:         "input-log",
 		SourcePath: source,
 		Kind:       "preparation",
 		StartedAt:  time.Now().UTC(),
-	}); err != nil {
+	}
+	if err := repo.BeginInputLog(ctx, attempt); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.FinishInputLog(ctx, "input-log", "", "failed"); err != nil {
+	attempt.Outcome = "failed"
+	if err := repo.FinishInputLog(ctx, attempt); err != nil {
 		t.Fatal(err)
 	}
 	history := newHistoryModule(repo, repo.DBPath(), api.NopLogger{})

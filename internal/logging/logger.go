@@ -90,10 +90,58 @@ type Logger struct {
 	mu              sync.Mutex
 	nextID          int64
 	buffer          []Entry
-	inputLogs       []Entry
+	inputLogs       *InputLogStore
 	bufferCap       int
 	subs            map[int]chan Entry
 	subID           int
+}
+
+// InputLogStore retains a bounded in-memory buffer of scoped input log entries
+// that can be shared across Logger generations for one running backend.
+type InputLogStore struct {
+	mu      sync.Mutex
+	entries []Entry
+	cap     int
+	oldest  int
+}
+
+// NewInputLogStore constructs a bounded in-memory input log retention store
+// using the default retention capacity.
+func NewInputLogStore() *InputLogStore {
+	return newInputLogStore(defaultBufferCap)
+}
+
+func newInputLogStore(capacity int) *InputLogStore {
+	if capacity <= 0 {
+		capacity = defaultBufferCap
+	}
+	return &InputLogStore{cap: capacity}
+}
+
+func (s *InputLogStore) record(entry Entry) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cap == 0 {
+		s.cap = defaultBufferCap
+	}
+	if len(s.entries) < s.cap {
+		s.entries = append(s.entries, entry)
+		return
+	}
+	s.entries[s.oldest] = entry
+	s.oldest = (s.oldest + 1) % s.cap
+}
+
+func (s *InputLogStore) recent() []Entry {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Concat(s.entries[s.oldest:], s.entries[:s.oldest])
 }
 
 // Entry is one sanitized retained log entry. IDs increase within a Logger, and
@@ -122,23 +170,30 @@ func New(cfg config.LoggingConfig, dbPath string) (*Logger, error) {
 	return NewWithLevel(cfg, dbPath, "")
 }
 
+// NewWithInputLogStore constructs a logger that shares store for in-memory
+// scoped input log retention across runtime generations. A nil store creates a
+// new logger-local store.
+func NewWithInputLogStore(cfg config.LoggingConfig, dbPath string, store *InputLogStore) (*Logger, error) {
+	return newLogger(cfg, dbPath, "", store)
+}
+
 // NewWithLevel constructs a logger after replacing cfg.Level with a non-blank
 // override. It has the same file ownership and side effects as [New].
 func NewWithLevel(cfg config.LoggingConfig, dbPath string, override string) (*Logger, error) {
 	if trimmed := strings.TrimSpace(override); trimmed != "" {
 		cfg.Level = trimmed
 	}
-	return newLogger(cfg, dbPath, "")
+	return newLogger(cfg, dbPath, "", nil)
 }
 
 // NewWithConsoleLevel constructs a logger using cfg.Level for application
 // logging and a non-blank override for console output only. Callers must close
 // the returned logger when file output is enabled.
 func NewWithConsoleLevel(cfg config.LoggingConfig, dbPath string, override string) (*Logger, error) {
-	return newLogger(cfg, dbPath, override)
+	return newLogger(cfg, dbPath, override, nil)
 }
 
-func newLogger(cfg config.LoggingConfig, dbPath string, consoleOverride string) (*Logger, error) {
+func newLogger(cfg config.LoggingConfig, dbPath string, consoleOverride string, inputStore *InputLogStore) (*Logger, error) {
 	level, err := ParseLevel(cfg.Level)
 	if err != nil {
 		return nil, err
@@ -153,6 +208,10 @@ func newLogger(cfg config.LoggingConfig, dbPath string, consoleOverride string) 
 		consoleLevelSet = true
 	}
 
+	if inputStore == nil {
+		inputStore = newInputLogStore(defaultBufferCap)
+	}
+
 	consoleOut, consoleErr := defaultConsoleWriters()
 	logger := &Logger{
 		level:           level,
@@ -160,6 +219,7 @@ func newLogger(cfg config.LoggingConfig, dbPath string, consoleOverride string) 
 		consoleLevelSet: consoleLevelSet,
 		consoleOut:      log.New(consoleOut, "", log.LstdFlags),
 		consoleErr:      log.New(consoleErr, "", log.LstdFlags),
+		inputLogs:       inputStore,
 		bufferCap:       defaultBufferCap,
 		subs:            make(map[int]chan Entry),
 	}
@@ -299,7 +359,7 @@ func (l *Logger) writefAtLevel(applicationLevel Level, level Level, label string
 		return
 	}
 	applicationEnabled, consoleLevel, enabled := l.enabledLevels(applicationLevel, level)
-	if !enabled && capture == nil {
+	if !enabled && capture.isClosed() {
 		return
 	}
 	l.writeSanitized(level, label, SanitizeMessage(fmt.Sprintf(format, args...)), capture, applicationEnabled, consoleLevel)
@@ -327,16 +387,20 @@ func (l *Logger) writeSanitized(level Level, label, formatted string, capture *i
 			console.Print(prefix + formatted)
 		}
 	}
-	var attempt string
+	var at time.Time
+	var captured bool
 	if capture != nil {
-		attempt = capture.id
-		capture.write(label, "record", formatted)
-	} else if l.file != nil {
+		at, captured = capture.writeRecord(label, formatted)
+	}
+	if !captured && l.file != nil {
 		// Indent multiline continuations so they cannot introduce a record.
 		l.file.Print(prefix + diskLogMessage(formatted))
 	}
-	if applicationEnabled || attempt != "" {
-		l.record(label, formatted, attempt, applicationEnabled)
+	if applicationEnabled {
+		if !captured {
+			at = time.Now()
+		}
+		l.record(label, formatted, at)
 	}
 }
 
@@ -364,29 +428,35 @@ func DBRelativePathLabel(value string) (string, bool) {
 	return "", false
 }
 
-func (l *Logger) record(label, message, attempt string, applicationEnabled bool) {
+// InputLogStore returns the bounded in-memory input log store backing l, or nil
+// when l is nil.
+func (l *Logger) InputLogStore() *InputLogStore {
+	if l == nil {
+		return nil
+	}
+	return l.inputLogs
+}
+
+func (l *Logger) recordInputLog(entry Entry) {
+	if l == nil || l.inputLogs == nil {
+		return
+	}
+	l.inputLogs.record(entry)
+}
+
+func (l *Logger) record(label, message string, at time.Time) {
 	if l == nil {
 		return
 	}
 
 	entry := Entry{
-		Time:    time.Now(),
+		Time:    at,
 		Level:   strings.ToLower(label),
 		Message: message,
-		attempt: attempt,
 	}
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if attempt != "" {
-		l.inputLogs = append(l.inputLogs, entry)
-		if l.bufferCap > 0 && len(l.inputLogs) > l.bufferCap {
-			l.inputLogs = l.inputLogs[len(l.inputLogs)-l.bufferCap:]
-		}
-	}
-	if !applicationEnabled {
-		return
-	}
 	l.nextID++
 	entry.ID = l.nextID
 	l.buffer = append(l.buffer, entry)
@@ -402,12 +472,10 @@ func (l *Logger) record(label, message, attempt string, applicationEnabled bool)
 }
 
 func (l *Logger) recentInputLogs() []Entry {
-	if l == nil {
+	if l == nil || l.inputLogs == nil {
 		return nil
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return slices.Clone(l.inputLogs)
+	return l.inputLogs.recent()
 }
 
 // Recent returns a copied, oldest-to-newest snapshot of the most recent entries.

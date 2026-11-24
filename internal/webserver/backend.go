@@ -47,6 +47,7 @@ type Backend struct {
 	coreOwner          LifecycleOwner
 	coreInitErr        error
 	logger             *logging.Logger
+	inputLogStore      *logging.InputLogStore
 	runtimeBundle      *runtimeBundle
 	repo               *db.SQLiteRepository
 	hub                *eventHub
@@ -107,7 +108,8 @@ func newBackendWithLiveTest(ctx context.Context, cfg config.Config, hub *eventHu
 	if ctx == nil {
 		return nil, errors.New("webserver: context is required")
 	}
-	logger, err := logging.New(cfg.Logging, cfg.MainSettings.DBPath)
+	inputLogStore := logging.NewInputLogStore()
+	logger, err := logging.NewWithInputLogStore(cfg.Logging, cfg.MainSettings.DBPath, inputLogStore)
 	if err != nil {
 		return nil, fmt.Errorf("web: %w", err)
 	}
@@ -176,6 +178,7 @@ func newBackendWithLiveTest(ctx context.Context, cfg config.Config, hub *eventHu
 		coreOwner:           coreOwner,
 		coreInitErr:         coreInitErr,
 		logger:              logger,
+		inputLogStore:       inputLogStore,
 		runtimeBundle:       initialBundle,
 		repo:                repo,
 		hub:                 hub,
@@ -874,6 +877,15 @@ func (b *Backend) DeleteHistoryRelease(sourcePath string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
 	return wrapWebError(historyCore.DeleteHistoryRelease(ctx, strings.TrimSpace(sourcePath)))
+}
+
+// DeleteInputLogs removes input log associations matching sourcePath by host
+// lexical path equivalence without modifying stored release history or files.
+func (b *Backend) DeleteInputLogs(ctx context.Context, sourcePath string) error {
+	if b == nil || b.repo == nil {
+		return errors.New("config repository not initialized")
+	}
+	return wrapWebError(b.repo.DeleteInputLogs(ctx, sourcePath))
 }
 
 // GetLogPath returns the host filesystem path of the active application log.

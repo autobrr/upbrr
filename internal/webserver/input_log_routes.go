@@ -5,11 +5,14 @@ package webserver
 
 import (
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"unicode/utf8"
 
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -75,6 +78,26 @@ func (s *Server) registerInputLogRoutes(mux *http.ServeMux) {
 			DownloadID string
 		}{data, id})
 	}))
+	mux.HandleFunc("POST /api/app/DeleteInputLogs", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+		r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
+		var req struct{ SourcePath string }
+		if err := decodeJSON(r, &req); err != nil || strings.TrimSpace(req.SourcePath) == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Select an input to remove its logs."})
+			return
+		}
+		if err := s.backend.DeleteInputLogs(r.Context(), req.SourcePath); err != nil {
+			switch {
+			case errors.Is(err, internalerrors.ErrInvalidInput):
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Select an input to remove its logs."})
+			case errors.Is(err, api.ErrActiveInputBusy), errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown):
+				writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+			default:
+				writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Input log history is unavailable."})
+			}
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}))
 	mux.HandleFunc("GET /api/app/InputLog/{id}", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
 		id := r.PathValue("id")
 		if _, err := hex.DecodeString(id); len(id) != 24 || err != nil {
@@ -82,7 +105,11 @@ func (s *Server) registerInputLogRoutes(mux *http.ServeMux) {
 			return
 		}
 		anchor, err := s.backend.repo.InputLogs(r.Context(), "", id)
-		if err != nil || len(anchor) != 1 {
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Input log history is unavailable."})
+			return
+		}
+		if len(anchor) != 1 {
 			http.NotFound(w, r)
 			return
 		}

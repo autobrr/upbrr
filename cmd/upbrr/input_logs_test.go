@@ -4,6 +4,7 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -100,5 +101,49 @@ func TestExportCurrentFailedInputUsesDefaultFolderWithoutFileLogging(t *testing.
 	if err != nil || !strings.Contains(string(body), "Coverage: memory") ||
 		!strings.Contains(string(body), "Outcome: failed") {
 		t.Fatalf("the failed input's memory log was not exported: %v", err)
+	}
+}
+
+func TestInputLogFlagRejections(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "Example.Release.2026-GRP.mkv")
+	exportDir := t.TempDir()
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "export-last-log requires one input",
+			args: []string{"--export-last-log"},
+			want: "--export-last-log requires one input and cannot use --export-log",
+		},
+		{
+			name: "export-last-log rejects export-log",
+			args: []string{"--export-last-log", "--export-log", source},
+			want: "--export-last-log requires one input and cannot use --export-log",
+		},
+		{
+			name: "export-last-log rejects processing flags",
+			args: []string{"--export-last-log", "--unattended", source},
+			want: "--export-last-log cannot be combined with --unattended",
+		},
+		{
+			name: "log-export-dir requires an export flag",
+			args: []string{"--log-export-dir", exportDir, source},
+			want: "--log-export-dir requires --export-log or --export-last-log",
+		},
+		{
+			name: "export-log rejects non-processing modes",
+			args: []string{"--export-log", "--version"},
+			want: "--export-log requires an input processing run",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := executeCLIForTest(t.Context(), t, test.args)
+			cliErr, ok := errors.AsType[*cliExitError](result.err)
+			if !ok || cliErr.code != 2 || !strings.Contains(cliErr.Error(), test.want) {
+				t.Fatalf("args %v => err=%v, want exit code 2 containing %q", test.args, result.err, test.want)
+			}
+		})
 	}
 }

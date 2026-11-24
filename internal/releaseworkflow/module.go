@@ -5,6 +5,7 @@ package releaseworkflow
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -884,7 +885,7 @@ func (m *Module) Start(ctx context.Context, ownerID string, command Command) (ap
 		return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow append queued operation event: %w", err)
 	}
 	status.Events = events
-	m.dispatchOperationWorker(ctx, ownerID, state.SourcePath, command, record, release)
+	m.dispatchOperationWorker(ctx, ownerID, cmp.Or(strings.TrimSpace(state.SourcePath), currentWorkflowSourcePath(&state)), command, record, release)
 	transferredLifetime = true
 	return cloneWorkflowOperationStatus(status, "start operation")
 }
@@ -933,9 +934,13 @@ func (m *Module) dispatchOperationWorker(
 		logging.FromContext(runCtx, m.logger).Debugf("input: running operation kind=%s", record.Status.Operation)
 		m.runOperation(context.WithValue(runCtx, operationLifetimeContextKey{}, struct{}{}), ownerID, command, record)
 		outcome := ""
-		if current, err := m.operations.LoadOperation(context.WithoutCancel(runCtx), ownerID, record.WorkflowID, record.OperationID); err == nil &&
-			isTerminalProgressStatus(current.Status.Status) {
-			outcome = string(current.Status.Status)
+		if current, err := m.operations.LoadOperation(context.WithoutCancel(runCtx), ownerID, record.WorkflowID, record.OperationID); err == nil {
+			switch {
+			case current.ProcessEpoch != record.ProcessEpoch:
+				outcome = string(api.StageStatusInterrupted)
+			case isTerminalProgressStatus(current.Status.Status):
+				outcome = string(current.Status.Status)
+			}
 		}
 		finishLogs("", outcome)
 	}()
@@ -2075,7 +2080,7 @@ func (m *Module) recoverOperationAfterLease(
 	m.dispatchOperationWorker(
 		context.WithValue(ctx, recoveredOperationContextKey{}, true),
 		current.OwnerID,
-		state.SourcePath,
+		cmp.Or(strings.TrimSpace(state.SourcePath), currentWorkflowSourcePath(&state)),
 		capsule.command,
 		current,
 		release,

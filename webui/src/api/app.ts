@@ -470,4 +470,6 @@ export const historyClient = {
     requestApp<HistoryOverview>("GetHistoryOverview", { SourcePath: sourcePath }, { signal }),
   removeRelease: (sourcePath: string) =>
     requestApp<void>("DeleteHistoryRelease", { SourcePath: sourcePath }),
+  removeLogs: (sourcePath: string) =>
+    requestApp<void>("DeleteInputLogs", { SourcePath: sourcePath }),
 };

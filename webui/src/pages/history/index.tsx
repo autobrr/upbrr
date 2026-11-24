@@ -82,8 +82,12 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
   const loading = historyQuery.isPending;
   const [selectedPath, setSelectedPath] = useState("");
   const [logsPath, setLogsPath] = useState("");
-  const logOnly = entries.find((entry) => entry.SourcePath === selectedPath)?.LogsOnly === true;
-  const showingLogs = logOnly || logsPath === selectedPath;
+  const selectedEntry = useMemo(
+    () => entries.find((entry) => entry.SourcePath === selectedPath) || null,
+    [entries, selectedPath],
+  );
+  const logOnly = selectedEntry?.LogsOnly === true;
+  const showingLogs = selectedEntry !== null && (logOnly || logsPath === selectedPath);
   const [searchQuery, setSearchQuery] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [opening, setOpening] = useState(false);
@@ -119,15 +123,10 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
   const overviewQuery = useQuery({
     queryKey: ["history", "overview", selectedPath],
     queryFn: ({ signal }) => historyClient.getOverview(selectedPath, signal),
-    enabled: selectedPath !== "" && !logOnly,
+    enabled: selectedEntry !== null && !logOnly,
   });
   const overview: HistoryOverview | null = overviewQuery.data ?? null;
-  const detailLoading = selectedPath !== "" && !logOnly && overviewQuery.isPending;
-
-  const selectedEntry = useMemo(
-    () => entries.find((entry) => entry.SourcePath === selectedPath) || null,
-    [entries, selectedPath],
-  );
+  const detailLoading = selectedEntry !== null && !logOnly && overviewQuery.isPending;
 
   const descriptionOverrides = useMemo(() => {
     if (!overview) {
@@ -136,12 +135,17 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
     return Array.isArray(overview.DescriptionOverrides) ? overview.DescriptionOverrides : [];
   }, [overview]);
 
-  const handleDeleteRelease = async () => {
-    if (!selectedPath) {
+  const handleDeleteEntry = async (entry: HistoryEntry) => {
+    const deletedPath = entry.SourcePath;
+    const isLogOnly = entry.LogsOnly === true;
+    if (!deletedPath) {
       return;
     }
-    const deleteHistoryRelease = historyClient.removeRelease;
-    const confirmed = window.confirm("Remove this stored release and all associated stored files?");
+    const confirmed = window.confirm(
+      isLogOnly
+        ? "Remove this log-only entry from History?"
+        : "Remove this stored release and all associated stored files?",
+    );
     if (!confirmed) {
       return;
     }
@@ -150,10 +154,13 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
     setError("");
     setOpenFailure(null);
     try {
-      const deletedPath = selectedPath;
-      await deleteHistoryRelease(deletedPath);
-      onReleaseDeleted?.(deletedPath);
-      queryClient.removeQueries({ queryKey: ["history", "overview", deletedPath] });
+      if (isLogOnly) {
+        await historyClient.removeLogs(deletedPath);
+      } else {
+        await historyClient.removeRelease(deletedPath);
+        onReleaseDeleted?.(deletedPath);
+        queryClient.removeQueries({ queryKey: ["history", "overview", deletedPath] });
+      }
       queryClient.removeQueries({ queryKey: ["history", "log", deletedPath] });
       await queryClient.invalidateQueries({ queryKey: ["history", "list"] });
     } catch (err) {
@@ -260,14 +267,14 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
         </aside>
 
         <div className="overflow-y-auto rounded-lg border border-border bg-card p-3">
-          {selectedPath ? (
+          {selectedEntry ? (
             <div className="mb-3 flex justify-end gap-2">
               {!logOnly && (
                 <button
                   type="button"
                   className="ghost"
                   aria-expanded={showingLogs}
-                  onClick={() => setLogsPath(showingLogs ? "" : selectedPath)}
+                  onClick={() => setLogsPath(showingLogs ? "" : selectedEntry.SourcePath)}
                 >
                   Logs
                 </button>
@@ -285,22 +292,24 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
                 className="ghost border-destructive text-destructive-text"
                 disabled={deleting}
                 onClick={() => {
-                  void handleDeleteRelease();
+                  void handleDeleteEntry(selectedEntry);
                 }}
               >
-                {deleting ? "Removing..." : "Remove from database"}
+                {deleting ? "Removing..." : logOnly ? "Remove log entry" : "Remove from database"}
               </button>
             </div>
           ) : null}
 
-          {selectedPath && showingLogs && (
-            <InputLogs key={selectedPath} sourcePath={selectedPath} />
+          {selectedEntry && showingLogs && (
+            <InputLogs key={selectedEntry.SourcePath} sourcePath={selectedEntry.SourcePath} />
           )}
-          {logOnly && <p className="break-words text-muted-foreground">{selectedPath}</p>}
+          {logOnly && selectedEntry && (
+            <p className="break-words text-muted-foreground">{selectedEntry.SourcePath}</p>
+          )}
 
           {detailLoading ? <p className="text-muted-foreground">Loading overview...</p> : null}
 
-          {!selectedPath ? (
+          {!selectedEntry ? (
             <p className="text-muted-foreground">Select a stored release to view details.</p>
           ) : null}
 

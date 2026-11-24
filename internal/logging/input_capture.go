@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -21,13 +22,13 @@ type inputCapture struct {
 	mu       sync.Mutex
 	sequence uint64
 	path     string
-	closed   bool
+	closed   atomic.Bool
 }
 
 // InputLogRepository saves only input log associations and outcomes.
 type InputLogRepository interface {
 	BeginInputLog(context.Context, db.InputLogAttempt) error
-	FinishInputLog(context.Context, string, string, string) error
+	FinishInputLog(context.Context, db.InputLogAttempt) error
 }
 
 // BeginInputLog scopes a run to an opaque ID. A nested phase inherits an
@@ -37,7 +38,7 @@ func (l *Logger) BeginInputLog(ctx context.Context, repo InputLogRepository, sou
 	if l == nil || repo == nil || strings.TrimSpace(source) == "" {
 		return ctx, "", noFinish
 	}
-	if view, ok := ctx.Value(operationLoggerKey{}).(*OperationLogger); ok && view.root == l && view.capture != nil {
+	if view, ok := ctx.Value(operationLoggerKey{}).(*OperationLogger); ok && view.root == l && view.capture != nil && !view.capture.isClosed() {
 		return ctx, view.capture.id, func(path, _ string) { view.capture.bindPath(path) }
 	}
 	path, err := filepath.Abs(strings.TrimSpace(source))
@@ -47,12 +48,14 @@ func (l *Logger) BeginInputLog(ctx context.Context, repo InputLogRepository, sou
 	var token [12]byte
 	rand.Read(token[:])
 	id := hex.EncodeToString(token[:])
-	if err := repo.BeginInputLog(ctx, db.InputLogAttempt{
-		ID:         id,
-		SourcePath: path,
-		Kind:       kind,
-		StartedAt:  time.Now().UTC(),
-	}); err != nil {
+	attempt := db.InputLogAttempt{
+		ID:            id,
+		SourcePath:    path,
+		RequestedPath: path,
+		Kind:          kind,
+		StartedAt:     time.Now().UTC(),
+	}
+	if err := repo.BeginInputLog(ctx, attempt); err != nil {
 		l.Warnf("logging: could not associate input attempt")
 		return ctx, "", noFinish
 	}
@@ -61,50 +64,89 @@ func (l *Logger) BeginInputLog(ctx context.Context, repo InputLogRepository, sou
 	if view, ok := ctx.Value(operationLoggerKey{}).(*OperationLogger); ok && view.root == l {
 		level = view.level
 	}
-	c.write("INFO", "begin", "Input processing started.")
+	c.begin()
 	return WithOperationLogger(ctx, &OperationLogger{
 			root:    l,
 			level:   level,
 			capture: c,
 		}), id, func(path, outcome string) {
-			c.bindPath(path)
-			c.write("INFO", "end", "Input processing finished.")
-			c.mu.Lock()
-			path = c.path
-			c.mu.Unlock()
+			boundPath, ok := c.finish(path)
+			if !ok {
+				return
+			}
+			completed := attempt
+			completed.SourcePath = boundPath
+			completed.Outcome = outcome
 			saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 			defer cancel()
-			if err := repo.FinishInputLog(saveCtx, id, path, outcome); err != nil {
+			if err := repo.FinishInputLog(saveCtx, completed); err != nil {
 				l.Warnf("logging: could not save input attempt outcome")
 			}
 		}
 }
 
+func (c *inputCapture) isClosed() bool {
+	return c == nil || c.closed.Load()
+}
+
 func (c *inputCapture) bindPath(path string) {
 	if path != "" {
 		c.mu.Lock()
-		if !c.closed {
+		if !c.closed.Load() {
 			c.path = path
 		}
 		c.mu.Unlock()
 	}
 }
 
-func (c *inputCapture) write(label, kind, message string) {
+func (c *inputCapture) begin() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
-		return
-	}
-	if kind == "end" {
-		c.closed = true
-	}
-	if c.root.file == nil {
+	if c.closed.Load() || c.root.file == nil {
 		return
 	}
 	c.sequence++
-	c.root.file.Printf("%s: [input-log %s %d %s %d] %s",
-		label, c.id, c.sequence, kind, time.Now().UnixNano(), diskLogMessage(message))
+	c.root.file.Printf("INFO: [input-log %s %d begin %d] Input processing started.",
+		c.id, c.sequence, time.Now().UnixNano())
+}
+
+func (c *inputCapture) writeRecord(label, message string) (time.Time, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed.Load() {
+		return time.Time{}, false
+	}
+	at := time.Now()
+	if c.root.file != nil {
+		c.sequence++
+		c.root.file.Printf("%s: [input-log %s %d record %d] %s",
+			label, c.id, c.sequence, at.UnixNano(), diskLogMessage(message))
+	}
+	c.root.recordInputLog(Entry{
+		Time:    at,
+		Level:   strings.ToLower(label),
+		Message: message,
+		attempt: c.id,
+	})
+	return at, true
+}
+
+func (c *inputCapture) finish(path string) (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed.Load() {
+		return "", false
+	}
+	if path != "" {
+		c.path = path
+	}
+	c.closed.Store(true)
+	if c.root.file != nil {
+		c.sequence++
+		c.root.file.Printf("INFO: [input-log %s %d end %d] Input processing finished.",
+			c.id, c.sequence, time.Now().UnixNano())
+	}
+	return c.path, true
 }
 
 func diskLogMessage(message string) string {

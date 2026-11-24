@@ -102,6 +102,58 @@ describe("HistoryPage", () => {
     expect(loadOverview).not.toHaveBeenCalled();
   });
 
+  it("shows expired presentation without a download link and removes a log-only entry", async () => {
+    const sourcePath = "/media/Expired.Release.2026-GRP.mkv";
+    let items: HistoryEntry[] = [
+      {
+        ...entry(sourcePath, "Expired Release"),
+        MetadataUpdatedAt: "0001-01-01T00:00:00Z",
+        LogsOnly: true,
+      },
+    ];
+    const loadOverview = vi.fn();
+    const removeRelease = vi.fn();
+    const removeLogs = vi.fn(async () => {
+      items = [];
+      return {};
+    });
+    const onReleaseDeleted = vi.fn();
+    installHistoryMocks({
+      ListHistory: async () => items,
+      GetInputLog: async () => ({
+        Coverage: "expired",
+        Text: "",
+        DownloadID: "",
+      }),
+      GetHistoryOverview: loadOverview,
+      DeleteHistoryRelease: removeRelease,
+      DeleteInputLogs: removeLogs,
+    });
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal("confirm", confirm);
+    try {
+      renderHistory({ onReleaseDeleted });
+      expect(
+        await screen.findByText(
+          "No entries remain. The log may have rotated away or file logging was off.",
+        ),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Download log" })).not.toBeInTheDocument();
+      expect(loadOverview).not.toHaveBeenCalled();
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "Remove log entry" }));
+      expect(await screen.findByText("No stored releases found.")).toBeInTheDocument();
+      expect(confirm).toHaveBeenCalledExactlyOnceWith("Remove this log-only entry from History?");
+      expect(removeLogs).toHaveBeenCalledExactlyOnceWith(sourcePath);
+      expect(removeRelease).not.toHaveBeenCalled();
+      expect(onReleaseDeleted).not.toHaveBeenCalled();
+      expect(loadOverview).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("keeps stored releases visible when log discovery fails", async () => {
     const saved = entry("/media/Stored.mkv", "Stored Release");
     installHistoryMocks({
