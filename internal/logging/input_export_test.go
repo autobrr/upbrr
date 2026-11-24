@@ -144,6 +144,7 @@ func TestInputLogExportSanitizesFreshAndLegacyDiagnostics(t *testing.T) {
 				`mediainfo: analyzing /media/Bracketed Library [2024]/Private Group/Example.mkv`,
 				`preparing D:\Bracketed Library [2024]\Private Group\Example.mkv (phase=metadata)`,
 				`preparing \Root Relative Library\Rooted.mkv (phase=metadata)`,
+				`preparing \Root Relative Library\a (phase=metadata)`,
 				`literal escapes: \n\t and \r`,
 				`mediainfo: analyzing /media/Show {tvdb-123}/Season 01/File.mkv`,
 				"mediainfo: analyzing " + filepath.Join(filepath.Dir(database), "private collection", "season", "File.mkv"),
@@ -207,7 +208,7 @@ func TestInputLogExportSanitizesFreshAndLegacyDiagnostics(t *testing.T) {
 			for _, detail := range []string{"preparing Example Release.mkv (phase=metadata)", "{db}/tmp/Example.Release (text=false json=false)",
 				"content_path=\"Example Release.mkv\"", "ffmpeg=ffmpeg.exe selected_path=Example Release.mkv", "copying File.mkv",
 				"analyzing File.mkv (1080p/24)", "save_path=[REDACTED] content_path=File.mkv", `path="Example.mkv" category="movies"`,
-				"preparing Rooted.mkv (phase=metadata)", `literal escapes: \n\t and \r`, "tmdb: metadata loaded id=172233", "candidate[id=[REDACTED],size=123,kind=encode]",
+				"preparing Rooted.mkv (phase=metadata)", "preparing a (phase=metadata)", `literal escapes: \n\t and \r`, "tmdb: metadata loaded id=172233", "candidate[id=[REDACTED],size=123,kind=encode]",
 				"candidate={1080p}", "injection input source=File.mkv tracker=EXAMPLE", "mediainfo: analyzing File.mkv", "linked example save_path=[REDACTED]",
 				"metadata: normalized path File.mkv", "mediainfo: analyzing Example.mkv", "preparing Example.mkv (phase=metadata)"} {
 				if !strings.Contains(result.Text, detail) {

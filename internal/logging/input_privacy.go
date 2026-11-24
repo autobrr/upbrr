@@ -31,10 +31,10 @@ var (
 	inputLogMissingDupe = regexp.MustCompile(`(?i)(\bcandidate=)[^\s,"\\:{}\]]+(:)`)
 	inputLogTrackerIDs  = regexp.MustCompile(`(?im)(metadata: pathed tracker ids for .*?: )[^\r\n]+`)
 	inputLogComment     = regexp.MustCompile(`(?im)(metadata: torrent .*?\bcomment=)"(?:\\.|[^"\\])*"`)
-	// A single Windows root separator needs another path component, not a bare escape.
+	// A single Windows root separator needs another path component.
 	inputLogLocation = regexp.MustCompile(
 		`(?i)[a-z][a-z0-9+.-]*://(?:\[[0-9a-f:]+\]|\[REDACTED\]|[^\s<>"'\\\[\]])+|(?:^|[\s"'=(:,\[])([a-z]:[\\/]+|\\\\+` +
-			`|\\[^\\/\s"'<>|](?:[^\\/"'<>|\r\n]*[^\\/\s"'<>|])?[\\/][^\\/\s"'<>|]{2}` +
+			`|\\[^\\/\s"'<>|](?:[^\\/"'<>|\r\n]*[^\\/\s"'<>|])?[\\/][^\\/\s"'<>|]{1,2}` +
 			`|/[^\s"'<>|{}[\],;)])`,
 	)
 	inputLogPathEnd      = regexp.MustCompile(`[\t\r\n"<>|]|\s+\(?[a-zA-Z_][\w.-]*=|\s+->\s+|\s+\([^\\/()]*[/\\][^()]*\)`)
@@ -254,6 +254,10 @@ func sanitizeInputLogLocations(message, dbRoot string, sources []string) string 
 			continue
 		}
 		start = location[2]
+		// A pair of literal escapes can look like two single-root path components.
+		if isInputLogEscapePair(message[start:end]) {
+			continue
+		}
 		// Keep BBCode closing tags in descriptions.
 		if message[location[0]] == '[' && message[start] == '/' &&
 			!strings.ContainsAny(strings.SplitN(message[start+1:], "]", 2)[0], "/\\ \t\r\n") {
@@ -282,6 +286,18 @@ func sanitizeInputLogLocations(message, dbRoot string, sources []string) string 
 	}
 	out.WriteString(message[cursor:])
 	return out.String()
+}
+
+func isInputLogEscapePair(value string) bool {
+	if len(value) < 4 || value[0] != '\\' || value[1] == '\\' {
+		return false
+	}
+	_, _, tail, err := strconv.UnquoteChar(value, '"')
+	if err != nil || !strings.HasPrefix(tail, "\\") {
+		return false
+	}
+	_, _, tail, err = strconv.UnquoteChar(tail, '"')
+	return err == nil && tail == ""
 }
 
 func isAbsoluteLogPath(value string) bool {
