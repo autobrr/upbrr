@@ -1135,6 +1135,16 @@ func TestNewRegistryIncludesHDBPolicies(t *testing.T) {
 	}
 }
 
+func TestNewRegistryIncludesHDTArtifactPolicy(t *testing.T) {
+	registry, err := NewRegistry()
+	if err != nil {
+		t.Fatalf("new registry: %v", err)
+	}
+	if policy, ok := registry.LookupArtifactPolicy("HDT"); !ok || policy.MaxPieceSizeMiB != 16 {
+		t.Fatalf("HDT artifact policy = %#v, %t; want 16 MiB maximum", policy, ok)
+	}
+}
+
 func TestNewRegistryIncludesPTPPolicies(t *testing.T) {
 	registry, err := NewRegistry()
 	if err != nil {

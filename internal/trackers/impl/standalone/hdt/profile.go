@@ -23,6 +23,7 @@ func Profile() standalone.Profile {
 		ReleaseNamePolicy:   namePolicy(),
 		NewDuplicateAdapter: newDuplicateAdapter,
 		ValidationPolicy:    validationPolicy(),
+		ArtifactPolicy:      &trackers.ArtifactPolicy{MaxPieceSizeMiB: 16},
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{
 			Source:          "hd-torrents.org",
 			RequireAnnounce: true,
