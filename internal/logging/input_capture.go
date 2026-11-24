@@ -16,6 +16,9 @@ import (
 	"github.com/autobrr/upbrr/internal/services/db"
 )
 
+// The first record follows the begin marker, even for memory-only attempts.
+const firstInputRecordSequence = 2
+
 type inputCapture struct {
 	root     *Logger
 	id       string
@@ -102,12 +105,14 @@ func (c *inputCapture) bindPath(path string) {
 func (c *inputCapture) begin() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed.Load() || c.root.file == nil {
+	if c.closed.Load() {
 		return
 	}
-	c.sequence++
-	c.root.file.Printf("INFO: [input-log %s %d begin %d] Input processing started.",
-		c.id, c.sequence, time.Now().UnixNano())
+	c.sequence = firstInputRecordSequence - 1
+	if c.root.file != nil {
+		c.root.file.Printf("INFO: [input-log %s %d begin %d] Input processing started.",
+			c.id, c.sequence, time.Now().UnixNano())
+	}
 }
 
 func (c *inputCapture) writeRecord(label, message string) (time.Time, bool) {
@@ -117,8 +122,8 @@ func (c *inputCapture) writeRecord(label, message string) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	at := time.Now()
+	c.sequence++
 	if c.root.file != nil {
-		c.sequence++
 		c.root.file.Printf("%s: [input-log %s %d record %d] %s",
 			label, c.id, c.sequence, at.UnixNano(), diskLogMessage(message))
 	}

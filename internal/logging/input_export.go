@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -74,7 +75,12 @@ func readInputLogs(ctx context.Context, logger *Logger, dbPath string, attempts 
 		if records == nil || (e.sequence != 0 && !pending) {
 			continue
 		}
-		records.memory = !records.sawDiskRecord
+		if !records.sawDiskRecord && !records.memory {
+			records.memory = true
+			if e.sequence > firstInputRecordSequence {
+				records.incomplete = true
+			}
+		}
 		memory.add(inputLogLine{
 			records: records,
 			text:    fmt.Sprintf("%s %s: %s\n", e.Time.Format(inputLogTimeFormat), strings.ToUpper(e.Level), e.Message),
@@ -167,7 +173,18 @@ func (r *inputLogReader) add(line inputLogLine) {
 		line.records.incomplete = true
 		return
 	}
-	for r.bytes+len(line.text) > r.limit {
+	// Most records arrive in order. Overlapping captures may append an
+	// earlier timestamp after a later one; trim the oldest timestamp in
+	// either case. Insert after equals so multiline and legacy order stay stable.
+	pos := len(r.lines)
+	if pos > r.first && r.lines[pos-1].stamp > line.stamp {
+		pos = r.first + sort.Search(pos-r.first, func(i int) bool {
+			return r.lines[r.first+i].stamp > line.stamp
+		})
+	}
+	r.lines = slices.Insert(r.lines, pos, line)
+	r.bytes += len(line.text)
+	for r.bytes > r.limit {
 		r.trimmed = true
 		oldest := r.lines[r.first]
 		r.lines[r.first] = inputLogLine{}
@@ -179,8 +196,6 @@ func (r *inputLogReader) add(line inputLogLine) {
 		r.lines = slices.Delete(r.lines, 0, r.first)
 		r.first = 0
 	}
-	r.lines = append(r.lines, line)
-	r.bytes += len(line.text)
 }
 
 // Each source already retains only the newest candidates. Merge from the

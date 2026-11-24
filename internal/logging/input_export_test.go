@@ -312,6 +312,79 @@ func TestInputLogUsesMemoryWhenFileLoggingOff(t *testing.T) {
 	}
 }
 
+func TestInputLogMemoryOverflowReportsPartial(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	database := filepath.Join(t.TempDir(), "upbrr.db")
+	logger, err := NewWithInputLogStore(config.LoggingConfig{Level: "warn"}, database, newInputLogStore(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = logger.Close() })
+	store := &recordingAttempts{}
+	capture, _, finish := logger.BeginInputLog(ctx, store, filepath.Join(filepath.Dir(database), "Example.mkv"), "input")
+	log := FromContext(capture, logger)
+	log.Tracef("evicted prefix")
+	log.Tracef("retained middle")
+	log.Tracef("retained tail")
+	finish("", "completed")
+
+	export, err := ReadInputLog(ctx, logger, database, store.attempts[0])
+	if err != nil || export.Coverage != "partial" || strings.Contains(export.Text, "evicted prefix") ||
+		!strings.Contains(export.Text, "retained middle") || !strings.Contains(export.Text, "retained tail") {
+		t.Fatalf("truncated memory export = %#v, %v", export, err)
+	}
+}
+
+func TestInputLogExportCapKeepsNewestWhenAppendedOutOfOrder(t *testing.T) {
+	t.Parallel()
+	for _, fromDisk := range []bool{false, true} {
+		name := "memory"
+		if fromDisk {
+			name = "disk"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx := t.Context()
+			database := filepath.Join(t.TempDir(), "upbrr.db")
+			logger, err := New(config.LoggingConfig{Level: "warn"}, database)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = logger.Close() })
+			store := &recordingAttempts{}
+			source := filepath.Join(filepath.Dir(database), "Example.mkv")
+			first, firstID, finishFirst := logger.BeginInputLog(ctx, store, source, "prepare")
+			second, secondID, finishSecond := logger.BeginInputLog(ctx, store, source, "upload")
+			stamp := time.Date(2026, time.October, 5, 12, 1, 2, 0, time.Local)
+			if fromDisk {
+				path, err := LogPath(database)
+				if err != nil {
+					t.Fatal(err)
+				}
+				line := "%s TRACE: [input-log %s 2 record %d] %s\n"
+				disk := fmt.Sprintf(line, stamp.Format(inputLogTimeFormat), firstID, stamp.Add(time.Millisecond).UnixNano(), "newer detail") +
+					fmt.Sprintf(line, stamp.Format(inputLogTimeFormat), secondID, stamp.UnixNano(), "older detail")
+				if err := os.WriteFile(path, []byte(disk), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				FromContext(first, logger).Tracef("newer detail")
+				FromContext(second, logger).Tracef("older detail")
+				logger.inputLogs.entries[0].Time = stamp.Add(time.Millisecond)
+				logger.inputLogs.entries[1].Time = stamp
+			}
+			finishFirst("", "completed")
+			finishSecond("", "completed")
+			export, err := readInputLogs(ctx, logger, database, store.attempts, 40)
+			if err != nil || export.Coverage != "partial" || !strings.Contains(export.Text, "newer detail") ||
+				strings.Contains(export.Text, "older detail") {
+				t.Fatalf("capped export = %#v, %v", export, err)
+			}
+		})
+	}
+}
+
 type recordingAttempts struct {
 	attempts []db.InputLogAttempt
 }
