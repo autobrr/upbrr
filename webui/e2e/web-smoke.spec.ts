@@ -255,15 +255,23 @@ test("dirty settings survive navigation and require confirmation before logout o
     await page.getByRole("heading", { name: "Build Release Name" }).waitFor();
 
     await page.getByRole("button", { name: "Logging" }).click();
-    const level = page.getByRole("combobox", { name: "Runtime log level" });
-    await expect(level).toBeVisible();
-    const originalLevel = await level.inputValue();
-    const changedLevel = originalLevel === "debug" ? "trace" : "debug";
-    await level.selectOption(changedLevel);
+    const runtimeLevel = page.getByRole("combobox", { name: "Runtime log level" });
+    await expect(runtimeLevel).toHaveAccessibleDescription(/after Save/);
+    const updatedLevel = (await runtimeLevel.inputValue()) === "debug" ? "trace" : "debug";
+    const save = page.getByRole("button", { name: "Save", exact: true });
+    await runtimeLevel.selectOption(updatedLevel);
+    await save.click();
+    await expect(page.getByText("Settings saved and applied.")).toBeVisible();
+    await expect(save).toBeDisabled();
+    await page.getByRole("button", { name: "Reload" }).click();
+    await expect(runtimeLevel).toHaveValue(updatedLevel);
+    const budget = page.getByRole("spinbutton", { name: "Total log-file budget (MB)" });
+    await expect(budget).toHaveValue("50");
+    await budget.fill("51");
     await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
     await page.getByRole("button", { name: "History" }).click();
     await page.goBack();
-    await expect(level).toHaveValue(changedLevel);
+    await expect(budget).toHaveValue("51");
 
     page.once("dialog", async (dialog) => {
       expect(dialog.type()).toBe("confirm");
@@ -271,7 +279,7 @@ test("dirty settings survive navigation and require confirmation before logout o
       await dialog.dismiss();
     });
     await page.getByRole("button", { name: "Reload" }).click();
-    await expect(level).toHaveValue(changedLevel);
+    await expect(budget).toHaveValue("51");
 
     page.once("dialog", async (dialog) => {
       expect(dialog.type()).toBe("confirm");
@@ -279,14 +287,14 @@ test("dirty settings survive navigation and require confirmation before logout o
       await dialog.dismiss();
     });
     await page.getByRole("button", { name: "Logout" }).click();
-    await expect(level).toHaveValue(changedLevel);
+    await expect(budget).toHaveValue("51");
 
     page.once("dialog", async (dialog) => {
       expect(dialog.type()).toBe("beforeunload");
       await dialog.dismiss();
     });
     await page.evaluate(() => window.location.reload());
-    await expect(level).toHaveValue(changedLevel);
+    await expect(budget).toHaveValue("51");
 
     page.once("dialog", async (dialog) => {
       expect(dialog.type()).toBe("confirm");
@@ -319,9 +327,9 @@ test("session loss in another tab discards private drafts and cached data", asyn
     await page.getByRole("heading", { name: "Build Release Name" }).waitFor();
 
     await page.getByRole("button", { name: "Logging" }).click();
-    const level = page.getByRole("combobox", { name: "Runtime log level" });
-    const originalLevel = await level.inputValue();
-    await level.selectOption(originalLevel === "debug" ? "trace" : "debug");
+    const budget = page.getByRole("spinbutton", { name: "Total log-file budget (MB)" });
+    await expect(budget).toHaveValue("50");
+    await budget.fill("51");
     await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
 
     const other = await context.newPage();
@@ -341,9 +349,7 @@ test("session loss in another tab discards private drafts and cached data", asyn
     await page.getByRole("button", { name: "Sign In" }).click();
     await page.getByRole("heading", { name: "History" }).waitFor();
     await page.getByRole("button", { name: "Logging" }).click();
-    await expect(page.getByRole("combobox", { name: "Runtime log level" })).toHaveValue(
-      originalLevel,
-    );
+    await expect(budget).toHaveValue("50");
   } finally {
     await app?.stop();
     await workspace.cleanup();

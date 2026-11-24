@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -226,24 +228,6 @@ type retainedProjectionDefinition struct {
 	submitted      *atomic.Int32
 	input          chan<- PreparationInput
 	artifactPolicy *UploadArtifactPolicy
-}
-
-type planInfoLogger struct {
-	api.NopLogger
-	mu    sync.Mutex
-	infos []string
-}
-
-func (l *planInfoLogger) Infof(format string, args ...any) {
-	l.mu.Lock()
-	l.infos = append(l.infos, fmt.Sprintf(format, args...))
-	l.mu.Unlock()
-}
-
-func (l *planInfoLogger) containsInfo(value string) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return slices.Contains(l.infos, value)
 }
 
 func (d retainedProjectionDefinition) Name() string { return d.name }
@@ -593,12 +577,27 @@ func TestProjectedRuleFailureRecordsReturnsNilWithoutRecords(t *testing.T) {
 	}
 }
 
-func TestRetainedUploadPlanLogsReturnedTorrentPageURL(t *testing.T) {
+func TestRetainedUploadPlanLogsResponseInExecutionAttempt(t *testing.T) {
 	t.Parallel()
 
 	var prepared atomic.Int32
 	var submitted atomic.Int32
-	logger := &planInfoLogger{}
+	ctx := t.Context()
+	directory := t.TempDir()
+	source := filepath.Join(directory, "Example.Release.2026")
+	database := filepath.Join(directory, "upbrr.db")
+	repo, err := db.OpenContext(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	if err := repo.MigrateContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	logger, err := logging.New(config.LoggingConfig{Level: "warn"}, database)
+	if err != nil {
+		t.Fatal(err)
+	}
 	registry := NewRegistry()
 	if err := registry.Register(retainedProjectionDefinition{
 		name:      "EXAMPLE",
@@ -609,9 +608,10 @@ func TestRetainedUploadPlanLogsReturnedTorrentPageURL(t *testing.T) {
 		t.Fatalf("register retained definition: %v", err)
 	}
 	service := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), logger, nil, registry)
+	reviewCtx, _, finishReview := logger.BeginInputLog(ctx, repo, source, "upload review")
 	retained, err := service.PrepareRetainedUploadPlan(
-		context.Background(),
-		api.UploadSubject{SourcePath: "Example.Release.2026"},
+		reviewCtx,
+		api.UploadSubject{SourcePath: source},
 		[]api.TrackerReleaseProjection{{
 			TrackerID:         "EXAMPLE",
 			UploadReleaseName: "Example.Release.2026.1080p-GRP",
@@ -623,11 +623,21 @@ func TestRetainedUploadPlanLogsReturnedTorrentPageURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepare retained upload plan: %v", err)
 	}
-	if _, err := retained.Execute(context.Background()); err != nil {
+	finishReview("", "completed")
+	executeCtx, executionID, finishExecution := logger.BeginInputLog(ctx, repo, source, "execute upload")
+	if _, err := retained.Execute(executeCtx); err != nil {
 		t.Fatalf("execute retained upload plan: %v", err)
 	}
-	if !logger.containsInfo("trackers: EXAMPLE torrent URL: https://tracker.example.invalid/torrents/123") {
-		t.Fatal("retained upload did not log returned torrent page URL")
+	finishExecution("", "completed")
+	attempts, err := repo.InputLogs(ctx, "", executionID)
+	if err != nil || len(attempts) != 1 {
+		t.Fatalf("read execution attempt: %v %v", attempts, err)
+	}
+	exported, err := logging.ReadInputLog(ctx, logger, database, attempts[0])
+	if err != nil || !strings.Contains(exported.Text, "torrent upload response tracker=EXAMPLE state=accepted") ||
+		!strings.Contains(exported.Text, "torrent URL: https://tracker.example.invalid/[REDACTED]") ||
+		strings.Contains(exported.Text, "/torrents/123") {
+		t.Fatalf("live response missing from execution export: %v\n%s", err, exported.Text)
 	}
 }
 
@@ -1002,7 +1012,7 @@ func (l *warningLogger) Warnf(format string, args ...any) {
 
 func TestUploadReleaseFailureAfterRemoteSuccessIsSanitizedWarningOnly(t *testing.T) {
 	t.Parallel()
-	logger := &warningLogger{}
+	logger, operationLogger := &warningLogger{}, &warningLogger{}
 	registry := NewRegistry()
 	definition := readyReleasePlanDefinition{
 		name:      "AITHER",
@@ -1013,13 +1023,14 @@ func TestUploadReleaseFailureAfterRemoteSuccessIsSanitizedWarningOnly(t *testing
 		t.Fatalf("register: %v", err)
 	}
 	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER"}}}), logger, nil, registry)
-	summary, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "Example.Release.2026"})
+	ctx := logging.WithOperationLogger(t.Context(), operationLogger)
+	summary, err := svc.Upload(ctx, api.UploadSubject{SourcePath: "Example.Release.2026"})
 	if err != nil || summary.Uploaded != 1 {
 		t.Fatalf("upload = %#v, %v", summary, err)
 	}
-	logger.mu.Lock()
-	joined := strings.Join(logger.warnings, "\n")
-	logger.mu.Unlock()
+	operationLogger.mu.Lock()
+	joined := strings.Join(operationLogger.warnings, "\n")
+	operationLogger.mu.Unlock()
 	if !strings.Contains(joined, "plan release failed") || strings.Contains(joined, "secret-value") {
 		t.Fatalf("warnings = %q", joined)
 	}

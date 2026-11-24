@@ -62,6 +62,16 @@ type migrationExecutor interface {
 //     bridge mapping also changed historically.
 var migrationRegistry = []migrationStep{
 	{
+		id:        "2026_11_input_log_build",
+		dependsOn: []string{"2026_11_input_log_attempts"},
+		apply:     migrateInputLogBuild,
+	},
+	{
+		id:        "2026_11_input_log_attempts",
+		dependsOn: []string{baselineMigrationID},
+		apply:     migrateInputLogs,
+	},
+	{
 		id:        "2026_11_identity_candidates",
 		dependsOn: []string{"2026_07_add_canonical_release_generations"},
 		apply:     migrateIdentityCandidates,

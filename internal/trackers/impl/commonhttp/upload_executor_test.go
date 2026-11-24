@@ -10,6 +10,9 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 )
 
 type uploadRoundTripper func(*http.Request) (*http.Response, error)
@@ -39,13 +42,22 @@ func TestExecuteUploadRetainsProtocolEvidence(t *testing.T) {
 				}, nil
 			})}
 			client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "https://tracker.invalid/upload", nil)
+			logger, err := logging.New(config.LoggingConfig{Level: "debug"}, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			logger.SetConsoleOutput(io.Discard, io.Discard)
+			req, err := http.NewRequestWithContext(logging.WithOperationLogger(t.Context(), logger), http.MethodPost, "https://tracker.invalid/upload", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			result, err := ExecuteUpload(client, req, UploadExecutionOptions{Tracker: "EXAMPLE", SuccessStatus: func(status int) bool { return status == 302 }})
 			if result.StatusCode != test.status || result.Header.Get("Location") != "/details.php?id=123" || result.BodyComplete != test.complete {
 				t.Fatalf("status=%d location=%q complete=%v error=%v", result.StatusCode, result.Header.Get("Location"), result.BodyComplete, err)
+			}
+			entries := logger.Recent(0)
+			if len(entries) != 1 || !strings.HasPrefix(entries[0].Message, "trackers: upload HTTP response tracker=EXAMPLE status=") {
+				t.Fatalf("unexpected response diagnostics: %v", entries)
 			}
 			if test.complete {
 				if err != nil || !strings.Contains(string(result.ProtocolBody), `"success":false`) || strings.Contains(string(result.Body), "synthetic-secret") || strings.Contains(string(result.Preview), "synthetic-secret") {

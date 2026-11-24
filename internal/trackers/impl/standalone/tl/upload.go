@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
@@ -79,6 +80,7 @@ func submitPreparedUpload(
 	announces []string,
 	artifactPath string,
 ) (api.UploadSummary, error) {
+	req.Logger = logging.FromContext(ctx, req.Logger)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, state.endpoint, bytes.NewReader(body))
 	if err != nil {
 		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("trackers: TL build upload request: %w", err))
@@ -91,6 +93,7 @@ func submitPreparedUpload(
 		return api.UploadSummary{}, fmt.Errorf("trackers: TL upload request: %w", err)
 	}
 	defer resp.Body.Close()
+	commonhttp.LogUploadResponse(ctx, "TL", resp)
 	successCandidate := resp.StatusCode == http.StatusFound || (req.TrackerConfig.APIUpload && resp.StatusCode >= 200 && resp.StatusCode < 300)
 	responseBody, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, successCandidate, commonhttp.DefaultResponsePreviewBytes)
 
@@ -147,11 +150,7 @@ func buildUploadPreview(state uploadState) api.TrackerDryRunEntry {
 		Description:      state.description,
 		Endpoint:         state.endpoint,
 		Payload:          state.fields,
-		Files: []api.TrackerDryRunFile{{
-			Field:   "torrent",
-			Path:    state.torrentPath,
-			Present: strings.TrimSpace(state.torrentPath) != "",
-		}},
+		Files:            commonhttp.PreviewFileFields(state.files),
 	})
 }
 

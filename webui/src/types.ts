@@ -1406,6 +1406,7 @@ export type UploadImagesResult = {
 };
 
 export type HistoryEntry = {
+  LogsOnly?: boolean;
   SourcePath: string;
   ReleaseTitle: string;
   ReleaseSource: string;

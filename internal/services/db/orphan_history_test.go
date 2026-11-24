@@ -30,6 +30,25 @@ func TestSQLiteRepositoryListOrphanedHistoryPaths(t *testing.T) {
 	activePath := filepath.Join(t.TempDir(), "active.mkv")
 	busyPath := filepath.Join(t.TempDir(), "busy.mkv")
 
+	logOnly := filepath.Join(t.TempDir(), "failed-before-metadata.mkv")
+	logOnlyAttempt := InputLogAttempt{
+		ID:         "synthetic-attempt",
+		SourcePath: logOnly,
+		Kind:       "open input",
+		StartedAt:  now,
+	}
+	if err := repo.BeginInputLog(ctx, logOnlyAttempt); err != nil {
+		t.Fatal(err)
+	}
+	logOnlyAttempt.Outcome = "failed"
+	if err := repo.FinishInputLog(ctx, logOnlyAttempt); err != nil {
+		t.Fatal(err)
+	}
+	explicitPaths, err := repo.ListStoredReleasePaths(ctx)
+	if err != nil || !slices.Contains(explicitPaths, logOnly) {
+		t.Fatalf("explicit history inventory missed the log-only input: %v", err)
+	}
+
 	if err := repo.Save(ctx, FileMetadata{
 		Path:       historyRoot,
 		SourceSize: 1,
@@ -162,10 +181,10 @@ func TestSQLiteRepositoryListOrphanedHistoryPathsIncludesLegacyUIStates(t *testi
 			orphan := filepath.Join(root, "orphan.mkv")
 			mixedOrphan := filepath.Join(root, "mixed-orphan.mkv")
 			if err := repo.Save(ctx, FileMetadata{
-Path: retained,
- SourceSize: 1,
- UpdatedAt: now,
-}); err != nil {
+				Path:       retained,
+				SourceSize: 1,
+				UpdatedAt:  now,
+			}); err != nil {
 				t.Fatalf("save retained history: %v", err)
 			}
 			test.setup(t, repo, retained, orphan, mixedOrphan)

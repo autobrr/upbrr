@@ -34,6 +34,7 @@ func nonNilAppList[T any](values []T) []T {
 // request-shape adapters on mux.
 func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 	s.registerReleaseWorkflowAppRoutes(mux)
+	s.registerInputLogRoutes(mux)
 	mux.HandleFunc("/api/app/SearchProviderCandidates", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -442,8 +443,8 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, value)
 	}))
 
-	mux.HandleFunc("/api/app/ListHistory", s.requireSession(func(w http.ResponseWriter, _ *http.Request, _ session) {
-		value, err := s.backend.ListHistory()
+	mux.HandleFunc("/api/app/ListHistory", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+		value, err := s.backend.ListHistory(r.Context())
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return

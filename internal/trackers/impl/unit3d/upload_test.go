@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,6 +22,8 @@ import (
 	"github.com/autobrr/go-torrent/metainfo"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -772,6 +775,55 @@ func TestParseUnit3DUploadArtifactRejectsOffOriginDownloadURL(t *testing.T) {
 	}
 	if artifact.DownloadURL != "" {
 		t.Fatal("off-origin registered torrent URL was retained")
+	}
+}
+
+func TestSubmitUnit3DUploadKeepsLoginPageOutOfRetainedLogs(t *testing.T) {
+	t.Parallel()
+
+	const hiddenValue = "synthetic-hidden-form-value"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/torrents/upload" {
+			http.Redirect(w, r, "/login", http.StatusFound)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, `<html><meta name="csrf-token" content="`+hiddenValue+`"></html>`)
+	}))
+	t.Cleanup(server.Close)
+
+	database := filepath.Join(t.TempDir(), "upbrr.db")
+	logger, err := logging.New(config.LoggingConfig{Level: "info"}, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = logger.Close() })
+	logger.SetConsoleOutput(io.Discard, io.Discard)
+	repo, err := db.OpenWithLoggerContext(t.Context(), database, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.MigrateContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, id, finish := logger.BeginInputLog(t.Context(), repo, "Example.mkv", "upload")
+	if id == "" {
+		t.Fatal("expected active input log capture")
+	}
+	_, err = submitUnit3DUpload(ctx, "EXAMPLE", "Example", "", server.URL, server.URL+"/api/torrents/upload",
+		"application/json", "{}", api.UploadSubject{}, database, logging.FromContext(ctx, logger))
+	finish("", "failed")
+	if err == nil {
+		t.Fatal("expected HTML response to fail upload")
+	}
+	attempts, err := repo.InputLogs(t.Context(), "", id)
+	if err != nil || len(attempts) != 1 {
+		t.Fatalf("input log attempts = %d, error = %v", len(attempts), err)
+	}
+	exported, err := logging.ReadInputLog(t.Context(), logger, database, attempts[0])
+	if err != nil || !strings.Contains(exported.Text, "failed to parse response JSON") || strings.Contains(exported.Text, hiddenValue) {
+		t.Fatalf("expected parse failure without the hidden value, error = %v", err)
 	}
 }
 

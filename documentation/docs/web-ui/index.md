@@ -240,7 +240,7 @@ Restarting the application leaves the previous idle input closed. Its History an
 
 ## Logging
 
-**Logging** shows recent sanitized application logs, a live stream, runtime verbosity, and file-rotation settings.
+**Logging** shows recent sanitized application logs, a live stream, display filters, and file-rotation settings.
 
 Logs are designed for safer sharing, but inspect them before posting. Never include configuration exports, cookies, credentials, announce URLs, or private API payloads.
 

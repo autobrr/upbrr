@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"maps"
@@ -497,6 +498,9 @@ func (b workflowUploadPlanBuilder) Build(
 			tracker.TorrentArtifactID = torrentArtifactID
 			tracker.TorrentFingerprint = torrentFingerprint
 			tracker.Endpoint, tracker.Fields, tracker.Files = sanitizeWorkflowUploadPreview(preparation.Preview)
+			if options.DryRun {
+				logWorkflowUploadPayload(ctx, tracker)
+			}
 			tracker.EditionFeatures = slices.Clone(preparation.Preview.EditionFeatures)
 			execution.retainDiagnosticOutcomes(&tracker, projection, preparation.Preview)
 			if identityErr != nil || torrentArtifactID == "" {
@@ -1258,6 +1262,7 @@ func (e *workflowUploadExecution) ResolveAction(
 		}
 	} else {
 		updated.Endpoint, updated.Fields, updated.Files = sanitizeWorkflowUploadPreview(preparation.Preview)
+		logWorkflowUploadPayload(ctx, updated)
 		updated.EditionFeatures = slices.Clone(preparation.Preview.EditionFeatures)
 		e.retainDiagnosticOutcomes(&updated, projection, preparation.Preview)
 		updated.PreparedOperationID, updated.TorrentArtifactID, updated.TorrentFingerprint, err = workflowTrackerArtifactIdentity(
@@ -1867,6 +1872,27 @@ func sanitizeWorkflowUploadPreview(preview api.TrackerDryRunEntry) (string, []ap
 		return strings.Compare(left.Field, right.Field)
 	})
 	return endpoint, fields, files
+}
+
+func logWorkflowUploadPayload(ctx context.Context, tracker api.UploadPlanTracker) {
+	if len(tracker.Fields) == 0 && len(tracker.Files) == 0 {
+		return
+	}
+	fields := make(map[string]string, len(tracker.Fields))
+	for _, field := range tracker.Fields {
+		fields[field.Key] = field.Value
+	}
+	files := make(map[string]bool, len(tracker.Files))
+	for _, file := range tracker.Files {
+		files[file.Field] = file.Present
+	}
+	payload, err := json.Marshal(struct {
+		Fields map[string]string `json:"fields"`
+		Files  map[string]bool   `json:"files"`
+	}{Fields: fields, Files: files}, json.Deterministic(true))
+	if err == nil {
+		logging.FromContext(ctx, nil).Tracef("workflow: dry-run tracker payload tracker=%s payload=%s", tracker.TrackerID, payload)
+	}
 }
 
 func sanitizeWorkflowQuestionnaire(questionnaire *api.TrackerQuestionnaire) []api.TrackerQuestionnaireRequirement {

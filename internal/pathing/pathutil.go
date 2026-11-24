@@ -82,6 +82,16 @@ func SamePath(left string, right string) bool {
 	return leftRealOK && rightRealOK && sameCleanPath(leftReal, rightReal)
 }
 
+// LexicalPathKey compares path spellings using the host OS rules, without
+// resolving symlinks that can change after a stored association was made.
+func LexicalPathKey(value string) string {
+	absolute, ok := cleanAbs(value)
+	if !ok {
+		return ""
+	}
+	return normalizeCleanLocalPath(absolute)
+}
+
 // PathMatchKeys contains the separately comparable lexical and resolved forms
 // used by SamePath. Empty forms cannot match. Resolve keys anew for each
 // operation that must observe filesystem changes.

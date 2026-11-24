@@ -251,8 +251,8 @@ describe("App shell", () => {
       if (method === "GetApplicationInfo") return applicationInfo();
       if (method === "GetConfig" || method === "GetDefaultConfig") return "{}";
       if (method === "ListTrackerCatalog") return trackerCatalog();
-      if (method === "ListHistory")
-        return [{ SourcePath: sourcePath, ReleaseTitle: "Saved review" }];
+      if (method === "ListInputHistory")
+        return { Entries: [{ SourcePath: sourcePath, ReleaseTitle: "Saved review" }] };
       if (method === "GetHistoryOverview")
         return { SourcePath: sourcePath, ReleaseTitle: "Saved review" };
       if (method === "OpenActiveInput") {

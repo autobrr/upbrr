@@ -292,7 +292,7 @@ func (m *Module) ResetIdleInputOnStartup(ctx context.Context) (resetErr error) {
 // edit can reuse the current input's verification if its inventory still matches.
 // A repeated idempotency key returns the already committed result without repeating work.
 // Canceled admission retains the prior worker's authority until its cleanup finishes.
-func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputRequest) (api.ActiveInputRecord, error) {
+func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputRequest) (opened api.ActiveInputRecord, openErr error) {
 	if err := m.requireActiveConfig(ctx); err != nil {
 		return api.ActiveInputRecord{}, err
 	}
@@ -368,6 +368,17 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 	if prior.State != api.ActiveInputActive && prior.State != api.ActiveInputEmpty {
 		return api.ActiveInputRecord{}, api.ErrActiveInputBusy
 	}
+	ctx, finishLogs := m.beginInputLog(ctx, request.Input.SourcePath, "open input")
+	logging.FromContext(ctx, m.logger).Debugf("input: opening source")
+	logPath := ""
+	defer func() {
+		outcome := "completed"
+		if openErr != nil {
+			outcome = "failed"
+			logging.FromContext(ctx, m.logger).Warnf("input: open did not complete: %s", logging.SanitizeMessage(openErr.Error()))
+		}
+		finishLogs(logPath, outcome)
+	}()
 	if err := m.requireInputSourceReconciled(ctx, owner, request.Input.SourcePath); err != nil {
 		return api.ActiveInputRecord{}, err
 	}
@@ -476,6 +487,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 			api.PreparationPhaseSourceInspection, api.PreparationProgressCompleted, "Verified source inventory. Reused content samples.",
 		))
 	}
+	logPath = record.CanonicalPath
 	// Verification may resolve a different canonical path than the requested alias.
 	if err := m.requireInputSourceReconciled(ctx, owner, record.CanonicalPath); err != nil {
 		return api.ActiveInputRecord{}, err
