@@ -120,13 +120,14 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
     }
   }, [filteredEntries, selectedPath]);
 
+  const showOverview = selectedEntry !== null && !logOnly;
   const overviewQuery = useQuery({
     queryKey: ["history", "overview", selectedPath],
     queryFn: ({ signal }) => historyClient.getOverview(selectedPath, signal),
-    enabled: selectedEntry !== null && !logOnly,
+    enabled: showOverview,
   });
-  const overview: HistoryOverview | null = overviewQuery.data ?? null;
-  const detailLoading = selectedEntry !== null && !logOnly && overviewQuery.isPending;
+  const overview: HistoryOverview | null = showOverview ? (overviewQuery.data ?? null) : null;
+  const detailLoading = showOverview && overviewQuery.isPending;
 
   const descriptionOverrides = useMemo(() => {
     if (!overview) {
@@ -162,6 +163,17 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
         queryClient.removeQueries({ queryKey: ["history", "overview", deletedPath] });
       }
       queryClient.removeQueries({ queryKey: ["history", "log", deletedPath] });
+      await queryClient.cancelQueries({ queryKey: ["history", "list"] });
+      queryClient.setQueryData<typeof historyQuery.data>(["history", "list"], (current) =>
+        current
+          ? {
+              ...current,
+              Entries: (current.Entries ?? emptyHistory).filter(
+                (item) => item.SourcePath !== deletedPath,
+              ),
+            }
+          : current,
+      );
       await queryClient.invalidateQueries({ queryKey: ["history", "list"] });
     } catch (err) {
       setError(String(err));
@@ -195,7 +207,7 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
     error ||
     (openFailure?.sourcePath === selectedPath ? openFailure.message : "") ||
     (historyQuery.error ? String(historyQuery.error) : "") ||
-    (overviewQuery.error ? String(overviewQuery.error) : "");
+    (showOverview && overviewQuery.error ? String(overviewQuery.error) : "");
 
   return (
     <div className="flex flex-col gap-4">

@@ -147,11 +147,12 @@ func (s *InputLogStore) recent() []Entry {
 // Entry is one sanitized retained log entry. IDs increase within a Logger, and
 // Level contains the lowercase level name.
 type Entry struct {
-	ID      int64     `json:"id"`
-	Time    time.Time `json:"time" ts_type:"string"`
-	Level   string    `json:"level"`
-	Message string    `json:"message"`
-	attempt string
+	ID       int64     `json:"id"`
+	Time     time.Time `json:"time" ts_type:"string"`
+	Level    string    `json:"level"`
+	Message  string    `json:"message"`
+	attempt  string
+	sequence uint64
 }
 
 var (

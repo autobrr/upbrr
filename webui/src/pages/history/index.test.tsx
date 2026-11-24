@@ -23,11 +23,14 @@ const installHistoryMocks = (operations: AppOperationMocks) => {
 
 const renderHistory = (props: ComponentProps<typeof HistoryPage> = {}) => {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <HistoryPage {...props} />
-    </QueryClientProvider>,
-  );
+  return {
+    ...render(
+      <QueryClientProvider client={queryClient}>
+        <HistoryPage {...props} />
+      </QueryClientProvider>,
+    ),
+    queryClient,
+  };
 };
 
 const entry = (sourcePath: string, title: string): HistoryEntry => ({
@@ -149,6 +152,59 @@ describe("HistoryPage", () => {
       expect(removeRelease).not.toHaveBeenCalled();
       expect(onReleaseDeleted).not.toHaveBeenCalled();
       expect(loadOverview).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("hides a cached stored overview when the same input becomes logs-only", async () => {
+    const saved = entry("/media/Stored.mkv", "Stored Release");
+    let entries = [saved];
+    installHistoryMocks({
+      ListHistory: async () => entries,
+      GetHistoryOverview: async () => ({
+        ...overview(saved.SourcePath, saved.ReleaseTitle),
+        StatusLabel: "Previous upload",
+      }),
+      GetInputLog: async () => ({
+        Coverage: "memory",
+        Text: "Retry failed",
+        DownloadID: "00000000000000000000001b",
+      }),
+    });
+    const { queryClient } = renderHistory();
+    expect(await screen.findByText("Previous upload")).toBeInTheDocument();
+
+    entries = [{ ...saved, LogsOnly: true }];
+    await act(() => queryClient.invalidateQueries({ queryKey: ["history", "list"] }));
+
+    expect(await screen.findByText("Retry failed")).toBeInTheDocument();
+    expect(screen.queryByText("Previous upload")).not.toBeInTheDocument();
+  });
+
+  it("keeps a confirmed log removal out of History when list refresh fails", async () => {
+    const saved = entry("/media/Expired.mkv", "Expired Release");
+    let removed = false;
+    installHistoryMocks({
+      ListHistory: async () => {
+        if (removed) throw new Error("History refresh failed");
+        return [{ ...saved, LogsOnly: true }];
+      },
+      GetInputLog: async () => ({ Coverage: "expired", Text: "", DownloadID: "" }),
+      DeleteInputLogs: async () => {
+        removed = true;
+        return {};
+      },
+    });
+    vi.stubGlobal("confirm", () => true);
+    try {
+      renderHistory();
+      await userEvent.click(await screen.findByRole("button", { name: "Remove log entry" }));
+      await waitFor(() =>
+        expect(screen.getAllByRole("alert")[0]).toHaveTextContent("History refresh failed"),
+      );
+      expect(screen.queryByRole("button", { name: /Expired Release/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Remove log entry" })).not.toBeInTheDocument();
     } finally {
       vi.unstubAllGlobals();
     }

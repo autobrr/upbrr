@@ -105,6 +105,47 @@ func TestInputLogExportAcrossRotation(t *testing.T) {
 	}
 }
 
+func TestInputLogExportRecoversRotatedRecordsFromMemory(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	database := filepath.Join(t.TempDir(), "upbrr.db")
+	logger, err := New(config.LoggingConfig{
+		Level:          "warn",
+		FileEnabled:    true,
+		MaxTotalSizeMB: 1,
+		MaxFiles:       1,
+	}, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = logger.Close() })
+	writer, ok := logger.closer.(*rotatingWriter)
+	if !ok {
+		t.Fatal("expected the rotating file sink")
+	}
+	store := &recordingAttempts{}
+	captureCtx, _, finish := logger.BeginInputLog(ctx, store, filepath.Join(filepath.Dir(database), "Example.mkv"), "prepare")
+	scoped := FromContext(captureCtx, logger)
+	scoped.Tracef("first detail")
+	if err := writer.rotate(); err != nil {
+		t.Fatal(err)
+	}
+	scoped.Tracef("second detail")
+	finish("", "completed")
+	attempt := store.attempts[0]
+	attempt.Outcome = "completed"
+	disk, err := ReadInputLog(ctx, nil, database, attempt)
+	if err != nil || strings.Contains(disk.Text, "first detail") || !strings.Contains(disk.Text, "second detail") {
+		t.Fatalf("unexpected disk-only export: %#v, %v", disk, err)
+	}
+	merged, err := ReadInputLog(ctx, logger, database, attempt)
+	first, second := strings.Index(merged.Text, "first detail"), strings.Index(merged.Text, "second detail")
+	if err != nil || merged.Coverage != "partial" || first < 0 || second <= first ||
+		strings.Count(merged.Text, "first detail") != 1 || strings.Count(merged.Text, "second detail") != 1 {
+		t.Fatalf("unexpected merged export: %#v, %v", merged, err)
+	}
+}
+
 func TestInputLogExportLimitKeepsNewestRecords(t *testing.T) {
 	t.Parallel()
 	for _, source := range []string{"disk", "memory"} {

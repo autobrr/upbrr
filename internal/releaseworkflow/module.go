@@ -885,7 +885,11 @@ func (m *Module) Start(ctx context.Context, ownerID string, command Command) (ap
 		return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow append queued operation event: %w", err)
 	}
 	status.Events = events
-	m.dispatchOperationWorker(ctx, ownerID, cmp.Or(strings.TrimSpace(state.SourcePath), currentWorkflowSourcePath(&state)), command, record, release)
+	sourcePath := cmp.Or(strings.TrimSpace(state.SourcePath), currentWorkflowSourcePath(&state))
+	if _, preparing := command.(PrepareReleaseCommand); sourcePath == "" && preparing {
+		sourcePath = m.activeOperationLogPath(ctx, ownerID, workflowID)
+	}
+	m.dispatchOperationWorker(ctx, ownerID, sourcePath, command, record, release)
 	transferredLifetime = true
 	return cloneWorkflowOperationStatus(status, "start operation")
 }

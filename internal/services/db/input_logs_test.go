@@ -206,7 +206,7 @@ func TestInputLogBusyHandlingAndReadOnlyContract(t *testing.T) {
 		}
 		// Rollback journal + BEGIN EXCLUSIVE forces SQLITE_BUSY on readers so
 		// retryBusyContext enters Go-layer backoff and surfaces the caller's
-		// context deadline instead of returning immediate SQLITE_BUSY.
+		// context cancellation instead of returning immediate SQLITE_BUSY.
 		lockConn, err := raw.Conn(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -216,11 +216,21 @@ func TestInputLogBusyHandlingAndReadOnlyContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _, _ = lockConn.ExecContext(context.WithoutCancel(ctx), `ROLLBACK`) })
-		lockedCtx, cancel := context.WithTimeout(ctx, 75*time.Millisecond)
+		guard, stop := context.WithTimeout(ctx, 5*time.Second)
+		defer stop()
+		lockedCtx, cancel := context.WithCancel(guard)
 		defer cancel()
-		_, readErr := ReadOnlyInputLogs(lockedCtx, dbPath, filepath.Join(t.TempDir(), "Locked.mkv"))
-		if !errors.Is(readErr, context.DeadlineExceeded) || IsBusyError(readErr) {
-			t.Fatalf("ReadOnlyInputLogs err = %v, want context.DeadlineExceeded during retry backoff", readErr)
+		retried := false
+		_, readErr := readOnlyInputLogs(lockedCtx, dbPath, filepath.Join(t.TempDir(), "Locked.mkv"), sqliteMigrationTraceLogger{
+			record: func(event string) {
+				if strings.Contains(event, "read input logs busy, retrying") {
+					retried = true
+					cancel()
+				}
+			},
+		})
+		if !retried || !errors.Is(readErr, context.Canceled) {
+			t.Fatalf("ReadOnlyInputLogs retry observed = %t, err = %v; want cancellation during retry", retried, readErr)
 		}
 	})
 

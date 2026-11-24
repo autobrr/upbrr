@@ -55,20 +55,31 @@ func readInputLogs(ctx context.Context, logger *Logger, dbPath string, attempts 
 	for _, a := range attempts {
 		reader.records[a.ID] = &inputLogRecords{}
 	}
+	retainedMemory := logger.recentInputLogs()
+	// Track only identities present in the bounded memory snapshot, not every
+	// entry read from rotating files.
+	reader.memoryPending = make(map[inputLogRecordID]struct{}, len(retainedMemory))
+	for _, e := range retainedMemory {
+		if reader.records[e.attempt] != nil && e.sequence != 0 {
+			reader.memoryPending[inputLogRecordID{e.attempt, e.sequence}] = struct{}{}
+		}
+	}
 	if err := reader.readFiles(ctx, filepath.Join(dir, "logs")); err != nil {
 		return InputLogExport{}, err
 	}
 	memory := inputLogReader{limit: limit}
-	for _, e := range logger.recentInputLogs() {
+	for _, e := range retainedMemory {
 		records := reader.records[e.attempt]
-		if records != nil && !records.sawDiskRecord {
-			records.memory = true
-			memory.add(inputLogLine{
-				records: records,
-				text:    fmt.Sprintf("%s %s: %s\n", e.Time.Format(inputLogTimeFormat), strings.ToUpper(e.Level), e.Message),
-				stamp:   e.Time.UnixNano(),
-			})
+		_, pending := reader.memoryPending[inputLogRecordID{e.attempt, e.sequence}]
+		if records == nil || (e.sequence != 0 && !pending) {
+			continue
 		}
+		records.memory = !records.sawDiskRecord
+		memory.add(inputLogLine{
+			records: records,
+			text:    fmt.Sprintf("%s %s: %s\n", e.Time.Format(inputLogTimeFormat), strings.ToUpper(e.Level), e.Message),
+			stamp:   e.Time.UnixNano(),
+		})
 	}
 	for _, entry := range exportInputLogLines(reader.lines[reader.first:], memory.lines[memory.first:], limit) {
 		if !entry.continuation || entry.records.text.Len() != 0 {
@@ -133,15 +144,21 @@ type inputLogLine struct {
 	continuation bool
 }
 
+type inputLogRecordID struct {
+	attempt  string
+	sequence uint64
+}
+
 type inputLogReader struct {
-	records      map[string]*inputLogRecords
-	continuation inputLogLine
-	lines        []inputLogLine
-	first        int
-	limit, bytes int
-	incomplete   bool
-	legacy       bool
-	trimmed      bool
+	memoryPending map[inputLogRecordID]struct{}
+	records       map[string]*inputLogRecords
+	continuation  inputLogLine
+	lines         []inputLogLine
+	first         int
+	limit, bytes  int
+	incomplete    bool
+	legacy        bool
+	trimmed       bool
 }
 
 func (r *inputLogReader) add(line inputLogLine) {
@@ -261,6 +278,7 @@ func (r *inputLogReader) accept(line string) {
 			return
 		}
 		text := line[:20] + severity + ": " + body
+		delete(r.memoryPending, inputLogRecordID{id, sequence})
 		record := inputLogLine{
 			records: records,
 			text:    text,

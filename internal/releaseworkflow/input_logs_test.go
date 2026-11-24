@@ -113,6 +113,76 @@ func TestOperationInputLogFallsBackToRetainedWorkflowSource(t *testing.T) {
 		}
 	})
 
+	t.Run("Start attributes a rejected preparation to the verified input", func(t *testing.T) {
+		t.Parallel()
+		ctx := t.Context()
+		repo, persistent, logger, source := openFixture(t)
+		module, err := New(persistent, NewMemoryPrivateResourceStore(), testPreparer(), WithLogger(logger),
+			WithActiveInputs(repo, func(_ context.Context, _ api.PrepareInput) (api.InputRecord, error) {
+				return api.InputRecord{
+					CanonicalPath: source,
+					SourceVersion: "verified-v1",
+					Manifest:      []byte(`{"Identity":{"Digest":"verified-v1"}}`),
+				}, nil
+			}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = module.Shutdown(shutdownCtx)
+		})
+		slot, err := module.OpenInput(ctx, testOwnerID, OpenInputRequest{
+			Input:          api.PrepareInput{SourcePath: source},
+			IdempotencyKey: "open-before-legacy-prepare",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		state, err := persistent.Load(ctx, testOwnerID, slot.WorkflowID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Model a draft without a retained source; the active slot still has
+		// the actual verified input identity.
+		state.SourcePath = ""
+		state.PreparationInput = nil
+		state.Workflow.Release = nil
+		priorRevision := state.Workflow.Revision
+		state.Workflow.Revision++
+		auth := api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: slot.CoordinatorID, Fence: slot.Fence})
+		if err := persistent.Save(auth, testOwnerID, priorRevision, state); err != nil {
+			t.Fatal(err)
+		}
+
+		unverified := filepath.Join(filepath.Dir(source), "Unverified.mkv")
+		operation, err := module.Start(ctx, testOwnerID, PrepareReleaseCommand{
+			WorkflowID:       slot.WorkflowID,
+			ExpectedRevision: state.Workflow.Revision,
+			Input:            api.PrepareInput{SourcePath: unverified},
+			IdempotencyKey:   "reject-unverified-prepare",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitForWorkflowOperation(t, module, slot.WorkflowID, operation.ID, func(status api.WorkflowOperationStatus) bool {
+			return status.Status == api.StageStatusFailed
+		})
+		if err := module.Shutdown(ctx); err != nil {
+			t.Fatal(err)
+		}
+
+		attempts, err := repo.InputLogs(ctx, source, "")
+		if err != nil || len(attempts) != 2 || attempts[0].Kind != string(operation.Operation) || attempts[0].Outcome != string(api.StageStatusFailed) {
+			t.Fatalf("verified input attempts = %#v, %v", attempts, err)
+		}
+		attempts, err = repo.InputLogs(ctx, unverified, "")
+		if err != nil || len(attempts) != 0 {
+			t.Fatalf("unverified input attempts = %#v, %v", attempts, err)
+		}
+	})
+
 	t.Run("recoverOperationAfterLease falls back to retained release source", func(t *testing.T) {
 		t.Parallel()
 		ctx := t.Context()

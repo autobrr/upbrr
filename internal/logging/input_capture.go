@@ -123,10 +123,11 @@ func (c *inputCapture) writeRecord(label, message string) (time.Time, bool) {
 			label, c.id, c.sequence, at.UnixNano(), diskLogMessage(message))
 	}
 	c.root.recordInputLog(Entry{
-		Time:    at,
-		Level:   strings.ToLower(label),
-		Message: message,
-		attempt: c.id,
+		Time:     at,
+		Level:    strings.ToLower(label),
+		Message:  message,
+		attempt:  c.id,
+		sequence: c.sequence,
 	})
 	return at, true
 }

@@ -80,11 +80,13 @@ func (r *SQLiteRepository) FinishInputLog(ctx context.Context, a InputLogAttempt
 
 // InputLogs lists attempts for a stored path, or finds one exact attempt by its opaque ID.
 func (r *SQLiteRepository) InputLogs(ctx context.Context, source, id string) ([]InputLogAttempt, error) {
-	return r.inputLogs(ctx, source, id, false)
+	if id != "" || r.historyTransaction(ctx) != nil {
+		return queryInputLogs(ctx, r.historyQuery(ctx), source, id, false)
+	}
+	return readInputLogSnapshot(ctx, r.db, source, false)
 }
 
-func (r *SQLiteRepository) inputLogs(ctx context.Context, source, id string, includeRequested bool) ([]InputLogAttempt, error) {
-	query := r.historyQuery(ctx)
+func queryInputLogs(ctx context.Context, query historyQueryer, source, id string, includeRequested bool) ([]InputLogAttempt, error) {
 	filter, args := "id = ?", []any{id}
 	if id == "" {
 		paths, err := inputLogPathAliases(ctx, query, source, includeRequested)
@@ -129,8 +131,22 @@ func (r *SQLiteRepository) inputLogs(ctx context.Context, source, id string, inc
 	return result, nil
 }
 
+// readInputLogSnapshot keeps path aliases and attempts on the same SQLite snapshot.
+func readInputLogSnapshot(ctx context.Context, conn *sql.DB, source string, includeRequested bool) ([]InputLogAttempt, error) {
+	tx, err := conn.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, fmt.Errorf("begin input log snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	return queryInputLogs(ctx, tx, source, "", includeRequested)
+}
+
 // ReadOnlyInputLogs reads retained associations without bootstrapping an app runtime.
 func ReadOnlyInputLogs(ctx context.Context, dbPath, source string) ([]InputLogAttempt, error) {
+	return readOnlyInputLogs(ctx, dbPath, source, nil)
+}
+
+func readOnlyInputLogs(ctx context.Context, dbPath, source string, logger Logger) ([]InputLogAttempt, error) {
 	if ctx == nil {
 		return nil, errors.New("db: context is required")
 	}
@@ -154,7 +170,7 @@ func ReadOnlyInputLogs(ctx context.Context, dbPath, source string) ([]InputLogAt
 	conn.SetMaxOpenConns(1)
 	conn.SetMaxIdleConns(1)
 	var attempts []InputLogAttempt
-	err = retryBusyContext(ctx, nil, "read input logs", func() error {
+	err = retryBusyContext(ctx, logger, "read input logs", func() error {
 		var available bool
 		if err := conn.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='input_log_attempts')`).
 			Scan(&available); err != nil {
@@ -164,8 +180,7 @@ func ReadOnlyInputLogs(ctx context.Context, dbPath, source string) ([]InputLogAt
 			attempts = nil
 			return nil
 		}
-		repo := &SQLiteRepository{db: conn}
-		loaded, err := repo.inputLogs(ctx, source, "", true)
+		loaded, err := readInputLogSnapshot(ctx, conn, source, true)
 		if err != nil {
 			return err
 		}
