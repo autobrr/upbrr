@@ -17,13 +17,23 @@ import (
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/pathing"
-	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // InputLogAttempt locates an input's shared log records without storing their contents.
 type InputLogAttempt struct {
-	ID, SourcePath, RequestedPath, Kind, Outcome string
-	StartedAt                                    time.Time
+	ID, SourcePath, RequestedPath, Kind, Outcome, Build string
+	StartedAt                                           time.Time
+}
+
+func migrateInputLogBuild(ctx context.Context, exec migrationExecutor) error {
+	exists, err := tableColumnExists(ctx, exec, "input_log_attempts", "build")
+	if err != nil || exists {
+		return err
+	}
+	if _, err := exec.ExecContext(ctx, `ALTER TABLE input_log_attempts ADD COLUMN build TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("add input log build: %w", err)
+	}
+	return nil
 }
 
 func migrateInputLogs(ctx context.Context, exec migrationExecutor) error {
@@ -46,8 +56,8 @@ func (r *SQLiteRepository) BeginInputLog(ctx context.Context, a InputLogAttempt)
 	}
 	sourcePath := cmp.Or(a.SourcePath, a.RequestedPath)
 	requestedPath := cmp.Or(a.RequestedPath, a.SourcePath)
-	if _, err := r.execWrite(ctx, "save input log association", `INSERT INTO input_log_attempts (id, source_path, requested_path, kind, started_at)
-		VALUES (?, ?, ?, ?, ?)`, a.ID, sourcePath, requestedPath, a.Kind, formatWorkflowStateTime(a.StartedAt)); err != nil {
+	if _, err := r.execWrite(ctx, "save input log association", `INSERT INTO input_log_attempts (id, source_path, requested_path, kind, started_at, build)
+		VALUES (?, ?, ?, ?, ?, ?)`, a.ID, sourcePath, requestedPath, a.Kind, formatWorkflowStateTime(a.StartedAt), a.Build); err != nil {
 		return err
 	}
 	return nil
@@ -67,12 +77,12 @@ func (r *SQLiteRepository) FinishInputLog(ctx context.Context, a InputLogAttempt
 		strings.TrimSpace(a.Kind) == "" || a.StartedAt.IsZero() {
 		return internalerrors.ErrInvalidInput
 	}
-	if _, err := r.execWrite(ctx, "save input log outcome", `INSERT INTO input_log_attempts (id, source_path, requested_path, kind, started_at, outcome)
-		VALUES (?, ?, ?, ?, ?, ?)
+	if _, err := r.execWrite(ctx, "save input log outcome", `INSERT INTO input_log_attempts (id, source_path, requested_path, kind, started_at, outcome, build)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			source_path = coalesce(nullif(?, ''), input_log_attempts.source_path),
 			outcome = excluded.outcome`,
-		a.ID, sourcePath, requestedPath, a.Kind, formatWorkflowStateTime(a.StartedAt), a.Outcome, a.SourcePath); err != nil {
+		a.ID, sourcePath, requestedPath, a.Kind, formatWorkflowStateTime(a.StartedAt), a.Outcome, a.Build, a.SourcePath); err != nil {
 		return err
 	}
 	return nil
@@ -106,7 +116,19 @@ func queryInputLogs(ctx context.Context, query historyQueryer, source, id string
 			args = append(args, string(encoded))
 		}
 	}
-	rows, err := query.QueryContext(ctx, `SELECT id, source_path, requested_path, kind, outcome, started_at FROM input_log_attempts
+	build := "build"
+	if includeRequested {
+		// CLI export opens existing databases read-only, before running migrations.
+		var available bool
+		if err := query.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info('input_log_attempts') WHERE name='build')`).
+			Scan(&available); err != nil {
+			return nil, fmt.Errorf("inspect input log build column: %w", err)
+		}
+		if !available {
+			build = "''"
+		}
+	}
+	rows, err := query.QueryContext(ctx, `SELECT id, source_path, requested_path, kind, outcome, started_at, `+build+` FROM input_log_attempts
 		WHERE `+filter+` ORDER BY rtrim(started_at,'Z') DESC, rowid DESC`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("db list input logs: %w", err)
@@ -116,7 +138,7 @@ func queryInputLogs(ctx context.Context, query historyQueryer, source, id string
 	for rows.Next() {
 		var a InputLogAttempt
 		var stamp string
-		if err := rows.Scan(&a.ID, &a.SourcePath, &a.RequestedPath, &a.Kind, &a.Outcome, &stamp); err != nil {
+		if err := rows.Scan(&a.ID, &a.SourcePath, &a.RequestedPath, &a.Kind, &a.Outcome, &stamp, &a.Build); err != nil {
 			return nil, fmt.Errorf("read input log association: %w", err)
 		}
 		a.StartedAt, err = time.Parse(time.RFC3339Nano, stamp)
@@ -244,7 +266,9 @@ func (r *SQLiteRepository) DeleteInputLogs(ctx context.Context, source string) e
 		return internalerrors.ErrInvalidInput
 	}
 	return r.withWriteTx(ctx, "delete input logs", func(tx *sql.Tx) error {
-		if err := rejectActiveInputLogDelete(ctx, tx, targetKey); err != nil {
+		if err := rejectActiveHistoryDeletion(ctx, tx, "db delete input logs", false, func(activePath string) bool {
+			return pathing.LexicalPathKey(activePath) == targetKey
+		}); err != nil {
 			return err
 		}
 		logPaths, err := inputLogSourceAliases(ctx, tx, source)
@@ -258,49 +282,6 @@ func (r *SQLiteRepository) DeleteInputLogs(ctx context.Context, source string) e
 		}
 		return nil
 	})
-}
-
-func rejectActiveInputLogDelete(ctx context.Context, query workflowStateQueryer, targetKey string) error {
-	slot, err := loadActiveInput(ctx, query)
-	if err != nil {
-		return err
-	}
-	if slot.State == api.ActiveInputEmpty {
-		return nil
-	}
-	activePaths := []string{slot.RequestedPath}
-	if strings.TrimSpace(slot.InputID) != "" {
-		var canonicalPath string
-		err := query.QueryRowContext(ctx, `SELECT canonical_path FROM input_records WHERE id = ?`, slot.InputID).Scan(&canonicalPath)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return api.ErrActiveInputBusy
-			}
-			return fmt.Errorf("db delete input logs: active input path: %w", err)
-		}
-		activePaths = append(activePaths, canonicalPath)
-	}
-	active := false
-	for _, activePath := range activePaths {
-		if key := pathing.LexicalPathKey(activePath); key != "" && key == targetKey {
-			active = true
-			break
-		}
-	}
-	if !active {
-		return nil
-	}
-	if slot.WorkflowID != "" {
-		var unresolved int
-		if err := query.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM release_workflow_effects
-			WHERE owner_id = ? AND workflow_id = ? AND status IN ('started', 'unknown'))`, slot.OwnerID, slot.WorkflowID).Scan(&unresolved); err != nil {
-			return fmt.Errorf("db delete input logs: inspect active input effects: %w", err)
-		}
-		if unresolved != 0 {
-			return api.ErrReleaseWorkflowEffectOutcomeUnknown
-		}
-	}
-	return api.ErrActiveInputBusy
 }
 
 func inputLogPathAliases(ctx context.Context, query historyQueryer, source string, includeRequested bool) ([]string, error) {

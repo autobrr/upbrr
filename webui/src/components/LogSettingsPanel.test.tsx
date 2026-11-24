@@ -3,6 +3,7 @@
 
 import { screen, waitFor } from "@testing-library/dom";
 import { cleanup, render } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -40,24 +41,61 @@ describe("LogSettingsPanel", () => {
     vi.clearAllMocks();
   });
 
-  it("shows the log path and keeps display filters separate from file settings", async () => {
+  it("renders log path and explains the viewer filters", async () => {
     installLogAPI();
+
     render(
       <LogSettingsPanel
         configData={{ Logging: { Level: "info" } }}
-        fieldMeta={{}}
+        fieldMeta={{ Level: { key: "Level", label: "Runtime log level" } }}
         renderField={(label) => <div key={label}>{label}</div>}
       />,
     );
 
-    expect(await screen.findByText("C:/logs/upbrr.log")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Runtime log level")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("C:/logs/upbrr.log")).toBeInTheDocument());
+
     await userEvent.hover(screen.getByRole("button", { name: "Help for Visible log levels" }));
     expect(await screen.findByRole("tooltip")).toHaveTextContent("do not change which events");
     await userEvent.keyboard("{Escape}");
     expect(screen.getByLabelText("INFO", { exact: true })).toBeChecked();
     expect(loggingClient.updateExclusions).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["", "info", "INFO", 5],
+    [" Debug ", "debug", "DEBUG", 5],
+    ["warning", "warn", "WARN", 5],
+    ["TRACE_LEGACY", "TRACE_LEGACY", "TRACE_LEGACY (saved)", 6],
+  ])(
+    "renders saved log level %j using the shared settings field",
+    (saved, selected, label, count) => {
+      installLogAPI();
+      const renderField = vi.fn<ComponentProps<typeof LogSettingsPanel>["renderField"]>((key) => (
+        <div key={key}>{key}</div>
+      ));
+
+      render(
+        <LogSettingsPanel
+          configData={{ Logging: { Level: saved } }}
+          fieldMeta={{ Level: { key: "Level", label: "Runtime log level" } }}
+          renderField={renderField}
+        />,
+      );
+
+      expect(renderField).toHaveBeenCalledWith(
+        "Level",
+        selected,
+        ["Logging", "Level"],
+        expect.objectContaining({
+          label: "Runtime log level",
+          options: expect.arrayContaining([{ value: selected, label }]),
+        }),
+      );
+      expect(renderField.mock.calls.find(([key]) => key === "Level")?.[3]?.options).toHaveLength(
+        count,
+      );
+    },
+  );
 
   it("keeps distinct rows when a restarted log stream reuses IDs", async () => {
     installLogAPI();
@@ -81,7 +119,7 @@ describe("LogSettingsPanel", () => {
     render(
       <LogSettingsPanel
         configData={{ Logging: { Level: "info" } }}
-        fieldMeta={{}}
+        fieldMeta={{ Level: { key: "Level", label: "Runtime log level" } }}
         renderField={(label) => <div key={label}>{label}</div>}
       />,
     );
@@ -113,7 +151,7 @@ describe("LogSettingsPanel", () => {
     render(
       <LogSettingsPanel
         configData={{ Logging: { Level: "info" } }}
-        fieldMeta={{}}
+        fieldMeta={{ Level: { key: "Level", label: "Runtime log level" } }}
         renderField={(label) => <div key={label}>{label}</div>}
       />,
     );
@@ -128,7 +166,7 @@ describe("LogSettingsPanel", () => {
     render(
       <LogSettingsPanel
         configData={{ Logging: { Level: "info" } }}
-        fieldMeta={{}}
+        fieldMeta={{ Level: { key: "Level", label: "Runtime log level" } }}
         renderField={(label) => <div key={label}>{label}</div>}
       />,
     );
@@ -151,7 +189,7 @@ describe("LogSettingsPanel", () => {
     render(
       <LogSettingsPanel
         configData={{ Logging: { Level: "info" } }}
-        fieldMeta={{}}
+        fieldMeta={{ Level: { key: "Level", label: "Runtime log level" } }}
         renderField={(label) => <div key={label}>{label}</div>}
       />,
     );

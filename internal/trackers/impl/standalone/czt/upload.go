@@ -26,6 +26,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/redaction"
@@ -131,6 +132,7 @@ func submitPreparedUpload(
 	body []byte,
 	contentType string,
 ) (api.UploadSummary, error) {
+	req.Logger = logging.FromContext(ctx, req.Logger)
 	if err := ctx.Err(); err != nil {
 		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("context canceled: %w", err))
 	}
@@ -415,11 +417,7 @@ func buildUploadPreview(state uploadState) api.TrackerDryRunEntry {
 		Endpoint:         state.endpoint,
 		Payload:          fields,
 		Questionnaire:    state.questionnaire,
-		Files: []api.TrackerDryRunFile{{
-			Field:   "file",
-			Path:    state.torrentPath,
-			Present: strings.TrimSpace(state.torrentPath) != "",
-		}},
+		Files:            commonhttp.PreviewFileFields(state.files),
 	})
 }
 

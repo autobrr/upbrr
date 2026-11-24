@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/filelock"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -91,6 +92,7 @@ type Logger struct {
 	nextID          int64
 	buffer          []Entry
 	inputLogs       *InputLogStore
+	inputLogDBRoot  string
 	bufferCap       int
 	subs            map[int]chan Entry
 	subID           int
@@ -214,6 +216,14 @@ func newLogger(cfg config.LoggingConfig, dbPath string, consoleOverride string, 
 	}
 
 	consoleOut, consoleErr := defaultConsoleWriters()
+	var inputLogDBRoot string
+	captureDBPath := strings.TrimSpace(dbPath)
+	if captureDBPath == "" || captureDBPath == ":memory:" || strings.HasPrefix(captureDBPath, "file:") {
+		captureDBPath, _ = db.DefaultPath()
+	}
+	if captureDBPath != "" {
+		inputLogDBRoot, _ = filepath.Abs(filepath.Dir(captureDBPath))
+	}
 	logger := &Logger{
 		level:           level,
 		consoleLevel:    consoleLevel,
@@ -221,6 +231,7 @@ func newLogger(cfg config.LoggingConfig, dbPath string, consoleOverride string, 
 		consoleOut:      log.New(consoleOut, "", log.LstdFlags),
 		consoleErr:      log.New(consoleErr, "", log.LstdFlags),
 		inputLogs:       inputStore,
+		inputLogDBRoot:  inputLogDBRoot,
 		bufferCap:       defaultBufferCap,
 		subs:            make(map[int]chan Entry),
 	}
@@ -565,8 +576,7 @@ type rotatingWriter struct {
 	path     string
 	maxBytes int64
 	maxFiles int
-	file     *os.File
-	size     int64
+	closed   bool
 }
 
 func newRotatingWriter(path string, maxBytes int64, maxFiles int) (*rotatingWriter, error) {
@@ -581,76 +591,62 @@ func newRotatingWriter(path string, maxBytes int64, maxFiles int) (*rotatingWrit
 		maxBytes: maxBytes,
 		maxFiles: maxFiles,
 	}
-	if err := writer.open(); err != nil {
+	if _, err := writer.Write(nil); err != nil {
 		return nil, err
 	}
 	return writer, nil
 }
 
-func (w *rotatingWriter) Write(p []byte) (int, error) {
+func (w *rotatingWriter) Write(p []byte) (n int, err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	if w.file == nil {
-		if err := w.open(); err != nil {
-			return 0, err
-		}
+	if w.closed {
+		return 0, os.ErrClosed
 	}
-
-	if w.maxBytes > 0 && w.size+int64(len(p)) > w.maxBytes {
-		if err := w.rotate(); err != nil {
-			return 0, err
-		}
-	}
-
-	n, err := w.file.Write(p)
-	w.size += int64(n)
+	// CLI and WebUI can share a log directory. Reopen the active path for
+	// each write under the same process lock used to move rotated files.
+	lock, err := filelock.AcquireBlocking(w.path + ".lock")
 	if err != nil {
-		return n, fmt.Errorf("logging: write log file: %w", err)
+		return 0, fmt.Errorf("logging: lock log file: %w", err)
 	}
-	return n, nil
+	defer func() { err = errors.Join(err, lock.Close()) }()
+	info, err := os.Stat(w.path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return 0, fmt.Errorf("logging: stat log file: %w", err)
+	}
+	var rotateErr error
+	if len(p) != 0 && info != nil && info.Size()+int64(len(p)) > w.maxBytes {
+		rotateErr = w.rotateLocked()
+	}
+	file, err := os.OpenFile(w.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return 0, errors.Join(rotateErr, fmt.Errorf("logging: open log file: %w", err))
+	}
+	n, err = file.Write(p)
+	err = errors.Join(err, file.Close())
+	if err != nil {
+		return n, errors.Join(rotateErr, fmt.Errorf("logging: write log file: %w", err))
+	}
+	return n, rotateErr
 }
 
 func (w *rotatingWriter) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.file == nil {
-		return nil
-	}
-	if err := w.file.Close(); err != nil {
-		return fmt.Errorf("logging: close log file: %w", err)
-	}
+	w.closed = true
 	return nil
 }
 
-func (w *rotatingWriter) open() error {
-	file, err := os.OpenFile(w.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return fmt.Errorf("logging: open log file: %w", err)
-	}
-	info, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		return fmt.Errorf("logging: stat log file: %w", err)
-	}
-	w.file = file
-	w.size = info.Size()
-	return nil
-}
-
-func (w *rotatingWriter) rotate() error {
-	if w.file != nil {
-		_ = w.file.Close()
-		w.file = nil
-		w.size = 0
-	}
-
+func (w *rotatingWriter) rotateLocked() error {
 	if w.maxFiles <= 1 {
 		file, err := os.OpenFile(w.path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 		if err != nil {
 			return fmt.Errorf("logging: truncate log file: %w", err)
 		}
-		w.file = file
+		if err := file.Close(); err != nil {
+			return fmt.Errorf("logging: close truncated log file: %w", err)
+		}
 		return nil
 	}
 
@@ -658,16 +654,19 @@ func (w *rotatingWriter) rotate() error {
 		src := w.path + "." + strconv.Itoa(i)
 		dst := w.path + "." + strconv.Itoa(i+1)
 		if i == w.maxFiles-1 {
-			_ = os.Remove(dst)
+			if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("logging: remove rotated file: %w", err)
+			}
 		}
-		_ = os.Rename(src, dst)
+		if err := os.Rename(src, dst); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("logging: rotate retained file: %w", err)
+		}
 	}
 
-	if _, err := os.Stat(w.path); err == nil {
-		_ = os.Rename(w.path, w.path+".1")
+	if err := os.Rename(w.path, w.path+".1"); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("logging: rotate active file: %w", err)
 	}
-
-	return w.open()
+	return nil
 }
 
 var _ api.Logger = (*Logger)(nil)

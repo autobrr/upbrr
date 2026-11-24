@@ -6,6 +6,7 @@ package logging
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -17,11 +18,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
+	"github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/services/db"
 )
 
 const inputExportLimit = 50 * 1024 * 1024
+const inputPreviewLimit = 256 * 1024
 const inputLogTimeFormat = "2006/01/02 15:04:05"
 const activeLogPrefixBytes = 256
 
@@ -41,10 +45,15 @@ func ReadInputLog(ctx context.Context, logger *Logger, dbPath string, a db.Input
 // is complete only when both markers and every numbered disk entry survive.
 // If the export limit is reached, newer records take precedence.
 func ReadInputLogs(ctx context.Context, logger *Logger, dbPath string, attempts []db.InputLogAttempt) (InputLogExport, error) {
-	return readInputLogs(ctx, logger, dbPath, attempts, inputExportLimit)
+	return readInputLogs(ctx, logger, dbPath, attempts, inputExportLimit, false)
 }
 
-func readInputLogs(ctx context.Context, logger *Logger, dbPath string, attempts []db.InputLogAttempt, limit int) (InputLogExport, error) {
+// PreviewInputLogs returns the newest retained records without assembling the full export.
+func PreviewInputLogs(ctx context.Context, logger *Logger, dbPath string, attempts []db.InputLogAttempt) (InputLogExport, error) {
+	return readInputLogs(ctx, logger, dbPath, attempts, inputPreviewLimit, true)
+}
+
+func readInputLogs(ctx context.Context, logger *Logger, dbPath string, attempts []db.InputLogAttempt, limit int, preview bool) (InputLogExport, error) {
 	if len(attempts) == 0 {
 		return InputLogExport{Coverage: "expired"}, nil
 	}
@@ -52,9 +61,18 @@ func readInputLogs(ctx context.Context, logger *Logger, dbPath string, attempts 
 	if err != nil {
 		return InputLogExport{}, fmt.Errorf("resolve input log root: %w", err)
 	}
-	reader := inputLogReader{records: make(map[string]*inputLogRecords, len(attempts)), limit: limit}
+	dbRoot, err := filepath.Abs(dir)
+	if err != nil {
+		return InputLogExport{}, fmt.Errorf("resolve absolute input log root: %w", err)
+	}
+	reader := inputLogReader{
+		records: make(map[string]*inputLogRecords, len(attempts)),
+		limit:   limit,
+		dbRoot:  dbRoot,
+		preview: preview,
+	}
 	for _, a := range attempts {
-		reader.records[a.ID] = &inputLogRecords{}
+		reader.records[a.ID] = &inputLogRecords{sources: []string{a.SourcePath, a.RequestedPath}}
 	}
 	retainedMemory := logger.recentInputLogs()
 	// Track only identities present in the bounded memory snapshot, not every
@@ -68,7 +86,7 @@ func readInputLogs(ctx context.Context, logger *Logger, dbPath string, attempts 
 	if err := reader.readFiles(ctx, filepath.Join(dir, "logs")); err != nil {
 		return InputLogExport{}, err
 	}
-	memory := inputLogReader{limit: limit}
+	memory := inputLogReader{limit: limit, preview: preview}
 	for _, e := range retainedMemory {
 		records := reader.records[e.attempt]
 		_, pending := reader.memoryPending[inputLogRecordID{e.attempt, e.sequence}]
@@ -87,8 +105,9 @@ func readInputLogs(ctx context.Context, logger *Logger, dbPath string, attempts 
 			stamp:   e.Time.UnixNano(),
 		})
 	}
-	for _, entry := range exportInputLogLines(reader.lines[reader.first:], memory.lines[memory.first:], limit) {
-		if !entry.continuation || entry.records.text.Len() != 0 {
+	lines, mergedTrimmed := exportInputLogLines(reader.lines[reader.first:], memory.lines[memory.first:], limit, preview)
+	for _, entry := range lines {
+		if preview || !entry.continuation || entry.records.text.Len() != 0 {
 			entry.records.text.WriteString(entry.text)
 		}
 	}
@@ -97,7 +116,7 @@ func readInputLogs(ctx context.Context, logger *Logger, dbPath string, attempts 
 	for _, a := range slices.Backward(attempts) {
 		records := reader.records[a.ID]
 		coverage := "expired"
-		if records.text.Len() > 0 {
+		if records.text.Len() > 0 || preview && (records.sawDiskRecord || records.memory) {
 			switch {
 			case records.memory && !records.incomplete:
 				coverage = "memory"
@@ -106,6 +125,8 @@ func readInputLogs(ctx context.Context, logger *Logger, dbPath string, attempts 
 			default:
 				coverage = "partial"
 			}
+		}
+		if records.text.Len() > 0 {
 			if text.Len() != 0 {
 				text.WriteString("\n")
 			}
@@ -113,8 +134,9 @@ func readInputLogs(ctx context.Context, logger *Logger, dbPath string, attempts 
 			if outcome == "" {
 				outcome = "no recorded outcome"
 			}
-			fmt.Fprintf(&text, "Input: %s\nAttempt: %s (%s)\nStarted: %s\nOutcome: %s\nCoverage: %s\n\n",
-				SanitizeMessage(diskLogMessage(a.SourcePath)), a.ID, a.Kind, a.StartedAt.UTC().Format("2006-01-02T15:04:05Z"), outcome, coverage)
+			fmt.Fprintf(&text, "Input: %s\nAttempt: %s (%s)\nBuild: %s\nStarted: %s\nOutcome: %s\nCoverage: %s\n\n",
+				SanitizeMessage(diskLogMessage(pathing.Base(a.SourcePath))), a.ID, a.Kind,
+				cmp.Or(a.Build, "unavailable"), a.StartedAt.UTC().Format("2006-01-02T15:04:05Z"), outcome, coverage)
 			text.WriteString(records.text.String())
 		}
 		switch {
@@ -124,8 +146,11 @@ func readInputLogs(ctx context.Context, logger *Logger, dbPath string, attempts 
 			aggregate = "partial"
 		}
 	}
-	if text.Len() == 0 {
+	if text.Len() == 0 && !preview {
 		aggregate = "expired"
+	}
+	if preview && reader.totalBytes+memory.totalBytes > inputExportLimit {
+		aggregate = "partial"
 	}
 	if aggregate == "partial" && len(attempts) > 1 {
 		text.WriteString("\nSome input log entries were not retained or could not be exported.\n")
@@ -134,11 +159,24 @@ func readInputLogs(ctx context.Context, logger *Logger, dbPath string, attempts 
 			text.WriteString("Older disk entries only record whole seconds; the order within a second may be uncertain.\n")
 		}
 	}
-	return InputLogExport{Text: text.String(), Coverage: aggregate}, nil
+	result := text.String()
+	if preview && (reader.trimmed || memory.trimmed || mergedTrimmed || len(result) > limit) {
+		result = "Showing the end of the log. Download for the full export.\n\n" + inputLogTail(result, limit)
+	}
+	return InputLogExport{Text: result, Coverage: aggregate}, nil
+}
+
+func inputLogTail(text string, limit int) string {
+	start := max(0, len(text)-limit)
+	for start < len(text) && !utf8.RuneStart(text[start]) {
+		start++
+	}
+	return text[start:]
 }
 
 type inputLogRecords struct {
 	text                                              strings.Builder
+	sources                                           []string
 	next                                              uint64
 	started, ended, incomplete, memory, sawDiskRecord bool
 }
@@ -148,6 +186,7 @@ type inputLogLine struct {
 	text         string
 	stamp        int64
 	continuation bool
+	trackerIDs   bool
 }
 
 type inputLogRecordID struct {
@@ -159,19 +198,26 @@ type inputLogReader struct {
 	memoryPending map[inputLogRecordID]struct{}
 	records       map[string]*inputLogRecords
 	continuation  inputLogLine
+	dbRoot        string
 	lines         []inputLogLine
 	first         int
 	limit, bytes  int
+	totalBytes    int64
 	incomplete    bool
 	legacy        bool
 	trimmed       bool
+	preview       bool
 }
 
 func (r *inputLogReader) add(line inputLogLine) {
+	r.totalBytes += int64(len(line.text))
 	if len(line.text) > r.limit {
 		r.trimmed = true
-		line.records.incomplete = true
-		return
+		if !r.preview {
+			line.records.incomplete = true
+			return
+		}
+		line.text = strings.Clone(inputLogTail(line.text, r.limit))
 	}
 	// Most records arrive in order. Overlapping captures may append an
 	// earlier timestamp after a later one; trim the oldest timestamp in
@@ -189,7 +235,9 @@ func (r *inputLogReader) add(line inputLogLine) {
 		oldest := r.lines[r.first]
 		r.lines[r.first] = inputLogLine{}
 		r.first++
-		oldest.records.incomplete = true
+		if !r.preview {
+			oldest.records.incomplete = true
+		}
 		r.bytes -= len(oldest.text)
 	}
 	if r.first > 0 && r.first >= len(r.lines)-r.first {
@@ -200,14 +248,15 @@ func (r *inputLogReader) add(line inputLogLine) {
 
 // Each source already retains only the newest candidates. Merge from the
 // newest end so a memory fallback cannot evict a newer disk entry.
-func exportInputLogLines(disk, memory []inputLogLine, limit int) []inputLogLine {
+func exportInputLogLines(disk, memory []inputLogLine, limit int, preview bool) ([]inputLogLine, bool) {
 	if len(disk) == 0 {
-		return memory
+		return memory, false
 	}
 	if len(memory) == 0 {
-		return disk
+		return disk, false
 	}
 	var result []inputLogLine
+	trimmed := false
 	for len(disk)+len(memory) > 0 {
 		var line inputLogLine
 		switch {
@@ -218,21 +267,24 @@ func exportInputLogLines(disk, memory []inputLogLine, limit int) []inputLogLine 
 		}
 		if len(line.text) > limit {
 			limit = 0
-			line.records.incomplete = true
+			trimmed = true
+			if !preview {
+				line.records.incomplete = true
+			}
 			continue
 		}
 		limit -= len(line.text)
 		result = append(result, line)
 	}
 	slices.Reverse(result)
-	return result
+	return result, trimmed
 }
 
 func (r *inputLogReader) accept(line string) {
 	if rest, ok := strings.CutPrefix(line, "\t"); ok {
 		if r.continuation.records != nil {
 			line := r.continuation
-			line.text = rest
+			line.text = sanitizeInputLogRecord(SanitizeMessage(rest), r.dbRoot, line.trackerIDs, line.records.sources)
 			line.continuation = true
 			r.add(line)
 		}
@@ -292,15 +344,25 @@ func (r *inputLogReader) accept(line string) {
 			records.incomplete = true
 			return
 		}
-		text := line[:20] + severity + ": " + body
+		trackerIDs := inputLogHasTrackerIDs(body)
+		// Older UNIT3D captures can contain multiline responses with secrets
+		// in hidden form fields. Omit the body and its continuation lines.
+		tracker, _, legacyBody := strings.Cut(strings.TrimPrefix(body, "trackers: "), " response body:")
+		legacyBody = legacyBody && strings.HasPrefix(body, "trackers: ") && tracker != "" && !strings.ContainsAny(tracker, " \t")
+		if legacyBody {
+			body = "trackers: " + tracker + " response body: [REDACTED]\n"
+		}
+		text := line[:20] + severity + ": " + sanitizeInputLogRecord(SanitizeMessage(body), r.dbRoot, trackerIDs, records.sources)
 		delete(r.memoryPending, inputLogRecordID{id, sequence})
 		record := inputLogLine{
-			records: records,
-			text:    text,
-			stamp:   stamp,
+			records:    records,
+			text:       text,
+			stamp:      stamp,
+			trackerIDs: trackerIDs,
 		}
-		if len(text) <= r.limit {
+		if !legacyBody && (r.preview || len(text) <= r.limit) {
 			r.continuation = record
+			r.continuation.text = ""
 		}
 		r.add(record)
 	default:

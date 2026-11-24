@@ -4162,6 +4162,12 @@ func rejectHistoryPurgeWorkflowActivity(
 // rejectActiveHistoryPurge prevents direct repository callers from deleting
 // history that is still attached to the active input.
 func rejectActiveHistoryPurge(ctx context.Context, query workflowStateQueryer, path string) error {
+	return rejectActiveHistoryDeletion(ctx, query, "db purge content", true, func(activePath string) bool {
+		return strings.TrimSpace(activePath) != "" && pathutil.SamePath(activePath, path)
+	})
+}
+
+func rejectActiveHistoryDeletion(ctx context.Context, query workflowStateQueryer, operation string, inspectWork bool, matches func(string) bool) error {
 	slot, err := loadActiveInput(ctx, query)
 	if err != nil {
 		return err
@@ -4177,33 +4183,29 @@ func rejectActiveHistoryPurge(ctx context.Context, query workflowStateQueryer, p
 			if errors.Is(err, sql.ErrNoRows) {
 				return api.ErrActiveInputBusy
 			}
-			return fmt.Errorf("db purge content: active input path: %w", err)
+			return fmt.Errorf("%s: active input path: %w", operation, err)
 		}
 		activePaths = append(activePaths, canonicalPath)
 	}
-	active := false
-	for _, activePath := range activePaths {
-		if strings.TrimSpace(activePath) != "" && pathutil.SamePath(activePath, path) {
-			active = true
-			break
-		}
-	}
-	if !active {
+	if !slices.ContainsFunc(activePaths, matches) {
 		return nil
 	}
 	if slot.WorkflowID != "" {
 		var unresolved int
 		if err := query.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM release_workflow_effects
 			WHERE owner_id = ? AND workflow_id = ? AND status IN ('started', 'unknown'))`, slot.OwnerID, slot.WorkflowID).Scan(&unresolved); err != nil {
-			return fmt.Errorf("db purge content: inspect active input effects: %w", err)
+			return fmt.Errorf("%s: inspect active input effects: %w", operation, err)
 		}
 		if unresolved != 0 {
 			return api.ErrReleaseWorkflowEffectOutcomeUnknown
 		}
+		if !inspectWork {
+			return api.ErrActiveInputBusy
+		}
 		var running int
 		if err := query.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM release_workflow_operations
 			WHERE owner_id = ? AND workflow_id = ? AND status IN ('queued', 'running'))`, slot.OwnerID, slot.WorkflowID).Scan(&running); err != nil {
-			return fmt.Errorf("db purge content: inspect active input work: %w", err)
+			return fmt.Errorf("%s: inspect active input work: %w", operation, err)
 		}
 		if running != 0 {
 			return api.ErrActiveInputBusy

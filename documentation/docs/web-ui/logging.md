@@ -15,6 +15,7 @@ These edits require **Save** before they become active.
 
 | Field                          | Default | Effect                                                                                                                   |
 | ------------------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------ |
+| **Runtime log level**          | `INFO`  | Sets the minimum severity for the server console and the default live viewer stream.                                     |
 | **Write log files**            | Off     | Writes application logs to the displayed host path.                                                                      |
 | **Total log-file budget (MB)** | `50 MB` | Sets the approximate total file budget. The per-file rotation threshold is this value divided by **Retained log files**. |
 | **Retained log files**         | `3`     | Sets the file-rotation depth used with the total-size budget.                                                            |

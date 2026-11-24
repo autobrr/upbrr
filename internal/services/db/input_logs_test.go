@@ -19,6 +19,30 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestReadOnlyInputLogsReadsUnmigratedBuildColumn(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	directory := t.TempDir()
+	source := filepath.Join(directory, "Example.mkv")
+	database := filepath.Join(directory, "upbrr.db")
+	repo, err := OpenContext(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	if err := migrateInputLogs(ctx, repo.db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.db.ExecContext(ctx, `INSERT INTO input_log_attempts (id, source_path, requested_path, kind, started_at)
+		VALUES ('legacy', ?, ?, 'CLI input', ?)`, source, source, formatWorkflowStateTime(time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	attempts, err := ReadOnlyInputLogs(ctx, database, source)
+	if err != nil || len(attempts) != 1 || attempts[0].ID != "legacy" || attempts[0].Build != "" {
+		t.Fatalf("read-only legacy export lookup = %#v, %v", attempts, err)
+	}
+}
+
 func TestInputLogLookupsAndRequestedAlias(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()

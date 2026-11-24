@@ -54,7 +54,9 @@ test("downloads the current input history log through the browser with file logg
     const body = await readFile(file!, "utf8");
     const source = path.normalize(workspace.sourcePath);
     const canonicalSource = process.platform === "win32" ? source.toLowerCase() : source;
-    expect(body).toContain(`Input: ${canonicalSource}\n`);
+    expect(body).toContain(`Input: ${path.basename(canonicalSource)}\n`);
+    expect(body.toLowerCase()).not.toContain(canonicalSource.toLowerCase());
+    expect(body).toMatch(/^Build: (?:[a-f0-9]{12}(?:-dirty)?|dev \(commit unavailable\))$/m);
     expect(body).toContain("Coverage: memory");
     expect(body).toContain("input: opening source");
     expect(body).toContain("input: running operation kind=preparation");

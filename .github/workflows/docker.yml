@@ -34,6 +34,9 @@ jobs:
           push: false
           outputs: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]' && format('type=docker,dest={0}/image.tar', runner.temp) || '' }}
           tags: ghcr.io/${{ github.repository }}:pr${{ github.event.pull_request.number }}
+          build-args: |
+            VERSION=pr${{ github.event.pull_request.number }}
+            BUILD_ID=${{ github.sha }}
           cache-from: type=gha,scope=docker-pr-amd64
           cache-to: type=gha,scope=docker-pr-amd64,mode=min,ignore-error=true
 

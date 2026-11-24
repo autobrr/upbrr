@@ -63,6 +63,7 @@ func (l *cliInputLogs) process(
 				ID:         id,
 				SourcePath: item.originalPath,
 				Kind:       "CLI input",
+				Build:      logging.InputLogBuild(),
 				Outcome:    status,
 				StartedAt:  started,
 			}, streams.out)
@@ -122,6 +123,10 @@ func saveCLIInputLog(ctx context.Context, logger *logging.Logger, dbPath, direct
 		_ = root.Remove(name)
 		return fmt.Errorf("write log export: %w", err)
 	}
-	fmt.Fprintf(out, "Exported %s (%s)\n", formatPathLabel(filepath.Join(directory, name)), data.Coverage)
+	label, ok := logging.DBRelativePathLabel(filepath.Join(directory, name))
+	if !ok {
+		label = name
+	}
+	fmt.Fprintf(out, "Exported %s (%s)\n", label, data.Coverage)
 	return nil
 }

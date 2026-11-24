@@ -47,7 +47,6 @@ type Backend struct {
 	coreOwner          LifecycleOwner
 	coreInitErr        error
 	logger             *logging.Logger
-	inputLogStore      *logging.InputLogStore
 	runtimeBundle      *runtimeBundle
 	repo               *db.SQLiteRepository
 	hub                *eventHub
@@ -108,8 +107,7 @@ func newBackendWithLiveTest(ctx context.Context, cfg config.Config, hub *eventHu
 	if ctx == nil {
 		return nil, errors.New("webserver: context is required")
 	}
-	inputLogStore := logging.NewInputLogStore()
-	logger, err := logging.NewWithInputLogStore(cfg.Logging, cfg.MainSettings.DBPath, inputLogStore)
+	logger, err := logging.New(cfg.Logging, cfg.MainSettings.DBPath)
 	if err != nil {
 		return nil, fmt.Errorf("web: %w", err)
 	}
@@ -178,7 +176,6 @@ func newBackendWithLiveTest(ctx context.Context, cfg config.Config, hub *eventHu
 		coreOwner:           coreOwner,
 		coreInitErr:         coreInitErr,
 		logger:              logger,
-		inputLogStore:       inputLogStore,
 		runtimeBundle:       initialBundle,
 		repo:                repo,
 		hub:                 hub,

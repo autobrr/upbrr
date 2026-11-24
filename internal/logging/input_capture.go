@@ -4,16 +4,19 @@
 package logging
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // The first record follows the begin marker, even for memory-only attempts.
@@ -24,8 +27,28 @@ type inputCapture struct {
 	id       string
 	mu       sync.Mutex
 	sequence uint64
+	source   string
 	path     string
 	closed   atomic.Bool
+}
+
+// InputLogBuild identifies the running release, PR image, or development build.
+func InputLogBuild() string {
+	return inputLogBuildLabel(api.CurrentApplicationInfo())
+}
+
+func inputLogBuildLabel(info api.ApplicationInfo) string {
+	switch info.Version {
+	case "", "dev", "(devel)":
+		return cmp.Or(info.BuildIdentifier, "dev (commit unavailable)")
+	default:
+		if number, ok := strings.CutPrefix(info.Version, "pr"); ok && info.BuildIdentifier != "" {
+			if _, err := strconv.ParseUint(number, 10, 64); err == nil {
+				return info.Version + " (" + info.BuildIdentifier + ")"
+			}
+		}
+		return info.Version
+	}
 }
 
 // InputLogRepository saves only input log associations and outcomes.
@@ -56,13 +79,19 @@ func (l *Logger) BeginInputLog(ctx context.Context, repo InputLogRepository, sou
 		SourcePath:    path,
 		RequestedPath: path,
 		Kind:          kind,
+		Build:         InputLogBuild(),
 		StartedAt:     time.Now().UTC(),
 	}
 	if err := repo.BeginInputLog(ctx, attempt); err != nil {
 		l.Warnf("logging: could not associate input attempt")
 		return ctx, "", noFinish
 	}
-	c := &inputCapture{root: l, id: id}
+	c := &inputCapture{
+		root:   l,
+		id:     id,
+		source: strings.TrimSpace(source),
+		path:   path,
+	}
 	level := l.level
 	if view, ok := ctx.Value(operationLoggerKey{}).(*OperationLogger); ok && view.root == l {
 		level = view.level
@@ -121,6 +150,7 @@ func (c *inputCapture) writeRecord(label, message string) (time.Time, bool) {
 	if c.closed.Load() {
 		return time.Time{}, false
 	}
+	message = sanitizeInputLog(message, c.root.inputLogDBRoot, c.source, c.path)
 	at := time.Now()
 	c.sequence++
 	if c.root.file != nil {

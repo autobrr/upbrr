@@ -255,6 +255,16 @@ test("dirty settings survive navigation and require confirmation before logout o
     await page.getByRole("heading", { name: "Build Release Name" }).waitFor();
 
     await page.getByRole("button", { name: "Logging" }).click();
+    const runtimeLevel = page.getByRole("combobox", { name: "Runtime log level" });
+    await expect(runtimeLevel).toHaveAccessibleDescription(/after Save/);
+    const updatedLevel = (await runtimeLevel.inputValue()) === "debug" ? "trace" : "debug";
+    const save = page.getByRole("button", { name: "Save", exact: true });
+    await runtimeLevel.selectOption(updatedLevel);
+    await save.click();
+    await expect(page.getByText("Settings saved and applied.")).toBeVisible();
+    await expect(save).toBeDisabled();
+    await page.getByRole("button", { name: "Reload" }).click();
+    await expect(runtimeLevel).toHaveValue(updatedLevel);
     const budget = page.getByRole("spinbutton", { name: "Total log-file budget (MB)" });
     await expect(budget).toHaveValue("50");
     await budget.fill("51");

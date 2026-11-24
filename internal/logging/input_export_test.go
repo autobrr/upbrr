@@ -6,6 +6,7 @@ package logging
 import (
 	"bytes"
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func TestInputLogExportAcrossRotation(t *testing.T) {
@@ -80,7 +82,7 @@ func TestInputLogExportAcrossRotation(t *testing.T) {
 	}
 
 	attempts, err := db.ReadOnlyInputLogs(ctx, database, source)
-	if err != nil || len(attempts) != 1 || attempts[0].ID != id || attempts[0].SourcePath != canonical {
+	if err != nil || len(attempts) != 1 || attempts[0].ID != id || attempts[0].SourcePath != canonical || attempts[0].Build != InputLogBuild() {
 		t.Fatalf("attempt lookup: %v, %v", attempts, err)
 	}
 	restarted, err := ReadInputLog(ctx, nil, database, attempts[0])
@@ -89,10 +91,11 @@ func TestInputLogExportAcrossRotation(t *testing.T) {
 	}
 	start, end := strings.Index(restarted.Text, "first detail\ncontinued"), strings.Index(restarted.Text, "last detail")
 	if start < 0 || end <= start || strings.Contains(restarted.Text, "not this input") ||
-		strings.Contains(restarted.Text, "example-secret") || !strings.Contains(restarted.Text, "[REDACTED]") {
+		strings.Contains(restarted.Text, "example-secret") || !strings.Contains(restarted.Text, "[REDACTED]") ||
+		!strings.Contains(restarted.Text, "Build: "+attempts[0].Build) || !strings.Contains(restarted.Text, "Input: Example.mkv\n") {
 		t.Fatal("export did not preserve order, isolation and redaction")
 	}
-	rotated, err := filepath.Glob(writer.path + ".*")
+	rotated, err := filepath.Glob(writer.path + ".[0-9]*")
 	if err != nil || len(rotated) < 2 {
 		t.Fatalf("fixtures did not rotate: %v, %v", rotated, err)
 	}
@@ -102,6 +105,298 @@ func TestInputLogExportAcrossRotation(t *testing.T) {
 	partial, err := ReadInputLog(ctx, nil, database, attempts[0])
 	if err != nil || partial.Coverage != "partial" {
 		t.Fatalf("rotation gap was not reported: %s, %v", partial.Coverage, err)
+	}
+}
+
+func TestInputLogExportSanitizesFreshAndLegacyDiagnostics(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"memory", "disk", "legacy"} {
+		t.Run(mode, func(t *testing.T) {
+			database := filepath.Join(t.TempDir(), "private-config", "upbrr.db")
+			artifact := filepath.Join(filepath.Dir(database), "tmp", "Example.Release")
+			// These are diagnostic strings from both platforms, not local filesystem paths.
+			source := `D:\Private Media, Family (Archive)\Example Release.mkv`
+			details := []string{
+				fmt.Sprintf("preparing %s (phase=metadata)", source),
+				fmt.Sprintf("metadata: external ids start path=%q category=%q", source, "movies"),
+				`metadata: external ids start path="/media/Private, Family/Collection/Example.mkv" category="movies"`,
+				`preparing /media/Private, Family/Collection/Example.mkv (phase=metadata)`,
+				fmt.Sprintf("mediainfo: checking cache at %s (text=false json=false)", artifact),
+				`clients: match seeders=847 tracker_ids="EXAMPLE:791223" save_path="D:\\Private Client\\Destination" content_path="D:\\Private Client\\Example Release.mkv"`,
+				`metadata: torrent Example trackers=[https://tracker.invalid/announce] extracted_ids=[{example 791223}] comment="https://tracker.invalid/view/791223"`,
+				fmt.Sprintf("metadata: pathed tracker ids for %s: EXAMPLE=791223", source),
+				`screenshots: capture setup ffmpeg=C:\Tools Private\bin\ffmpeg.exe selected_path=/mnt/private library/Example Release.mkv`,
+				`trackers: EXAMPLE torrent URL: https://tracker.invalid/view/791223`,
+				`trackers: EXAMPLE upload response body: {"id":791223,"group_id":"791223","status":"accepted"}`,
+				"trackers: EXAMPLE response body: {\n  \"id\": 791223,\n  \"status\": \"incomplete\"",
+				`metadata: tracker lookup empty tracker=EXAMPLE id="791223"`,
+				`unit3d: EXAMPLE response contained no attributes (id="791223" file="Example.mkv")`,
+				`ASC filename request failed for ID 791223: synthetic failure`,
+				`dupechecking: candidate tracker=EXAMPLE candidate_id="791223" relation=same_slot`,
+				`dupechecking: set tracker=EXAMPLE candidates="791223 | 791224" facts="candidate[id=791223,size=123,kind=encode]" missing="candidate=791224:hdr"`,
+				`tmdb: metadata loaded id=172233 title="Example"`,
+				`tracker response location=https://tracker.invalid/view/791223`,
+				`qbit: options save_path=/remote/Private Client path content_path=/remote/library/File.mkv`,
+				`qbit: options {SavePath:D:\Private Client data=Folder\Hidden Destination}`,
+				`clients: linked example save_path=C:/Incoming/{Archive}/Private Destination/`,
+				`clients: injection input source=D:\Media Library Collection=Archive\Private Group\File.mkv tracker=EXAMPLE has_file=true has_url=false configured_clients=1`,
+				`metadata: normalized path D:\Library Collection=Archive\Private Group\File.mkv`,
+				`mediainfo: analyzing /media/Bracketed Library [2024]/Private Group/Example.mkv`,
+				`preparing D:\Bracketed Library [2024]\Private Group\Example.mkv (phase=metadata)`,
+				`mediainfo: analyzing /media/Show {tvdb-123}/Season 01/File.mkv`,
+				"mediainfo: analyzing " + filepath.Join(filepath.Dir(database), "private collection", "season", "File.mkv"),
+				`credentials api_key=synthetic-api passkey=synthetic-passkey hash=0123456789abcdef0123456789abcdef01234567`,
+				"request failed\nAuthorization: Bearer synthetic-bearer\nCookie: session=synthetic-cookie\nhttps://synthetic-user:synthetic-password@tracker.invalid/0123456789abcdef/announce",
+				`dupechecking: comparison target={720p} candidate={1080p} result=different`,
+				`SPD details https://tracker.invalid/browse/791223`,
+				`analyzing /media/private library/File.mkv (1080p/24)`,
+				`notice: copying \\private-server\private-share\Folder\File.mkv`,
+				`workflow: dry-run tracker payload tracker=CZT payload={"fields":{"mediainfo":"General\nComplete name : /mnt/private library/Example Release.mkv\nFormat : Matroska","windows":"path=C:\\Private Media\\File.mkv\nother evidence","keywords":"comedy,mystery","user_descr":"Example description password=synthetic-description-secret","description":"Title / Subtitle [url=https://tracker.invalid/view/791223]Link[/url]\n[url=https://tracker.invalid/torrents.php?id=791223]Details[/url]\n[url=https://tracker.invalid/torrents-details.php?id=791223]Alternate[/url]\n[url=https://tracker.invalid/browse/t/[791223]]Bracketed[/url]\n[img=350]https://image.tmdb.org/t/p/w300/Ⱥ.png[/img]\n[url]https://thetvdb.com/?tab=series&id=172233[/url]"},"files":{"torrent":true}}`,
+			}
+			logger, err := New(config.LoggingConfig{
+				Level:          "warn",
+				FileEnabled:    mode != "memory",
+				MaxTotalSizeMB: 1,
+				MaxFiles:       2,
+			}, database)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer logger.Close()
+			stored := &recordingAttempts{}
+			if mode == "legacy" {
+				details = append([]string{"trackers: EXAMPLE response body: <html>\n<meta name=\"csrf-token\" content=\"synthetic-hidden-form-value\">\n</html>"}, details...)
+				at := time.Now()
+				const id = "legacy"
+				stored.attempts = []db.InputLogAttempt{{
+					ID:         id,
+					SourcePath: source,
+					StartedAt:  at,
+					Outcome:    "completed",
+				}}
+				logger.file.Printf("INFO: [input-log %s 1 begin %d] begin", id, at.UnixNano())
+				for i, detail := range details {
+					logger.file.Printf("TRACE: [input-log %s %d record %d] %s", id, i+2, at.UnixNano()+int64(i), diskLogMessage(detail))
+				}
+				logger.file.Printf("INFO: [input-log %s %d end %d] end", id, len(details)+2, at.UnixNano())
+			} else {
+				ctx, _, finish := logger.BeginInputLog(t.Context(), stored, source, "prepare")
+				for _, detail := range details {
+					FromContext(ctx, nil).Tracef("%s", detail)
+				}
+				finish("", "completed")
+			}
+			if mode != "memory" {
+				logger = nil
+			}
+			result, err := ReadInputLog(t.Context(), logger, database, stored.attempts[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i, private := range []string{"Private Media", "Private, Family", "Family/Collection", "Private Client", "private library", "Tools Private",
+				"private-config", "private-server", "private-share", "Hidden Destination", "Private Destination", "Private Group", "Collection=Archive",
+				"private collection", "Bracketed Library", "Library Collection", "Season 01", "tvdb-123", "synthetic-api", "synthetic-passkey", "synthetic-bearer",
+				"synthetic-cookie", "synthetic-hidden-form-value", "synthetic-description-secret", "synthetic-user", "synthetic-password", "0123456789abcdef",
+				"791223", "791224", "847"} {
+				if strings.Contains(result.Text, private) {
+					t.Errorf("retained private fixture value %d", i)
+				}
+			}
+			for _, detail := range []string{"preparing Example Release.mkv (phase=metadata)", "{db}/tmp/Example.Release (text=false json=false)",
+				"content_path=\"Example Release.mkv\"", "ffmpeg=ffmpeg.exe selected_path=Example Release.mkv", "copying File.mkv",
+				"analyzing File.mkv (1080p/24)", "save_path=[REDACTED] content_path=File.mkv", `path="Example.mkv" category="movies"`,
+				"preparing Example.mkv (phase=metadata)", "tmdb: metadata loaded id=172233", "candidate[id=[REDACTED],size=123,kind=encode]",
+				"candidate={1080p}", "injection input source=File.mkv tracker=EXAMPLE", "mediainfo: analyzing File.mkv", "linked example save_path=[REDACTED]",
+				"metadata: normalized path File.mkv", "mediainfo: analyzing Example.mkv", "preparing Example.mkv (phase=metadata)"} {
+				if !strings.Contains(result.Text, detail) {
+					t.Errorf("export missing expected diagnostic %q", detail)
+				}
+			}
+			_, payload, _ := strings.Cut(result.Text, "payload=")
+			var preview struct {
+				Fields map[string]string `json:"fields"`
+				Files  map[string]bool   `json:"files"`
+			}
+			if err := json.Unmarshal([]byte(payload), &preview); err != nil {
+				t.Fatalf("invalid retained payload: %v\n%s", err, payload)
+			}
+			if preview.Fields["mediainfo"] != "General\nComplete name : Example Release.mkv\nFormat : Matroska" ||
+				preview.Fields["windows"] != "path=File.mkv\nother evidence" ||
+				preview.Fields["keywords"] != "comedy,mystery" ||
+				preview.Fields["user_descr"] != "Example description password=[REDACTED]" ||
+				preview.Fields["description"] != "Title / Subtitle [url=https://tracker.invalid/[REDACTED]]Link[/url]\n"+
+					"[url=https://tracker.invalid/[REDACTED]]Details[/url]\n[url=https://tracker.invalid/[REDACTED]]Alternate[/url]\n"+
+					"[url=https://tracker.invalid/[REDACTED]]Bracketed[/url]\n[img=350]https://image.tmdb.org/t/p/w300/%C8%BA.png[/img]\n"+
+					"[url]https://thetvdb.com/?id=172233&tab=series[/url]" ||
+				!preview.Files["torrent"] {
+				t.Fatalf("retained payload changed valid diagnostics: %#v", preview)
+			}
+		})
+	}
+}
+
+func TestInputLogPRBuildLabelRetainsRevision(t *testing.T) {
+	t.Parallel()
+
+	for _, id := range []string{"abcdef123456", "fedcba654321"} {
+		info := api.ApplicationInfo{Version: "pr123", BuildIdentifier: id}
+		if got := inputLogBuildLabel(info); got != "pr123 ("+id+")" {
+			t.Errorf("input log build = %q, missing PR revision %q", got, id)
+		}
+	}
+}
+
+func TestInputLogPOSIXDBPathWithNoRequestedSource(t *testing.T) {
+	t.Parallel()
+
+	const root = "/config/upbrr"
+	const message = "mediainfo: checking cache at /config/upbrr/tmp/Example (text=false json=false)"
+	got := sanitizeInputLog(message, root, "/media/Example.mkv", "")
+	if got != "mediainfo: checking cache at {db}/tmp/Example (text=false json=false)" {
+		t.Fatal("expected database-relative diagnostic with an empty requested path")
+	}
+}
+
+func TestInputLogCaptureUsesDefaultDatabaseRoot(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	database, err := db.DefaultPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger, err := New(config.LoggingConfig{Level: "warn"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := &recordingAttempts{}
+	ctx, _, finish := logger.BeginInputLog(t.Context(), stored, "Example.mkv", "prepare")
+	FromContext(ctx, nil).Tracef("cache file=%q", filepath.Join(filepath.Dir(database), "tmp", "Example", "mediainfo.txt"))
+	finish("", "completed")
+	exported, err := ReadInputLog(t.Context(), logger, "", stored.attempts[0])
+	if err != nil || !strings.Contains(exported.Text, `file="{db}/tmp/Example/mediainfo.txt"`) {
+		t.Fatalf("default database root was lost: %v\n%s", err, exported.Text)
+	}
+}
+
+func TestInputLogRedactsRelativeDatabaseDirectory(t *testing.T) {
+	t.Chdir(t.TempDir())
+	database := filepath.Join("PrivateState", "upbrr.db")
+	logger, err := New(config.LoggingConfig{
+		Level:          "warn",
+		FileEnabled:    true,
+		MaxTotalSizeMB: 1,
+		MaxFiles:       2,
+	}, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = logger.Close() })
+	store := &recordingAttempts{}
+	ctx, _, finish := logger.BeginInputLog(t.Context(), store, "Example.mkv", "prepare")
+	messages := []string{
+		fmt.Sprintf("mediainfo: checking cache at %s (text=false json=false)", filepath.Join("PrivateState", "tmp", "Example")),
+		"metadata: tracker description saved tracker=EXAMPLE path=" + filepath.Join("PrivateState", "tmp", "Example", "description.txt"),
+		"metadata: tracker artifacts tracker=EXAMPLE dir=" + filepath.Join("PrivateState", "tmp", "Example") + " desc=true images=1 keepImages=true",
+	}
+	for _, message := range messages {
+		FromContext(ctx, logger).Tracef("%s", message)
+	}
+	finish("", "completed")
+	logger.file.Print("INFO: [input-log legacy 1 begin] begin")
+	for i, message := range messages {
+		logger.file.Printf("TRACE: [input-log legacy %d record] %s", i+2, message)
+	}
+	logger.file.Printf("INFO: [input-log legacy %d end] end", len(messages)+2)
+	store.attempts[0].Outcome = "completed"
+	legacy := store.attempts[0]
+	legacy.ID = "legacy"
+	result, err := ReadInputLogs(t.Context(), nil, database, append(store.attempts, legacy))
+	if err != nil || result.Coverage != "complete" || strings.Contains(result.Text, "PrivateState") {
+		t.Fatalf("relative database export coverage = %q, error = %v, private directory is present = %t", result.Coverage, err, strings.Contains(result.Text, "PrivateState"))
+	}
+	for _, want := range []string{"{db}/tmp/Example (text=false json=false)", "path={db}/tmp/Example/description.txt", "dir={db}/tmp/Example desc=true"} {
+		if strings.Count(result.Text, want) != 2 {
+			t.Errorf("expected one fresh and one legacy occurrence of %q", want)
+		}
+	}
+}
+
+func TestInputLogWriterRecoversAfterAnotherWriterRotates(t *testing.T) {
+	t.Parallel()
+	database := filepath.Join(t.TempDir(), "upbrr.db")
+	cfg := config.LoggingConfig{
+		Level:          "warn",
+		FileEnabled:    true,
+		MaxTotalSizeMB: 1,
+		MaxFiles:       2,
+	}
+	first, err := New(cfg, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := New(cfg, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	var logPath string
+	for _, logger := range []*Logger{first, second} {
+		writer, ok := logger.closer.(*rotatingWriter)
+		if !ok {
+			t.Fatal("expected rotating file sink")
+		}
+		writer.maxBytes = 1536
+		logPath = writer.path
+	}
+	for range 5 {
+		second.Infof("force shared rotation %s", strings.Repeat("x", 950))
+	}
+	if _, err := os.Stat(logPath + ".2"); err != nil {
+		t.Fatalf("second writer did not rotate the shared file: %v", err)
+	}
+	store := &recordingAttempts{}
+	ctx, _, finish := first.BeginInputLog(t.Context(), store, "Example.mkv", "prepare")
+	FromContext(ctx, first).Tracef("first writer detail after rotation")
+	finish("", "completed")
+	attempt := store.attempts[0]
+	attempt.Outcome = "completed"
+	result, err := ReadInputLog(t.Context(), nil, database, attempt)
+	if err != nil || result.Coverage != "complete" || !strings.Contains(result.Text, "first writer detail after rotation") {
+		t.Fatalf("shared rotation export: %#v, %v", result, err)
+	}
+}
+
+func TestInputLogPreviewBudgetDoesNotChangeRetainedCoverage(t *testing.T) {
+	t.Parallel()
+	database := filepath.Join(t.TempDir(), "upbrr.db")
+	logger, err := New(config.LoggingConfig{
+		Level:          "warn",
+		FileEnabled:    true,
+		MaxTotalSizeMB: 2,
+		MaxFiles:       2,
+	}, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logger.Close()
+	store := &recordingAttempts{}
+	ctx, _, finish := logger.BeginInputLog(t.Context(), store, "Example.mkv", "prepare")
+	log := FromContext(ctx, logger)
+	log.Tracef("old detail")
+	for range 4 {
+		log.Tracef("%s", strings.Repeat("x", inputPreviewLimit/3))
+	}
+	log.Tracef("new detail")
+	finish("", "completed")
+	store.attempts[0].Outcome = "completed"
+	preview, err := PreviewInputLogs(t.Context(), nil, database, store.attempts)
+	if err != nil || preview.Coverage != "complete" || !strings.Contains(preview.Text, "Showing the end of the log") ||
+		strings.Contains(preview.Text, "old detail") || !strings.Contains(preview.Text, "new detail") {
+		t.Fatalf("preview coverage=%s, bytes=%d, error=%v", preview.Coverage, len(preview.Text), err)
+	}
+	full, err := ReadInputLogs(t.Context(), nil, database, store.attempts)
+	if err != nil || full.Coverage != "complete" || len(full.Text) <= len(preview.Text) || !strings.Contains(full.Text, "old detail") {
+		t.Fatalf("full export coverage=%s, bytes=%d, error=%v", full.Coverage, len(full.Text), err)
 	}
 }
 
@@ -127,7 +422,7 @@ func TestInputLogExportRecoversRotatedRecordsFromMemory(t *testing.T) {
 	captureCtx, _, finish := logger.BeginInputLog(ctx, store, filepath.Join(filepath.Dir(database), "Example.mkv"), "prepare")
 	scoped := FromContext(captureCtx, logger)
 	scoped.Tracef("first detail")
-	if err := writer.rotate(); err != nil {
+	if err := writer.rotateLocked(); err != nil {
 		t.Fatal(err)
 	}
 	scoped.Tracef("second detail")
@@ -173,7 +468,7 @@ func TestInputLogExportLimitKeepsNewestRecords(t *testing.T) {
 				if !ok {
 					t.Fatal("expected rotating log writer")
 				}
-				if err := writer.rotate(); err != nil {
+				if err := writer.rotateLocked(); err != nil {
 					t.Fatal(err)
 				}
 				// Put the earlier captured entry in a different timestamp second
@@ -191,7 +486,7 @@ func TestInputLogExportLimitKeepsNewestRecords(t *testing.T) {
 					t.Fatalf("earlier attempt did not use the memory fallback: %#v, %v", full, err)
 				}
 			}
-			data, err := readInputLogs(ctx, logger, database, attempts, 120)
+			data, err := readInputLogs(ctx, logger, database, attempts, 120, false)
 			if err != nil || data.Coverage != "partial" || !strings.Contains(data.Text, "latest failure detail") ||
 				strings.Contains(data.Text, "old detail") {
 				t.Fatalf("bounded export = %#v, %v", data, err)
@@ -245,13 +540,13 @@ func TestInputLogExportOrdersMemoryAfterOlderDiskInSameSecond(t *testing.T) {
 				at = fmt.Sprintf(" %d", second.Add(test.diskOffset).UnixNano())
 			}
 			line := fmt.Sprintf("%s TRACE: [input-log disk 1 record%s] disk detail %s\n",
-				second.Format(inputLogTimeFormat), at, strings.Repeat("d", 60))
+				second.Format(inputLogTimeFormat), at, strings.Repeat("x", 60))
 			limit, payload := 120, strings.Repeat("m", 50)
 			if test.trimDisk {
 				// Only one disk line fits in its own queue, but that line
 				// and the memory line together fit the shared limit.
 				line += fmt.Sprintf("%s TRACE: [input-log disk 2 record] recent disk record %s\n",
-					second.Format(inputLogTimeFormat), strings.Repeat("d", 60))
+					second.Format(inputLogTimeFormat), strings.Repeat("x", 60))
 				limit, payload = 160, ""
 			}
 			if err := os.WriteFile(logPath, []byte(line), 0o600); err != nil {
@@ -268,7 +563,7 @@ func TestInputLogExportOrdersMemoryAfterOlderDiskInSameSecond(t *testing.T) {
 				Kind:       "preparation",
 				StartedAt:  second,
 			}}
-			result, err := readInputLogs(ctx, logger, database, attempts, limit)
+			result, err := readInputLogs(ctx, logger, database, attempts, limit, false)
 			if err != nil || result.Coverage != "partial" ||
 				strings.Contains(result.Text, "memory-only failure") != test.prefersMemory ||
 				strings.Contains(result.Text, "disk detail") == test.prefersMemory {
@@ -376,7 +671,7 @@ func TestInputLogExportCapKeepsNewestWhenAppendedOutOfOrder(t *testing.T) {
 			}
 			finishFirst("", "completed")
 			finishSecond("", "completed")
-			export, err := readInputLogs(ctx, logger, database, store.attempts, 40)
+			export, err := readInputLogs(ctx, logger, database, store.attempts, 40, false)
 			if err != nil || export.Coverage != "partial" || !strings.Contains(export.Text, "newer detail") ||
 				strings.Contains(export.Text, "older detail") {
 				t.Fatalf("capped export = %#v, %v", export, err)
@@ -443,7 +738,7 @@ func TestInputLogSnapshotGrowthAndInvalidation(t *testing.T) {
 		t.Parallel()
 		logger, writer, logDir, id := newFixture(t, 4)
 		// Force a rotated file as well so both active and rotated files are present.
-		if err := writer.rotate(); err != nil {
+		if err := writer.rotateLocked(); err != nil {
 			t.Fatal(err)
 		}
 		logger.Infof("active baseline line")
@@ -497,7 +792,7 @@ func TestInputLogSnapshotGrowthAndInvalidation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := writer.rotate(); err != nil {
+		if err := writer.rotateLocked(); err != nil {
 			t.Fatal(err)
 		}
 		logger.Infof("new active file after multi-file rotation")
@@ -525,7 +820,7 @@ func TestInputLogSnapshotGrowthAndInvalidation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := writer.rotate(); err != nil {
+		if err := writer.rotateLocked(); err != nil {
 			t.Fatal(err)
 		}
 		logger.Infof("short")
@@ -560,7 +855,7 @@ func TestInputLogSnapshotGrowthAndInvalidation(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if err := writer.rotate(); err != nil {
+		if err := writer.rotateLocked(); err != nil {
 			t.Fatal(err)
 		}
 		logger.Infof("regrown after single-file truncation %s", strings.Repeat("x", int(files[0].info.Size())+64))
@@ -573,7 +868,7 @@ func TestInputLogSnapshotGrowthAndInvalidation(t *testing.T) {
 	t.Run("changed rotated file invalidates snapshot", func(t *testing.T) {
 		t.Parallel()
 		logger, writer, logDir, id := newFixture(t, 4)
-		if err := writer.rotate(); err != nil {
+		if err := writer.rotateLocked(); err != nil {
 			t.Fatal(err)
 		}
 		logger.Infof("active line")

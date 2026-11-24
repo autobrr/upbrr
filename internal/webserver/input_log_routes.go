@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
-	"unicode/utf8"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/logging"
@@ -55,7 +54,7 @@ func (s *Server) registerInputLogRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Input log history is unavailable."})
 			return
 		}
-		data, err := logging.ReadInputLogs(r.Context(), s.backend.currentLogger(), s.backend.repo.DBPath(), attempts)
+		data, err := logging.PreviewInputLogs(r.Context(), s.backend.currentLogger(), s.backend.repo.DBPath(), attempts)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Could not read retained input logs."})
 			return
@@ -63,14 +62,6 @@ func (s *Server) registerInputLogRoutes(mux *http.ServeMux) {
 		id := ""
 		if data.Text != "" && len(attempts) != 0 {
 			id = attempts[0].ID
-		}
-		const previewLimit = 256 * 1024
-		if len(data.Text) > previewLimit {
-			end := len(data.Text) - previewLimit
-			for end < len(data.Text) && !utf8.RuneStart(data.Text[end]) {
-				end++
-			}
-			data.Text = "Showing the end of the log. Download for the full export.\n\n" + data.Text[end:]
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, http.StatusOK, struct {

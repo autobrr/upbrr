@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -170,6 +171,7 @@ func prepareUploadAt(
 }
 
 func submitPreparedUpload(ctx context.Context, req trackers.PreparationInput, state preparedUploadState) (api.UploadSummary, error) {
+	req.Logger = logging.FromContext(ctx, req.Logger)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, state.uploadURL, bytes.NewReader(state.body))
 	if err != nil {
 		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("trackers: HDB request build: %w", err))
@@ -185,6 +187,7 @@ func submitPreparedUpload(ctx context.Context, req trackers.PreparationInput, st
 		return api.UploadSummary{}, fmt.Errorf("trackers: HDB upload request: %w", err)
 	}
 	defer resp.Body.Close()
+	commonhttp.LogUploadResponse(ctx, "HDB", resp)
 
 	finalURL := ""
 	if resp.Request != nil && resp.Request.URL != nil {

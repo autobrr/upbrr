@@ -72,6 +72,9 @@ func TestExportLastLogDoesNotProcessInputAndUsesSelectedDirectory(t *testing.T) 
 			if err != nil || len(files) != 1 {
 				t.Fatalf("exports: %v, %v", files, err)
 			}
+			if !strings.Contains(result.stdout, filepath.Base(files[0])) || strings.Contains(result.stdout, dir) {
+				t.Fatalf("CLI export should identify the file by basename: %q", result.stdout)
+			}
 			text, err := os.ReadFile(files[0])
 			if err != nil || !strings.Contains(string(text), "latest run detail") || strings.Contains(string(text), "previous run detail") {
 				t.Fatal("export did not contain only the most recent run")

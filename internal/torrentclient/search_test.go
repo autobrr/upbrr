@@ -857,11 +857,13 @@ func TestLogPathedSearchMatchesRedactsTrackerURLs(t *testing.T) {
 		t.Fatal("per-match details must not log at debug")
 	}
 	joined := strings.Join(logger.trace, "\n")
-	if !strings.Contains(joined, "Fixture.Title.2024") || !strings.Contains(joined, "BHD:10001") {
+	if !strings.Contains(joined, "content_path=\"Fixture.Title.2024\"") || !strings.Contains(joined, "BHD:[REDACTED]") ||
+		!strings.Contains(joined, "seeders=[REDACTED]") || !strings.Contains(joined, "save_path=[REDACTED]") {
 		t.Fatalf("expected match details in trace log, got %q", joined)
 	}
-	if strings.Contains(joined, "announce") || strings.Contains(joined, "passkey") || strings.Contains(joined, "beyond-hd.me") {
-		t.Fatalf("expected tracker URLs redacted from trace log, got %q", joined)
+	if strings.Contains(joined, "announce") || strings.Contains(joined, "passkey") || strings.Contains(joined, "beyond-hd.me") ||
+		strings.Contains(joined, "10001") || strings.Contains(joined, "/data") || strings.Contains(joined, "seeders=7") {
+		t.Fatalf("expected private match details redacted from trace log, got %q", joined)
 	}
 }
 

@@ -759,7 +759,7 @@ func (s *Service) createPendingRecords(ctx context.Context, meta api.UploadSubje
 			if err := s.repo.SaveTrackerRuleFailures(ctx, meta.SourcePath, slot.tracker, slot.ruleFailures); err != nil {
 				slot.failure = trackerFailure(slot.tracker, "rule_history", err)
 				if releaseErr := slot.plan.Release(); releaseErr != nil {
-					s.warnPlanRelease(slot.tracker, releaseErr)
+					warnPlanRelease(s.logger, slot.tracker, releaseErr)
 				}
 				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "failed", slot.failure.Message)
 				continue
@@ -777,7 +777,7 @@ func (s *Service) createPendingRecords(ctx context.Context, meta api.UploadSubje
 		}); err != nil {
 			slot.failure = trackerFailure(slot.tracker, "record", err)
 			if releaseErr := slot.plan.Release(); releaseErr != nil {
-				s.warnPlanRelease(slot.tracker, releaseErr)
+				warnPlanRelease(s.logger, slot.tracker, releaseErr)
 			}
 			emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "failed", slot.failure.Message)
 			continue
@@ -815,6 +815,7 @@ func projectedRuleFailureRecords(projection api.TrackerReleaseProjection) []api.
 // submitTrackerPlans finishes reusable-base uploads first, then waits the
 // configured rehash cooldown before starting rehash-dependent uploads.
 func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject, slots []trackerPlanSlot) {
+	logger := logging.FromContext(ctx, s.logger)
 	ready, delayedStart := orderedReadyTrackerPlanIndexes(slots, meta.RehashedTrackers)
 	workerCount := s.maxConcurrentTrackerUploads(len(ready))
 	if workerCount == 0 {
@@ -832,7 +833,7 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "canceled")
 				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "canceled", "Upload canceled")
 				if releaseErr := slot.plan.Release(); releaseErr != nil {
-					s.warnPlanRelease(slot.tracker, releaseErr)
+					warnPlanRelease(logger, slot.tracker, releaseErr)
 				}
 				phase.Done()
 				continue
@@ -844,7 +845,7 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "failed")
 				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "failed", slot.failure.Message)
 				if releaseErr := slot.plan.Release(); releaseErr != nil {
-					s.warnPlanRelease(slot.tracker, releaseErr)
+					warnPlanRelease(logger, slot.tracker, releaseErr)
 				}
 				phase.Done()
 				continue
@@ -908,32 +909,46 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 			}
 			if receiptErr != nil {
 				slot.receiptFailure = trackerFailure(slot.tracker, "receipt_retention", receiptErr)
-				s.logger.Warnf("trackers: upload tracker=%s state=receipt_pending reason=%s", slot.tracker, slot.receiptFailure.Message)
+				logger.Warnf("trackers: upload tracker=%s state=receipt_pending reason=%s", slot.tracker, slot.receiptFailure.Message)
 			}
 			if err != nil {
 				code := "submit"
 				recordStatus := "failed"
+				responseState := "not_sent"
+				if outcome == submission.Rejected {
+					responseState = "rejected"
+				}
 				if !knownFailure {
 					code = "unknown_outcome"
 					recordStatus = code
+					responseState = code
 				}
 				slot.failure = trackerFailure(slot.tracker, code, err)
+				logger.Debugf("trackers: torrent upload response tracker=%s state=%s detail=%q", slot.tracker, responseState, slot.failure.Message)
 				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, recordStatus)
 				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "failed", slot.failure.Message)
 			} else {
+				registered := 0
+				for _, torrent := range summary.UploadedTorrents {
+					if torrent.TorrentID != "" || torrent.TorrentURL != "" || torrent.TorrentPath != "" || torrent.DownloadURL != "" {
+						registered++
+					}
+				}
+				logger.Debugf("trackers: torrent upload response tracker=%s state=accepted uploaded=%d registered=%d pending_publication=%t",
+					slot.tracker, summary.Uploaded, registered, summary.PendingPublication)
 				if summary.PendingPublication {
-					s.logger.Infof(
+					logger.Infof(
 						"trackers: upload tracker=%s state=pending_publication decision=submission_completed count=%d",
 						slot.tracker,
 						summary.Uploaded,
 					)
 				}
-				s.logUploadedTorrentURLs(slot.tracker, summary)
+				logUploadedTorrentURLs(logger, slot.tracker, summary)
 				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "uploaded")
 				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "completed", "Tracker upload complete")
 			}
 			if releaseErr := slot.plan.Release(); releaseErr != nil {
-				s.warnPlanRelease(slot.tracker, releaseErr)
+				warnPlanRelease(logger, slot.tracker, releaseErr)
 			}
 			phase.Done()
 		}
@@ -947,7 +962,7 @@ enqueue:
 	for ; next < len(ready); next++ {
 		if next == delayedStart && delayedStart < len(ready) {
 			cooldown := time.Duration(max(s.cfg.TorrentCreation.RehashCooldown, 0)) * time.Second
-			s.logger.Infof("trackers: rehash uploads queued last count=%d cooldown=%s", len(ready)-delayedStart, cooldown)
+			logger.Infof("trackers: rehash uploads queued last count=%d cooldown=%s", len(ready)-delayedStart, cooldown)
 			if delayedStart > 0 {
 				phase.Wait()
 			}
@@ -1063,7 +1078,7 @@ func orderedReadyTrackerPlanIndexes(slots []trackerPlanSlot, rehashedTrackers []
 	return ready, delayedStart
 }
 
-func (s *Service) logUploadedTorrentURLs(fallbackTracker string, summary api.UploadSummary) {
+func logUploadedTorrentURLs(logger api.Logger, fallbackTracker string, summary api.UploadSummary) {
 	for _, uploaded := range summary.UploadedTorrents {
 		torrentURL := sanitizeTorrentPageURLForLog(uploaded.TorrentURL)
 		if torrentURL == "" {
@@ -1073,7 +1088,7 @@ func (s *Service) logUploadedTorrentURLs(fallbackTracker string, summary api.Upl
 		if tracker == "" {
 			tracker = fallbackTracker
 		}
-		s.logger.Infof("trackers: %s torrent URL: %s", tracker, torrentURL)
+		logger.Infof("trackers: %s torrent URL: %s", tracker, torrentURL)
 	}
 }
 
@@ -1111,7 +1126,7 @@ func sanitizeTorrentPageURLForLog(value string) string {
 func (s *Service) releaseTrackerPlans(slots []trackerPlanSlot) {
 	for idx := range slots {
 		if err := slots[idx].plan.Release(); err != nil {
-			s.warnPlanRelease(slots[idx].tracker, err)
+			warnPlanRelease(s.logger, slots[idx].tracker, err)
 		}
 	}
 }
@@ -1127,12 +1142,20 @@ func (s *Service) updateUploadRecord(parent context.Context, sourcePath string, 
 		err = s.repo.UpdateLatestUploadRecordStatus(ctx, sourcePath, tracker, status)
 	}
 	if err != nil {
-		s.logger.Warnf("trackers: status update failed tracker=%s status=%s err=%s", tracker, status, redaction.RedactValue(err.Error(), nil))
+		logging.FromContext(
+			parent,
+			s.logger,
+		).Warnf(
+			"trackers: status update failed tracker=%s status=%s err=%s",
+			tracker,
+			status,
+			redaction.RedactValue(err.Error(), nil),
+		)
 	}
 }
 
-func (s *Service) warnPlanRelease(tracker string, err error) {
-	s.logger.Warnf("trackers: plan release failed tracker=%s err=%s", tracker, redaction.RedactValue(err.Error(), nil))
+func warnPlanRelease(logger api.Logger, tracker string, err error) {
+	logger.Warnf("trackers: plan release failed tracker=%s err=%s", tracker, redaction.RedactValue(err.Error(), nil))
 }
 
 func summarizeTrackerPlanSlots(slots []trackerPlanSlot) api.UploadSummary {

@@ -35,6 +35,7 @@ const LOG_SOFT_CAP = 1000;
 const LOG_HARD_CAP = 10000;
 
 const levelOrder = ["trace", "debug", "info", "warn", "error"];
+const runtimeLevelOptions = levelOrder.map((value) => ({ value, label: value.toUpperCase() }));
 
 const levelBadgeClass = (level: string) => {
   switch (level.toLowerCase()) {
@@ -119,6 +120,13 @@ export default function LogSettingsPanel({
     !Array.isArray(loggingConfigValue)
       ? loggingConfigValue
       : {};
+  const savedLevel = String(loggingConfig.Level ?? "");
+  const normalizedLevel = savedLevel.trim().toLowerCase();
+  const effectiveLevel = normalizedLevel === "warning" ? "warn" : normalizedLevel || "info";
+  const knownLevel = levelOrder.includes(effectiveLevel);
+  const levelOptions = knownLevel
+    ? runtimeLevelOptions
+    : [...runtimeLevelOptions, { value: savedLevel, label: savedLevel + " (saved)" }];
 
   const filteredEntries = useMemo(() => {
     const searchTerm = search.trim().toLowerCase();
@@ -323,15 +331,18 @@ export default function LogSettingsPanel({
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className={pageStyle.label}>Logging</p>
-            <p className="helper">Configure log files and rotation.</p>
+            <p className="helper">Adjust log verbosity and file rotation.</p>
           </div>
         </div>
         <SettingsFieldGroups
           section="Logging"
-          fields={["FileEnabled", "MaxTotalSizeMB", "MaxFiles"].map((key) => [
-            key,
-            renderField(key, loggingConfig[key], ["Logging", key], fieldMeta[key]),
-          ])}
+          fields={["Level", "FileEnabled", "MaxTotalSizeMB", "MaxFiles"].map((key) => {
+            const meta =
+              key === "Level" ? { ...fieldMeta[key], key, options: levelOptions } : fieldMeta[key];
+            const value =
+              key === "Level" ? (knownLevel ? effectiveLevel : savedLevel) : loggingConfig[key];
+            return [key, renderField(key, value, ["Logging", key], meta)];
+          })}
         />
         <div className="grid min-w-0 gap-1 rounded-md border border-border bg-muted px-3 py-2 text-foreground">
           <span className="text-sm font-medium text-muted-foreground">Log path</span>
@@ -398,7 +409,8 @@ export default function LogSettingsPanel({
                 Visible levels
                 <FieldHelp label="Visible log levels" id="log-visible-levels-help">
                   Show or hide each level in this browser's retained entries. These checkboxes do
-                  not change which events the application records.
+                  not change which events the application records; choose Runtime log level and Save
+                  to change that threshold.
                 </FieldHelp>
               </span>
             </legend>
