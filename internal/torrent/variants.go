@@ -106,7 +106,11 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		}
 		// A successful probe still ranks known metadata-only conversions against
 		// its usable artifacts; missing lanes retain the exact-layout search retry.
-		if s.tmpRoot != "" && (!meta.DeferWrapperConversion || len(choices) > 0) {
+		// A compatible full-disc choice already validates the inventory and cannot
+		// be converted to a single file. With no choice, retain source errors
+		// discovered by the extraction probe.
+		considerExtraction := strings.TrimSpace(subject.DiscType) == "" || len(choices) == 0
+		if s.tmpRoot != "" && considerExtraction && (!meta.DeferWrapperConversion || len(choices) > 0) {
 			for _, path := range extractionCandidates {
 				if extracted[path] {
 					continue
