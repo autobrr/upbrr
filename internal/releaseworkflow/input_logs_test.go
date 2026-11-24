@@ -426,7 +426,6 @@ func TestOpenInputLogSurvivesPreReservationDeletion(t *testing.T) {
 				NewMemoryPrivateResourceStore(),
 				testPreparer(),
 				WithLogger(logger),
-				WithClock(fixedClock{now: time.Date(2026, time.November, 24, 12, 0, 0, 0, time.UTC)}),
 				WithIDGenerator(ids),
 				WithActiveInputs(repo, func(verifyCtx context.Context, _ api.PrepareInput) (api.InputRecord, error) {
 					logging.FromContext(verifyCtx, logger).Infof("new retry verification detail")
