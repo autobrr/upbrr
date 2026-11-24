@@ -720,6 +720,7 @@ func wantedFilesWithin(root string, files []string) ([]string, error) {
 		return nil, fmt.Errorf("torrent: resolve source root: %w", err)
 	}
 	wanted := make([]string, 0, len(files))
+	seen := newSubmissionPathIndex(len(files))
 	for _, file := range files {
 		trimmed := strings.TrimSpace(file)
 		if trimmed == "" {
@@ -743,10 +744,12 @@ func wantedFilesWithin(root string, files []string) ([]string, error) {
 			return nil, fmt.Errorf("torrent: wanted file %q is not a regular file", absFile)
 		}
 		cleanFile := filepath.Clean(absFile)
-		if slices.ContainsFunc(wanted, func(path string) bool { return pathutil.SamePath(path, cleanFile) }) {
+		keys := pathutil.ResolvePathMatchKeys(cleanFile)
+		if seen.match(keys) != 0 {
 			continue
 		}
 		wanted = append(wanted, cleanFile)
+		seen.add(keys, len(wanted))
 	}
 	sort.Strings(wanted)
 	return wanted, nil
@@ -898,18 +901,14 @@ func ValidateTorrentLayout(info metainfo.Info, meta api.TorrentSubject) error {
 		return err
 	}
 	expectedFiles, scope, ok, err := expectedTorrentFiles(meta)
-	if err != nil {
+	if err != nil || !ok {
 		return err
 	}
-	expectedName, nameOK, err := expectedTorrentName(meta)
-	if err != nil {
-		return err
+	expectedName := filepath.Base(filepath.Clean(strings.TrimSpace(meta.SourcePath)))
+	if scope == api.SubmissionContentScopeSingleFile {
+		expectedName = expectedFiles[0].path
 	}
-	if !ok {
-		return nil
-	}
-	expected := sourceContentPaths(expectedFiles)
-	if nameOK && info.BestName() != expectedName {
+	if info.BestName() != expectedName {
 		return errors.New("torrent: candidate name mismatch")
 	}
 	if (scope == api.SubmissionContentScopeSingleFile && len(info.Files) != 0) ||
@@ -920,7 +919,7 @@ func ValidateTorrentLayout(info metainfo.Info, meta api.TorrentSubject) error {
 	if len(actual) == 0 {
 		return errors.New("torrent: candidate has no files")
 	}
-	if !sameContentSet(actual, expected) {
+	if !sameContentSet(actual, sourceContentPaths(expectedFiles)) {
 		return errors.New("torrent: candidate content mismatch")
 	}
 	return nil
@@ -974,37 +973,6 @@ func expectedTorrentFiles(meta api.TorrentSubject) ([]sourceContentFile, api.Sub
 		expected = append(expected, sourceContentFile{path: file.TorrentPath, length: file.Size})
 	}
 	return expected, inventory.Scope, true, nil
-}
-
-func expectedTorrentName(meta api.TorrentSubject) (string, bool, error) {
-	source := strings.TrimSpace(meta.SourcePath)
-	if source == "" || strings.EqualFold(filepath.Ext(source), ".torrent") {
-		return "", false, nil
-	}
-	if strings.TrimSpace(meta.DiscType) != "" {
-		return filepath.Base(filepath.Clean(normalizeDiscSource(source))), true, nil
-	}
-	info, err := os.Stat(source)
-	if err != nil {
-		return "", false, fmt.Errorf("torrent: stat source %q: %w", source, err)
-	}
-	if !info.IsDir() {
-		return filepath.Base(source), true, nil
-	}
-	if len(meta.FileList) == 0 {
-		return filepath.Base(filepath.Clean(source)), true, nil
-	}
-	wanted, err := wantedFilesWithin(source, meta.FileList)
-	if err != nil {
-		return "", false, err
-	}
-	if len(wanted) == 0 {
-		return "", false, errors.New("torrent: no valid wanted files")
-	}
-	if len(wanted) == 1 && !meta.KeepFolder {
-		return filepath.Base(wanted[0]), true, nil
-	}
-	return filepath.Base(filepath.Clean(source)), true, nil
 }
 
 func torrentContentPaths(info metainfo.Info) []contentFile {

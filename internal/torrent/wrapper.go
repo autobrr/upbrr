@@ -36,6 +36,9 @@ type singleFileExtraction struct {
 // CanExtractSingleFile reports whether a v1 file set contains a unique matching
 // source on a piece boundary. It never reads media bytes or writes artifacts.
 func CanExtractSingleFile(infoBytes []byte, subject api.TorrentSubject) bool {
+	if strings.TrimSpace(subject.DiscType) != "" {
+		return false
+	}
 	plan, err := planSingleFileExtraction(infoBytes, subject)
 	return err == nil && plan != nil
 }

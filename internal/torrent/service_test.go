@@ -547,6 +547,31 @@ func TestCreateNoHashRequiresReusableTorrent(t *testing.T) {
 	}
 }
 
+func TestCreateNoHashReportsInvalidDiscInventory(t *testing.T) {
+	t.Parallel()
+
+	source := filepath.Join(t.TempDir(), "film.mkv")
+	writeTestFile(t, source, "synthetic media")
+	candidate := filepath.Join(t.TempDir(), "existing.torrent")
+	createTestTorrentFromExisting(t, source, candidate)
+	hash, err := loadInfoHash(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = NewService(nil, t.TempDir()).Create(t.Context(), api.TorrentSubject{
+		SourcePath:            t.TempDir(),
+		DiscType:              "BDMV",
+		Trackers:              []string{"TL"},
+		ClientTorrentPath:     candidate,
+		ClientTorrentInfoHash: hash,
+		TorrentOverrides:      api.TorrentOverrides{NoHash: new(true)},
+	})
+	if err == nil || !strings.Contains(err.Error(), "submitted content inventory is empty") {
+		t.Fatalf("expected the unavailable disc inventory to be reported, got %v", err)
+	}
+}
+
 func TestCreateNoHashReusesExactCaseClientTorrent(t *testing.T) {
 	t.Parallel()
 
