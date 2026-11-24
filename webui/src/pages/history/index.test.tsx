@@ -222,6 +222,24 @@ describe("HistoryPage", () => {
     expect(screen.queryByText("No stored releases found.")).not.toBeInTheDocument();
   });
 
+  it("keeps input logs visible when stored release history is unavailable", async () => {
+    const saved = { ...entry("/media/Logged.mkv", "Logged Input"), LogsOnly: true };
+    installHistoryMocks({
+      ListInputHistory: async () => ({ Entries: [saved], HistoryUnavailable: true }),
+      GetInputLog: async () => ({
+        Coverage: "memory",
+        Text: "Retained diagnostic",
+        DownloadID: "00000000000000000000001c",
+      }),
+    });
+    renderHistory();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Stored release history is unavailable.",
+    );
+    expect(screen.getByRole("button", { name: /Logged Input/ })).toBeInTheDocument();
+    expect(await screen.findByText("Retained diagnostic")).toBeInTheDocument();
+  });
+
   it("opens a stored source through the shared active-input callback", async () => {
     const sourcePath = "C:\\media\\Stored.Release.2026.1080p-GRP.mkv";
     const onOpenInput = vi.fn(async () => true);

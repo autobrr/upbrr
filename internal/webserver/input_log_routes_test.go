@@ -128,6 +128,15 @@ func TestInputLogHistoryAndDownloadCombineSameInput(t *testing.T) {
 		!history.Entries[1].LogsOnly || history.Entries[1].SourcePath != otherPath {
 		t.Fatalf("history split or lost input: %d %s (%v)", list.Code, list.Body.String(), err)
 	}
+	server.backend.capabilities.History = nil
+	partial := httptest.NewRecorder()
+	mux.ServeHTTP(partial, listRequest)
+	var logsOnly inputHistoryList
+	if err := json.Unmarshal(partial.Body.Bytes(), &logsOnly); err != nil || partial.Code != http.StatusOK ||
+		!logsOnly.HistoryUnavailable || logsOnly.LogsUnavailable || len(logsOnly.Entries) != 2 ||
+		!logsOnly.Entries[0].LogsOnly || !logsOnly.Entries[1].LogsOnly {
+		t.Fatalf("history without Core: %d %s (%v)", partial.Code, partial.Body.String(), err)
+	}
 	if err := server.backend.repo.PurgeContentData(ctx, source); err != nil {
 		t.Fatal(err)
 	}

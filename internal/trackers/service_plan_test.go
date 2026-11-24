@@ -1012,7 +1012,7 @@ func (l *warningLogger) Warnf(format string, args ...any) {
 
 func TestUploadReleaseFailureAfterRemoteSuccessIsSanitizedWarningOnly(t *testing.T) {
 	t.Parallel()
-	logger := &warningLogger{}
+	logger, operationLogger := &warningLogger{}, &warningLogger{}
 	registry := NewRegistry()
 	definition := readyReleasePlanDefinition{
 		name:      "AITHER",
@@ -1023,13 +1023,14 @@ func TestUploadReleaseFailureAfterRemoteSuccessIsSanitizedWarningOnly(t *testing
 		t.Fatalf("register: %v", err)
 	}
 	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER"}}}), logger, nil, registry)
-	summary, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "Example.Release.2026"})
+	ctx := logging.WithOperationLogger(t.Context(), operationLogger)
+	summary, err := svc.Upload(ctx, api.UploadSubject{SourcePath: "Example.Release.2026"})
 	if err != nil || summary.Uploaded != 1 {
 		t.Fatalf("upload = %#v, %v", summary, err)
 	}
-	logger.mu.Lock()
-	joined := strings.Join(logger.warnings, "\n")
-	logger.mu.Unlock()
+	operationLogger.mu.Lock()
+	joined := strings.Join(operationLogger.warnings, "\n")
+	operationLogger.mu.Unlock()
 	if !strings.Contains(joined, "plan release failed") || strings.Contains(joined, "secret-value") {
 		t.Fatalf("warnings = %q", joined)
 	}

@@ -78,6 +78,7 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
     queryFn: ({ signal }) => historyClient.list(signal),
   });
   const entries = historyQuery.data?.Entries ?? emptyHistory;
+  const historyUnavailable = historyQuery.data?.HistoryUnavailable === true;
   const logsUnavailable = historyQuery.data?.LogsUnavailable === true;
   const loading = historyQuery.isPending;
   const [selectedPath, setSelectedPath] = useState("");
@@ -238,11 +239,16 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
           </div>
 
           {historyQuery.isError && <p role="alert">{String(historyQuery.error)}</p>}
+          {historyUnavailable && <p role="alert">Stored release history is unavailable.</p>}
           {logsUnavailable && (
             <p role="alert">Could not find input logs. Refresh History to try again.</p>
           )}
           {loading ? <p className="text-muted-foreground">Loading history...</p> : null}
-          {!loading && !historyQuery.isError && !logsUnavailable && entries.length === 0 ? (
+          {!loading &&
+          !historyQuery.isError &&
+          !historyUnavailable &&
+          !logsUnavailable &&
+          entries.length === 0 ? (
             <p className="text-muted-foreground">No stored releases found.</p>
           ) : null}
           {!loading && entries.length > 0 && filteredEntries.length === 0 ? (

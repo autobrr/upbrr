@@ -458,7 +458,11 @@ type InputLogDetails = {
   Coverage: "complete" | "partial" | "memory" | "expired";
 };
 
-type InputHistoryList = { Entries: HistoryEntry[]; LogsUnavailable?: boolean };
+type InputHistoryList = {
+  Entries: HistoryEntry[];
+  HistoryUnavailable?: boolean;
+  LogsUnavailable?: boolean;
+};
 
 /** Persisted release history operations. */
 export const historyClient = {

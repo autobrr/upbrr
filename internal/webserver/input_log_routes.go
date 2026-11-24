@@ -17,22 +17,23 @@ import (
 )
 
 type inputHistoryList struct {
-	Entries         []api.HistoryEntry
-	LogsUnavailable bool `json:",omitempty"`
+	Entries            []api.HistoryEntry
+	HistoryUnavailable bool `json:",omitempty"`
+	LogsUnavailable    bool `json:",omitempty"`
 }
 
 func (s *Server) registerInputLogRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/app/ListInputHistory", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
-		entries, err := s.backend.ListHistory(r.Context())
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
+		entries, historyErr := s.backend.ListHistory(r.Context())
 		storedPaths := make([]string, 0, len(entries))
 		for _, entry := range entries {
 			storedPaths = append(storedPaths, entry.SourcePath)
 		}
 		logOnly, logErr := s.backend.repo.InputLogSources(r.Context(), storedPaths)
+		if historyErr != nil && logErr != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Stored history and input logs are unavailable."})
+			return
+		}
 		for _, source := range logOnly {
 			entries = append(entries, api.HistoryEntry{
 				SourcePath:   source,
@@ -40,7 +41,11 @@ func (s *Server) registerInputLogRoutes(mux *http.ServeMux) {
 				LogsOnly:     true,
 			})
 		}
-		writeJSON(w, http.StatusOK, inputHistoryList{Entries: nonNilAppList(entries), LogsUnavailable: logErr != nil})
+		writeJSON(w, http.StatusOK, inputHistoryList{
+			Entries:            nonNilAppList(entries),
+			HistoryUnavailable: historyErr != nil,
+			LogsUnavailable:    logErr != nil,
+		})
 	}))
 	mux.HandleFunc("POST /api/app/GetInputLog", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
 		r.Body = http.MaxBytesReader(w, r.Body, 16*1024)

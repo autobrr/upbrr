@@ -31,8 +31,11 @@ var (
 	inputLogMissingDupe = regexp.MustCompile(`(?i)(\bcandidate=)[^\s,"\\:{}\]]+(:)`)
 	inputLogTrackerIDs  = regexp.MustCompile(`(?im)(metadata: pathed tracker ids for .*?: )[^\r\n]+`)
 	inputLogComment     = regexp.MustCompile(`(?im)(metadata: torrent .*?\bcomment=)"(?:\\.|[^"\\])*"`)
-	inputLogLocation    = regexp.MustCompile(
-		`(?i)[a-z][a-z0-9+.-]*://(?:\[[0-9a-f:]+\]|\[REDACTED\]|[^\s<>"'\\\[\]])+|(?:^|[\s"'=(:,\[])([a-z]:[\\/]+|\\\\+|/[^\s"'<>|{}[\],;)])`,
+	// A single Windows root separator needs another path component, not a bare escape.
+	inputLogLocation = regexp.MustCompile(
+		`(?i)[a-z][a-z0-9+.-]*://(?:\[[0-9a-f:]+\]|\[REDACTED\]|[^\s<>"'\\\[\]])+|(?:^|[\s"'=(:,\[])([a-z]:[\\/]+|\\\\+` +
+			`|\\[^\\/\s"'<>|](?:[^\\/"'<>|\r\n]*[^\\/\s"'<>|])?[\\/][^\\/\s"'<>|]{2}` +
+			`|/[^\s"'<>|{}[\],;)])`,
 	)
 	inputLogPathEnd      = regexp.MustCompile(`[\t\r\n"<>|]|\s+\(?[a-zA-Z_][\w.-]*=|\s+->\s+|\s+\([^\\/()]*[/\\][^()]*\)`)
 	inputLogSourceLine   = regexp.MustCompile(`(?m)^((?:metadata: normalized path|mediainfo: analyzing) )([^\r\n]+)`)

@@ -127,7 +127,7 @@ func (s *Service) Upload(ctx context.Context, meta api.UploadSubject) (api.Uploa
 	banned := s.prepareBannedState(ctx, meta, resolved)
 	slots := s.prepareUploadPlans(ctx, meta, resolved, preflight, banned, nil, api.WorkflowExecutionModeNormal)
 	if err := ctx.Err(); err != nil {
-		s.releaseTrackerPlans(slots)
+		s.releaseTrackerPlans(ctx, slots)
 		for idx := range slots {
 			emitTrackerPlanProgress(ctx, meta.SourcePath, slots[idx].tracker, "tracker_upload", "canceled", "Upload canceled before submission")
 		}
@@ -136,7 +136,7 @@ func (s *Service) Upload(ctx context.Context, meta api.UploadSubject) (api.Uploa
 
 	s.createPendingRecords(ctx, meta, slots)
 	s.submitTrackerPlans(ctx, meta, slots)
-	s.releaseTrackerPlans(slots)
+	s.releaseTrackerPlans(ctx, slots)
 
 	summary := summarizeTrackerPlanSlots(slots)
 	if err := ctx.Err(); err != nil && trackerPlansCanceled(slots) {
@@ -402,7 +402,7 @@ func (s *Service) PrepareRetainedUploadPlan(
 	preflight := s.preflightDescriptionImageHosts(ctx, meta, resolved)
 	slots := s.prepareUploadPlans(ctx, meta, resolved, preflight, nil, projectionByTracker, mode)
 	if err := ctx.Err(); err != nil {
-		s.releaseTrackerPlans(slots)
+		s.releaseTrackerPlans(ctx, slots)
 		return nil, fmt.Errorf("trackers: retained upload preparation: %w", err)
 	}
 	return &RetainedUploadPlan{
@@ -580,10 +580,10 @@ func (p *RetainedUploadPlan) execute(
 	p.executed = true
 	p.mu.Unlock()
 
-	p.service.releaseTrackerPlans(unselectedSlots)
+	p.service.releaseTrackerPlans(ctx, unselectedSlots)
 	p.service.createPendingRecords(ctx, p.meta, selectedSlots)
 	p.service.submitTrackerPlans(ctx, p.meta, selectedSlots)
-	p.service.releaseTrackerPlans(selectedSlots)
+	p.service.releaseTrackerPlans(ctx, selectedSlots)
 	p.mu.Lock()
 	p.released = true
 	p.mu.Unlock()
@@ -750,6 +750,7 @@ func (s *Service) createPendingRecords(ctx context.Context, meta api.UploadSubje
 	if s.repo == nil {
 		return
 	}
+	logger := logging.FromContext(ctx, s.logger)
 	for idx := range slots {
 		slot := &slots[idx]
 		if slot.failure != nil || slot.plan.Intent() != PreparationIntentUpload {
@@ -759,7 +760,7 @@ func (s *Service) createPendingRecords(ctx context.Context, meta api.UploadSubje
 			if err := s.repo.SaveTrackerRuleFailures(ctx, meta.SourcePath, slot.tracker, slot.ruleFailures); err != nil {
 				slot.failure = trackerFailure(slot.tracker, "rule_history", err)
 				if releaseErr := slot.plan.Release(); releaseErr != nil {
-					warnPlanRelease(s.logger, slot.tracker, releaseErr)
+					warnPlanRelease(logger, slot.tracker, releaseErr)
 				}
 				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "failed", slot.failure.Message)
 				continue
@@ -777,7 +778,7 @@ func (s *Service) createPendingRecords(ctx context.Context, meta api.UploadSubje
 		}); err != nil {
 			slot.failure = trackerFailure(slot.tracker, "record", err)
 			if releaseErr := slot.plan.Release(); releaseErr != nil {
-				warnPlanRelease(s.logger, slot.tracker, releaseErr)
+				warnPlanRelease(logger, slot.tracker, releaseErr)
 			}
 			emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "failed", slot.failure.Message)
 			continue
@@ -1123,10 +1124,11 @@ func sanitizeTorrentPageURLForLog(value string) string {
 	return parsed.String()
 }
 
-func (s *Service) releaseTrackerPlans(slots []trackerPlanSlot) {
+func (s *Service) releaseTrackerPlans(ctx context.Context, slots []trackerPlanSlot) {
+	logger := logging.FromContext(ctx, s.logger)
 	for idx := range slots {
 		if err := slots[idx].plan.Release(); err != nil {
-			warnPlanRelease(s.logger, slots[idx].tracker, err)
+			warnPlanRelease(logger, slots[idx].tracker, err)
 		}
 	}
 }
