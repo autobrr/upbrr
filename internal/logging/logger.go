@@ -10,12 +10,14 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/filelock"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -74,9 +76,10 @@ func ParseLevel(value string) (Level, error) {
 }
 
 // Logger writes sanitized, threshold-filtered entries to console and optional
-// file outputs. An optional console threshold can differ from the application
-// threshold used by file output, snapshots, and subscribers. Close releases the
-// optional file output.
+// file outputs. The file receives every level through TRACE; the optional
+// console threshold can differ from the threshold for snapshots and subscribers.
+// Input captures retain TRACE independently of those thresholds. Close releases
+// the optional file output.
 type Logger struct {
 	level           Level
 	consoleLevel    Level
@@ -88,18 +91,70 @@ type Logger struct {
 	mu              sync.Mutex
 	nextID          int64
 	buffer          []Entry
+	inputLogs       *InputLogStore
+	inputLogDBRoot  string
 	bufferCap       int
 	subs            map[int]chan Entry
 	subID           int
 }
 
+// InputLogStore retains a bounded in-memory buffer of scoped input log entries
+// that can be shared across Logger generations for one running backend.
+type InputLogStore struct {
+	mu      sync.Mutex
+	entries []Entry
+	cap     int
+	oldest  int
+}
+
+// NewInputLogStore constructs a bounded in-memory input log retention store
+// using the default retention capacity.
+func NewInputLogStore() *InputLogStore {
+	return newInputLogStore(defaultBufferCap)
+}
+
+func newInputLogStore(capacity int) *InputLogStore {
+	if capacity <= 0 {
+		capacity = defaultBufferCap
+	}
+	return &InputLogStore{cap: capacity}
+}
+
+func (s *InputLogStore) record(entry Entry) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cap == 0 {
+		s.cap = defaultBufferCap
+	}
+	if len(s.entries) < s.cap {
+		s.entries = append(s.entries, entry)
+		return
+	}
+	s.entries[s.oldest] = entry
+	s.oldest = (s.oldest + 1) % s.cap
+}
+
+func (s *InputLogStore) recent() []Entry {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Concat(s.entries[s.oldest:], s.entries[:s.oldest])
+}
+
 // Entry is one sanitized retained log entry. IDs increase within a Logger, and
 // Level contains the lowercase level name.
 type Entry struct {
-	ID      int64     `json:"id"`
-	Time    time.Time `json:"time" ts_type:"string"`
-	Level   string    `json:"level"`
-	Message string    `json:"message"`
+	ID       int64     `json:"id"`
+	Time     time.Time `json:"time" ts_type:"string"`
+	Level    string    `json:"level"`
+	Message  string    `json:"message"`
+	attempt  string
+	sequence uint64
 }
 
 var (
@@ -118,23 +173,30 @@ func New(cfg config.LoggingConfig, dbPath string) (*Logger, error) {
 	return NewWithLevel(cfg, dbPath, "")
 }
 
+// NewWithInputLogStore constructs a logger that shares store for in-memory
+// scoped input log retention across runtime generations. A nil store creates a
+// new logger-local store.
+func NewWithInputLogStore(cfg config.LoggingConfig, dbPath string, store *InputLogStore) (*Logger, error) {
+	return newLogger(cfg, dbPath, "", store)
+}
+
 // NewWithLevel constructs a logger after replacing cfg.Level with a non-blank
 // override. It has the same file ownership and side effects as [New].
 func NewWithLevel(cfg config.LoggingConfig, dbPath string, override string) (*Logger, error) {
 	if trimmed := strings.TrimSpace(override); trimmed != "" {
 		cfg.Level = trimmed
 	}
-	return newLogger(cfg, dbPath, "")
+	return newLogger(cfg, dbPath, "", nil)
 }
 
 // NewWithConsoleLevel constructs a logger using cfg.Level for application
 // logging and a non-blank override for console output only. Callers must close
 // the returned logger when file output is enabled.
 func NewWithConsoleLevel(cfg config.LoggingConfig, dbPath string, override string) (*Logger, error) {
-	return newLogger(cfg, dbPath, override)
+	return newLogger(cfg, dbPath, override, nil)
 }
 
-func newLogger(cfg config.LoggingConfig, dbPath string, consoleOverride string) (*Logger, error) {
+func newLogger(cfg config.LoggingConfig, dbPath string, consoleOverride string, inputStore *InputLogStore) (*Logger, error) {
 	level, err := ParseLevel(cfg.Level)
 	if err != nil {
 		return nil, err
@@ -149,13 +211,27 @@ func newLogger(cfg config.LoggingConfig, dbPath string, consoleOverride string) 
 		consoleLevelSet = true
 	}
 
+	if inputStore == nil {
+		inputStore = newInputLogStore(defaultBufferCap)
+	}
+
 	consoleOut, consoleErr := defaultConsoleWriters()
+	var inputLogDBRoot string
+	captureDBPath := strings.TrimSpace(dbPath)
+	if captureDBPath == "" || captureDBPath == ":memory:" || strings.HasPrefix(captureDBPath, "file:") {
+		captureDBPath, _ = db.DefaultPath()
+	}
+	if captureDBPath != "" {
+		inputLogDBRoot, _ = filepath.Abs(filepath.Dir(captureDBPath))
+	}
 	logger := &Logger{
 		level:           level,
 		consoleLevel:    consoleLevel,
 		consoleLevelSet: consoleLevelSet,
 		consoleOut:      log.New(consoleOut, "", log.LstdFlags),
 		consoleErr:      log.New(consoleErr, "", log.LstdFlags),
+		inputLogs:       inputStore,
+		inputLogDBRoot:  inputLogDBRoot,
 		bufferCap:       defaultBufferCap,
 		subs:            make(map[int]chan Entry),
 	}
@@ -287,18 +363,18 @@ func (l *Logger) logf(level Level, label string, format string, args ...any) {
 		return
 	}
 	formatted := SanitizeMessage(fmt.Sprintf(format, args...))
-	l.writeSanitized(level, label, formatted, applicationEnabled, consoleLevel)
+	l.writeSanitized(level, label, formatted, nil, applicationEnabled, consoleLevel)
 }
 
-func (l *Logger) writefAtLevel(applicationLevel Level, level Level, label string, format string, args ...any) {
+func (l *Logger) writefAtLevel(applicationLevel Level, level Level, label string, capture *inputCapture, format string, args ...any) {
 	if l == nil {
 		return
 	}
 	applicationEnabled, consoleLevel, enabled := l.enabledLevels(applicationLevel, level)
-	if !enabled {
+	if !enabled && capture.isClosed() {
 		return
 	}
-	l.writeSanitized(level, label, SanitizeMessage(fmt.Sprintf(format, args...)), applicationEnabled, consoleLevel)
+	l.writeSanitized(level, label, SanitizeMessage(fmt.Sprintf(format, args...)), capture, applicationEnabled, consoleLevel)
 }
 
 func (l *Logger) enabledLevels(applicationLevel Level, level Level) (bool, Level, bool) {
@@ -307,10 +383,10 @@ func (l *Logger) enabledLevels(applicationLevel Level, level Level) (bool, Level
 		consoleLevel = l.consoleLevel
 	}
 	applicationEnabled := level <= applicationLevel
-	return applicationEnabled, consoleLevel, applicationEnabled || level <= consoleLevel
+	return applicationEnabled, consoleLevel, l.file != nil || applicationEnabled || level <= consoleLevel
 }
 
-func (l *Logger) writeSanitized(level Level, label string, formatted string, applicationEnabled bool, consoleLevel Level) {
+func (l *Logger) writeSanitized(level Level, label, formatted string, capture *inputCapture, applicationEnabled bool, consoleLevel Level) {
 	prefix := label + ": "
 	if level <= consoleLevel {
 		console := l.consoleOut
@@ -323,11 +399,20 @@ func (l *Logger) writeSanitized(level Level, label string, formatted string, app
 			console.Print(prefix + formatted)
 		}
 	}
+	var at time.Time
+	var captured bool
+	if capture != nil {
+		at, captured = capture.writeRecord(label, formatted)
+	}
+	if !captured && l.file != nil {
+		// Indent multiline continuations so they cannot introduce a record.
+		l.file.Print(prefix + diskLogMessage(formatted))
+	}
 	if applicationEnabled {
-		if l.file != nil {
-			l.file.Print(prefix + formatted)
+		if !captured {
+			at = time.Now()
 		}
-		l.record(label, formatted)
+		l.record(label, formatted, at)
 	}
 }
 
@@ -355,18 +440,35 @@ func DBRelativePathLabel(value string) (string, bool) {
 	return "", false
 }
 
-func (l *Logger) record(label string, message string) {
+// InputLogStore returns the bounded in-memory input log store backing l, or nil
+// when l is nil.
+func (l *Logger) InputLogStore() *InputLogStore {
+	if l == nil {
+		return nil
+	}
+	return l.inputLogs
+}
+
+func (l *Logger) recordInputLog(entry Entry) {
+	if l == nil || l.inputLogs == nil {
+		return
+	}
+	l.inputLogs.record(entry)
+}
+
+func (l *Logger) record(label, message string, at time.Time) {
 	if l == nil {
 		return
 	}
 
 	entry := Entry{
-		Time:    time.Now(),
+		Time:    at,
 		Level:   strings.ToLower(label),
 		Message: message,
 	}
 
 	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.nextID++
 	entry.ID = l.nextID
 	l.buffer = append(l.buffer, entry)
@@ -379,7 +481,13 @@ func (l *Logger) record(label string, message string) {
 		default:
 		}
 	}
-	l.mu.Unlock()
+}
+
+func (l *Logger) recentInputLogs() []Entry {
+	if l == nil || l.inputLogs == nil {
+		return nil
+	}
+	return l.inputLogs.recent()
 }
 
 // Recent returns a copied, oldest-to-newest snapshot of the most recent entries.
@@ -468,8 +576,7 @@ type rotatingWriter struct {
 	path     string
 	maxBytes int64
 	maxFiles int
-	file     *os.File
-	size     int64
+	closed   bool
 }
 
 func newRotatingWriter(path string, maxBytes int64, maxFiles int) (*rotatingWriter, error) {
@@ -484,76 +591,62 @@ func newRotatingWriter(path string, maxBytes int64, maxFiles int) (*rotatingWrit
 		maxBytes: maxBytes,
 		maxFiles: maxFiles,
 	}
-	if err := writer.open(); err != nil {
+	if _, err := writer.Write(nil); err != nil {
 		return nil, err
 	}
 	return writer, nil
 }
 
-func (w *rotatingWriter) Write(p []byte) (int, error) {
+func (w *rotatingWriter) Write(p []byte) (n int, err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	if w.file == nil {
-		if err := w.open(); err != nil {
-			return 0, err
-		}
+	if w.closed {
+		return 0, os.ErrClosed
 	}
-
-	if w.maxBytes > 0 && w.size+int64(len(p)) > w.maxBytes {
-		if err := w.rotate(); err != nil {
-			return 0, err
-		}
-	}
-
-	n, err := w.file.Write(p)
-	w.size += int64(n)
+	// CLI and WebUI can share a log directory. Reopen the active path for
+	// each write under the same process lock used to move rotated files.
+	lock, err := filelock.AcquireBlocking(w.path + ".lock")
 	if err != nil {
-		return n, fmt.Errorf("logging: write log file: %w", err)
+		return 0, fmt.Errorf("logging: lock log file: %w", err)
 	}
-	return n, nil
+	defer func() { err = errors.Join(err, lock.Close()) }()
+	info, err := os.Stat(w.path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return 0, fmt.Errorf("logging: stat log file: %w", err)
+	}
+	var rotateErr error
+	if len(p) != 0 && info != nil && info.Size()+int64(len(p)) > w.maxBytes {
+		rotateErr = w.rotateLocked()
+	}
+	file, err := os.OpenFile(w.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return 0, errors.Join(rotateErr, fmt.Errorf("logging: open log file: %w", err))
+	}
+	n, err = file.Write(p)
+	err = errors.Join(err, file.Close())
+	if err != nil {
+		return n, errors.Join(rotateErr, fmt.Errorf("logging: write log file: %w", err))
+	}
+	return n, rotateErr
 }
 
 func (w *rotatingWriter) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.file == nil {
-		return nil
-	}
-	if err := w.file.Close(); err != nil {
-		return fmt.Errorf("logging: close log file: %w", err)
-	}
+	w.closed = true
 	return nil
 }
 
-func (w *rotatingWriter) open() error {
-	file, err := os.OpenFile(w.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return fmt.Errorf("logging: open log file: %w", err)
-	}
-	info, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		return fmt.Errorf("logging: stat log file: %w", err)
-	}
-	w.file = file
-	w.size = info.Size()
-	return nil
-}
-
-func (w *rotatingWriter) rotate() error {
-	if w.file != nil {
-		_ = w.file.Close()
-		w.file = nil
-		w.size = 0
-	}
-
+func (w *rotatingWriter) rotateLocked() error {
 	if w.maxFiles <= 1 {
 		file, err := os.OpenFile(w.path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 		if err != nil {
 			return fmt.Errorf("logging: truncate log file: %w", err)
 		}
-		w.file = file
+		if err := file.Close(); err != nil {
+			return fmt.Errorf("logging: close truncated log file: %w", err)
+		}
 		return nil
 	}
 
@@ -561,16 +654,19 @@ func (w *rotatingWriter) rotate() error {
 		src := w.path + "." + strconv.Itoa(i)
 		dst := w.path + "." + strconv.Itoa(i+1)
 		if i == w.maxFiles-1 {
-			_ = os.Remove(dst)
+			if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("logging: remove rotated file: %w", err)
+			}
 		}
-		_ = os.Rename(src, dst)
+		if err := os.Rename(src, dst); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("logging: rotate retained file: %w", err)
+		}
 	}
 
-	if _, err := os.Stat(w.path); err == nil {
-		_ = os.Rename(w.path, w.path+".1")
+	if err := os.Rename(w.path, w.path+".1"); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("logging: rotate active file: %w", err)
 	}
-
-	return w.open()
+	return nil
 }
 
 var _ api.Logger = (*Logger)(nil)

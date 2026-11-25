@@ -2251,7 +2251,7 @@ describe("useReleaseSession", () => {
           descriptions: {
             questionnaireAnswers: {},
             options: {
-              RunLogLevel: "info",
+              RunLogLevel: "",
               Screens: 0,
               NoSeed: liveTest,
               AudioAnalysis: false,
@@ -7997,7 +7997,7 @@ describe("useReleaseSession", () => {
     await act(() => result.current.input.prepare());
     expect(result.current.upload.view.selectedTrackers).toEqual([]);
     expect(result.current.upload.view.options.noSeed).toBe(false);
-    expect(result.current.upload.view.options.runLogLevel).toBe("info");
+    expect(result.current.upload.view.options.runLogLevel).toBe("");
     expect(result.current.duplicates.view.questionnaireAnswers).toEqual({});
   });
 

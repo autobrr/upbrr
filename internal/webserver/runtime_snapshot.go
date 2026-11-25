@@ -305,10 +305,14 @@ func (b *Backend) runtimeActivator() (*RuntimeActivator, error) {
 		activator.liveImageRegistry = registry
 		activator.liveImageTrackerInputs = liveTestImageTrackerInputs(liveConfig, registry)
 	}
+	inputLogStore := b.currentLogger().InputLogStore()
+	if inputLogStore == nil {
+		inputLogStore = logging.NewInputLogStore()
+	}
 	activator.deps.build = func(ctx context.Context, cfg config.Config, repo *db.SQLiteRepository) (RuntimeGeneration, error) {
 		return buildRuntimeGenerationWithCoordinator(
 			ctx, cfg, repo, b.liveTest, b.workflowCoordinator, activator.buildingConfigGeneration, activator.buildingConfigFingerprint,
-			b.runtimeMaintenance,
+			inputLogStore, b.runtimeMaintenance,
 		)
 	}
 	b.activator = activator

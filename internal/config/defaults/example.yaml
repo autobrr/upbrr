@@ -124,7 +124,7 @@ post_upload:
 logging:
   level: "info"
   file_enabled: false
-  max_total_size_mb: 20
+  max_total_size_mb: 50
   max_files: 3
 
 trackers:

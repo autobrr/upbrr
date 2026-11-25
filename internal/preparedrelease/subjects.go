@@ -175,7 +175,7 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 }
 
 // canKeepSourceFolder uses the prepared selection, not every file in the directory.
-// Samples and sidecars cannot make the folder eligible.
+// Samples and sidecars cannot make the folder eligible or enter its torrent payload.
 func canKeepSourceFolder(owned envelope) bool {
 	release := owned.result.Release
 	if release.Episode.Pack || release.Disc.Type != "" || release.Source.Classification.DiscType != "" {

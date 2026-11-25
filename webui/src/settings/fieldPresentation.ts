@@ -24,7 +24,7 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
     ),
     MaxTotalSizeMB: field(
       "Total log-file budget (MB)",
-      "Approximate total file budget in megabytes. Default: 20; must be positive when file logging is enabled. The per-file rotation threshold is this value divided by Retained log files.",
+      "Approximate total file budget in megabytes. Default: 50; must be positive when file logging is enabled. The per-file rotation threshold is this value divided by Retained log files.",
     ),
     MaxFiles: field(
       "Retained log files",

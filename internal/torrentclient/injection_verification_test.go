@@ -10,12 +10,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
-	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/pkg/api"
 	"github.com/autobrr/go-torrent/metainfo"
+	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func TestVerifiedQbitInjectionRejectsUnverifiableArtifactBeforeClientIO(t *testing.T) {
@@ -107,6 +109,10 @@ func TestVerifiedQbitInjectionStagesOnlyForAnAdd(t *testing.T) {
 					defer func() { _ = r.MultipartForm.RemoveAll() }()
 					addSavePath.Store(r.FormValue("savepath"))
 					adds.Add(1)
+					if outcome == "fresh add" {
+						w.WriteHeader(http.StatusConflict)
+						return
+					}
 					_, _ = w.Write([]byte("Ok."))
 				default:
 					t.Errorf("unexpected client request: %s", r.URL.Path)
@@ -131,12 +137,30 @@ func TestVerifiedQbitInjectionStagesOnlyForAnAdd(t *testing.T) {
 					LinkedFolder: config.StringList{linkRoot},
 				}},
 			}, nil)
-			err = service.Inject(t.Context(), api.ClientSubject{SourcePath: source, FileList: []string{source}},
+			logger := &captureLogger{}
+			ctx := logging.WithOperationLogger(t.Context(), logger)
+			err = service.Inject(ctx, api.ClientSubject{SourcePath: source, FileList: []string{source}},
 				api.TorrentResult{
 					Path:            torrentPath,
 					Tracker:         "ALPHA",
 					VerifyInjection: true,
 				})
+			logs := strings.Join(logger.debug, "\n")
+			switch outcome {
+			case "already installed":
+				if !strings.Contains(logs, "state=reused") || strings.Contains(logs, "qbit add response") {
+					t.Fatalf("reuse diagnostics = %s", logs)
+				}
+			case "fresh add":
+				if !strings.Contains(logs, "qbit add response client=qbit tracker=ALPHA error=") ||
+					!strings.Contains(logs, "conflicts detected") || !strings.Contains(logs, "state=verified") {
+					t.Fatalf("verified add diagnostics = %s", logs)
+				}
+			case "unconfirmed add":
+				if !strings.Contains(logs, "state=unconfirmed") {
+					t.Fatalf("unconfirmed add diagnostics = %s", logs)
+				}
+			}
 			switch {
 			case outcome == "unconfirmed add":
 				if !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {

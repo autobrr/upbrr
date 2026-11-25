@@ -29,6 +29,45 @@ import {
   type AppServer,
 } from "./helpers/e2eHarness";
 
+test("downloads the current input history log through the browser with file logging off", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await page.goto(app.url);
+    await page.getByLabel("Source path", { exact: true }).fill(workspace.sourcePath);
+    await page.getByRole("button", { name: "Fetch metadata", exact: true }).click();
+    await waitForMetadataReady(page, app.url);
+    await page.goto(new URL("/history", app.url).toString());
+    await page.getByRole("button", { name: "Logs", exact: true }).click();
+    await expect(page.getByRole("region", { name: "Input logs" })).toContainText(
+      "Recent entries from this session only.",
+    );
+    const downloaded = page.waitForEvent("download");
+    await page.getByRole("link", { name: "Download log" }).click();
+    const download = await downloaded;
+    expect(download.suggestedFilename()).toMatch(/^upbrr-input-[a-f0-9]{24}\.log$/);
+    const file = await download.path();
+    expect(file).not.toBeNull();
+    const body = await readFile(file!, "utf8");
+    const source = path.normalize(workspace.sourcePath);
+    const canonicalSource = process.platform === "win32" ? source.toLowerCase() : source;
+    expect(body).toContain(`Input: ${path.basename(canonicalSource)}\n`);
+    expect(body.toLowerCase()).not.toContain(canonicalSource.toLowerCase());
+    expect(body).toMatch(/^Build: (?:[a-f0-9]{12}(?:-dirty)?|dev \(commit unavailable\))$/m);
+    expect(body).toContain("Coverage: memory");
+    expect(body).toContain("input: opening source");
+    expect(body).toContain("input: running operation kind=preparation");
+    await expect(page.getByText("Processing logs only")).toHaveCount(0);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 const waitForAppMethod = (page: Page, method: string) =>
   page.waitForResponse((response) => response.url().endsWith(`/api/app/${method}`));
 

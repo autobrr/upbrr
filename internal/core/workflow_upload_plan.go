@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"maps"
@@ -21,9 +22,7 @@ import (
 	"github.com/autobrr/upbrr/internal/clientdiscovery"
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
-	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/logging"
-	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
@@ -69,7 +68,6 @@ type workflowUploadPlanBuilder struct {
 	config   config.Config
 	resolver workflowDescriptionSubjectResolver
 	trackers workflowRetainedUploadService
-	registry workflowTrackerDescriptorRegistry
 	torrents api.TorrentService
 	clients  api.ClientService
 }
@@ -96,7 +94,6 @@ func newWorkflowUploadPlanBuilder(
 	service api.TrackerService,
 	torrents api.TorrentService,
 	clients api.ClientService,
-	registry workflowTrackerDescriptorRegistry,
 	liveTest ...*api.LiveTestPolicy,
 ) workflowUploadPlanBuilder {
 	retained, _ := service.(workflowRetainedUploadService)
@@ -107,7 +104,6 @@ func newWorkflowUploadPlanBuilder(
 		config:   cfg,
 		resolver: resolver,
 		trackers: retained,
-		registry: registry,
 		torrents: torrents,
 		clients:  clients,
 	}
@@ -333,7 +329,7 @@ func (b workflowUploadPlanBuilder) Build(
 	skipImageUpload := true
 	subject.ImageHostOverrides.SkipUpload = &skipImageUpload
 	applyWorkflowCrossSeeds(&subject, dupeEvidence, dupes)
-	torrentSubject := workflowSubmissionTorrentSubjectWithSubtitles(subject, b.registry)
+	torrentSubject := workflowSubmissionTorrentSubject(subject)
 	torrentSubject.ForceRecheck = descriptionInstructions.Client.ForceRecheck != nil && *descriptionInstructions.Client.ForceRecheck
 	torrentSubject.Trackers = workflowProjectionTrackerNames(eligible)
 	torrentSubject.SkipIfRehashTrackers = workflowSkipIfRehashTrackers(b.config, eligible)
@@ -345,15 +341,7 @@ func (b workflowUploadPlanBuilder) Build(
 		}
 		sourceManifest = &subject.SourceManifest
 		torrentSubject.DeferGenerationPublication = true
-		baseTorrentSubject := workflowSubmissionTorrentSubject(subject)
-		if len(torrentSubject.FileList) != len(baseTorrentSubject.FileList) {
-			if _, err := workflowSubmissionContentIdentity(torrentSubject, subject.SourceIdentity); err != nil {
-				return api.UploadPlan{}, nil, err
-			}
-		}
-		// Sidecar packaging can vary with the tracker selection. Use the base
-		// scope for the global fence so concurrent variants cannot bypass it.
-		identity, identityErr := workflowSubmissionContentIdentity(baseTorrentSubject, subject.SourceIdentity)
+		identity, identityErr := workflowSubmissionContentIdentity(torrentSubject, subject.SourceIdentity)
 		if identityErr != nil {
 			return api.UploadPlan{}, nil, identityErr
 		}
@@ -429,7 +417,7 @@ func (b workflowUploadPlanBuilder) Build(
 	}
 	clientSubject := api.ClientSubject{
 		SourcePath:      subject.SourcePath,
-		FileList:        append([]string(nil), torrentSubject.FileList...),
+		FileList:        append([]string(nil), subject.FileList...),
 		DiscType:        subject.DiscType,
 		KeepFolder:      subject.KeepFolder,
 		ClientOverrides: descriptionInstructions.Client,
@@ -510,6 +498,9 @@ func (b workflowUploadPlanBuilder) Build(
 			tracker.TorrentArtifactID = torrentArtifactID
 			tracker.TorrentFingerprint = torrentFingerprint
 			tracker.Endpoint, tracker.Fields, tracker.Files = sanitizeWorkflowUploadPreview(preparation.Preview)
+			if options.DryRun {
+				logWorkflowUploadPayload(ctx, tracker)
+			}
 			tracker.EditionFeatures = slices.Clone(preparation.Preview.EditionFeatures)
 			execution.retainDiagnosticOutcomes(&tracker, projection, preparation.Preview)
 			if identityErr != nil || torrentArtifactID == "" {
@@ -646,42 +637,6 @@ func (b workflowUploadPlanBuilder) prepareWorkflowTorrent(
 		return api.TorrentResult{}, fmt.Errorf("prepare torrent: %w", err)
 	}
 	return result, nil
-}
-
-// workflowSubmissionTorrentSubjectWithSubtitles widens the verified file scope
-// only for a single tracker that opts into subtitle sidecars.
-func workflowSubmissionTorrentSubjectWithSubtitles(subject api.UploadSubject, registry workflowTrackerDescriptorRegistry) api.TorrentSubject {
-	torrentSubject := workflowSubmissionTorrentSubject(subject)
-	if registry == nil || len(subject.Trackers) != 1 || !subject.KeepFolder ||
-		subject.Identity.Category != api.CanonicalCategoryMovie || len(subject.FileList) != 1 ||
-		subject.DiscType != "" || !filesystem.IsVideoFile(subject.FileList[0]) {
-		return torrentSubject
-	}
-	descriptor, ok := registry.LookupDescriptor(subject.Trackers[0])
-	if !ok || descriptor.UploadArtifact == nil || !descriptor.UploadArtifact.IncludeMatchingSubtitles {
-		return torrentSubject
-	}
-
-	root := filepath.Clean(subject.SourcePath)
-	video := subject.FileList[0]
-	if !pathutil.SamePath(filepath.Dir(video), root) {
-		return torrentSubject
-	}
-	stem := strings.TrimSuffix(filepath.Base(video), filepath.Ext(video))
-	var subtitles []string
-	for _, entry := range subject.SourceManifest.Entries {
-		if entry.Type != api.SourceEntryTypeFile || !pathutil.SamePath(filepath.Dir(entry.Path), root) {
-			continue
-		}
-		ext := filepath.Ext(entry.Path)
-		name := strings.TrimSuffix(filepath.Base(entry.Path), ext)
-		if strings.EqualFold(ext, ".srt") && (name == stem || strings.HasPrefix(name, stem+".")) {
-			subtitles = append(subtitles, entry.Path)
-		}
-	}
-	slices.Sort(subtitles)
-	torrentSubject.FileList = append(torrentSubject.FileList, subtitles...)
-	return torrentSubject
 }
 
 func workflowSubmissionContentIdentity(
@@ -1307,6 +1262,7 @@ func (e *workflowUploadExecution) ResolveAction(
 		}
 	} else {
 		updated.Endpoint, updated.Fields, updated.Files = sanitizeWorkflowUploadPreview(preparation.Preview)
+		logWorkflowUploadPayload(ctx, updated)
 		updated.EditionFeatures = slices.Clone(preparation.Preview.EditionFeatures)
 		e.retainDiagnosticOutcomes(&updated, projection, preparation.Preview)
 		updated.PreparedOperationID, updated.TorrentArtifactID, updated.TorrentFingerprint, err = workflowTrackerArtifactIdentity(
@@ -1916,6 +1872,27 @@ func sanitizeWorkflowUploadPreview(preview api.TrackerDryRunEntry) (string, []ap
 		return strings.Compare(left.Field, right.Field)
 	})
 	return endpoint, fields, files
+}
+
+func logWorkflowUploadPayload(ctx context.Context, tracker api.UploadPlanTracker) {
+	if len(tracker.Fields) == 0 && len(tracker.Files) == 0 {
+		return
+	}
+	fields := make(map[string]string, len(tracker.Fields))
+	for _, field := range tracker.Fields {
+		fields[field.Key] = field.Value
+	}
+	files := make(map[string]bool, len(tracker.Files))
+	for _, file := range tracker.Files {
+		files[file.Field] = file.Present
+	}
+	payload, err := json.Marshal(struct {
+		Fields map[string]string `json:"fields"`
+		Files  map[string]bool   `json:"files"`
+	}{Fields: fields, Files: files}, json.Deterministic(true))
+	if err == nil {
+		logging.FromContext(ctx, nil).Tracef("workflow: dry-run tracker payload tracker=%s payload=%s", tracker.TrackerID, payload)
+	}
 }
 
 func sanitizeWorkflowQuestionnaire(questionnaire *api.TrackerQuestionnaire) []api.TrackerQuestionnaireRequirement {

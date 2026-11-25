@@ -99,10 +99,10 @@ func testPTPDescriptionCaptureScope(t *testing.T, disc string, frameDiscs []stri
 		ImageHostOverrides: api.ImageHostOverrides{SkipUpload: new(true)},
 	}
 	cfg := config.Config{
-MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "upbrr.db")},
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "upbrr.db")},
 		ImageHosting: config.ImageHostingConfig{Host1: "imgbb"},
 		Description:  config.DescriptionSettingsConfig{CustomDescriptionHeader: "Release notes", ScreenshotHeader: "[b]Screenshots[/b]"},
-}
+	}
 	service := trackers.NewServiceWithRegistry(cfg, api.NopLogger{}, descriptionPreviewPersistence{}, MustNewRegistry())
 	preview, err := service.BuildPreparation(t.Context(), api.NewDescriptionSubject(meta), trackerIDs)
 	if err != nil || len(preview.ContentFailures) != 0 || len(preview.Descriptions) != len(trackerIDs) {
@@ -973,12 +973,8 @@ func TestNewRegistryOwnsUploadArtifactPolicies(t *testing.T) {
 	want := map[string]trackers.UploadArtifactPolicy{
 		"ACM": {Source: "AsianCinema"},
 		"AR":  {Source: "AlphaRatio", RequireAnnounce: true},
-		"ASC": {
-			Source:                   "ASC",
-			RequireAnnounce:          true,
-			IncludeMatchingSubtitles: true,
-		},
-		"AZ": {Source: "AvistaZ", DefaultAnnounce: "https://tracker.avistaz.to/announce"},
+		"ASC": {Source: "ASC", RequireAnnounce: true},
+		"AZ":  {Source: "AvistaZ", DefaultAnnounce: "https://tracker.avistaz.to/announce"},
 		"BHDTV": {
 			Source:          "BIT-HDTV",
 			UseMyAnnounce:   true,
@@ -1143,6 +1139,16 @@ func TestNewRegistryIncludesHDBPolicies(t *testing.T) {
 	cfg := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"HDB": {Username: "user", Passkey: "pass"}}}}
 	if ready, owned := registry.DataLookupConfigured("HDB", cfg); !owned || !ready {
 		t.Fatalf("HDB lookup readiness = %t, %t", ready, owned)
+	}
+}
+
+func TestNewRegistryIncludesHDTArtifactPolicy(t *testing.T) {
+	registry, err := NewRegistry()
+	if err != nil {
+		t.Fatalf("new registry: %v", err)
+	}
+	if policy, ok := registry.LookupArtifactPolicy("HDT"); !ok || policy.MaxPieceSizeMiB != 16 {
+		t.Fatalf("HDT artifact policy = %#v, %t; want 16 MiB maximum", policy, ok)
 	}
 }
 

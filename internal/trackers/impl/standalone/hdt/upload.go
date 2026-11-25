@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/httpclient"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
@@ -36,6 +37,18 @@ type uploadState struct {
 	blockedReason string
 }
 
+func (state uploadState) multipartFiles() []commonhttp.FileField {
+	files := []commonhttp.FileField{{
+		FieldName: "torrent",
+		FileName:  filepath.Base(state.torrentPath),
+		Path:      state.torrentPath,
+	}}
+	if state.nfo != nil {
+		files = append(files, *state.nfo)
+	}
+	return files
+}
+
 func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
 	if err := standalone.ValidatePreparation(ctx, req, validationPolicy()); err != nil {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: validate preparation: %w", err)
@@ -54,15 +67,7 @@ func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers
 	if state.blockedReason != "" {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: HDT %s", state.blockedReason)
 	}
-	files := []commonhttp.FileField{{
-		FieldName: "torrent",
-		FileName:  filepath.Base(state.torrentPath),
-		Path:      state.torrentPath,
-	}}
-	if state.nfo != nil {
-		files = append(files, *state.nfo)
-	}
-	body, contentType, err := commonhttp.BuildMultipartPayload(state.fields, files)
+	body, contentType, err := commonhttp.BuildMultipartPayload(state.fields, state.multipartFiles())
 	if err != nil {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %w", err)
 	}
@@ -89,6 +94,7 @@ func submitPreparedUpload(
 	announceURL string,
 	artifactPath string,
 ) (api.UploadSummary, error) {
+	req.Logger = logging.FromContext(ctx, req.Logger)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, state.baseURL+"/upload.php", bytes.NewReader(body))
 	if err != nil {
 		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("trackers: HDT request build: %w", err))
@@ -147,11 +153,7 @@ func buildUploadPreview(state uploadState) api.TrackerDryRunEntry {
 		Description:      state.description,
 		Endpoint:         state.baseURL + "/upload.php",
 		Payload:          state.fields,
-		Files: []api.TrackerDryRunFile{{
-			Field:   "torrent",
-			Path:    state.torrentPath,
-			Present: strings.TrimSpace(state.torrentPath) != "",
-		}},
+		Files:            commonhttp.PreviewFileFields(state.multipartFiles()),
 	})
 }
 

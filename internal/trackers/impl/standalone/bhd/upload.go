@@ -20,6 +20,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/httpclient"
+	"github.com/autobrr/upbrr/internal/logging"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/redaction"
@@ -85,6 +86,7 @@ func submitPreparedUpload(
 	announceURL string,
 	artifactPath string,
 ) (api.UploadSummary, error) {
+	req.Logger = logging.FromContext(ctx, req.Logger)
 	response, responseBody, err := sendPreparedUpload(ctx, endpoint, body, contentType)
 	if err != nil {
 		return api.UploadSummary{}, err
@@ -270,6 +272,7 @@ func sendPreparedUpload(ctx context.Context, endpoint string, body []byte, conte
 		return uploadResponse{}, nil, fmt.Errorf("trackers: BHD upload request: %w", err)
 	}
 	defer resp.Body.Close()
+	commonhttp.LogUploadResponse(ctx, "BHD", resp)
 
 	responseBody, err := readUploadResponseBody(resp.Body)
 	if err != nil {

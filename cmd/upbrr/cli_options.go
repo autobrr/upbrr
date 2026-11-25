@@ -42,6 +42,9 @@ type cliOptions struct {
 	Debug                      bool
 	LogLevel                   string
 	ConsoleLogLevel            string
+	ExportLog                  bool
+	ExportLastLog              bool
+	LogExportDir               string
 	Screens                    int
 	NoSeed                     bool
 	SkipAutoTorrent            bool
@@ -231,6 +234,9 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 		"",
 		"Set console log level for this run without changing application logs (error, warn, info, debug, trace)",
 	)
+	fs.BoolVar(&opts.ExportLog, "export-log", false, "Save the retained log for each input processed in this run")
+	fs.BoolVar(&opts.ExportLastLog, "export-last-log", false, "Save the most recent retained log for one input without processing it")
+	fs.StringVar(&opts.LogExportDir, "log-export-dir", "", "Directory for exported input logs (defaults to the application logs folder)")
 	fs.StringVar(&opts.ConsoleLogLevel, "cll", "", "Set console log level for this run without changing application logs (error, warn, info, debug, trace)")
 	fs.IntVar(&opts.Screens, "screens", -1, "Number of screenshots to take")
 	fs.IntVar(&opts.Screens, "s", -1, "Number of screenshots to take")
@@ -238,8 +244,8 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.BoolVar(&opts.NoSeed, "ns", false, "Do not inject torrent into clients")
 	fs.BoolVar(&opts.SkipAutoTorrent, "skip_auto_torrent", false, "Skip initial torrent-client discovery; BASE reuse still checks clients before hashing")
 	fs.BoolVar(&opts.SkipAutoTorrent, "sat", false, "Skip initial torrent-client discovery; BASE reuse still checks clients before hashing")
-	fs.BoolVar(&opts.KeepFolder, "keep-folder", false, "Keep the supplied folder around one movie or episode video; matching SRTs are included where supported")
-	fs.BoolVar(&opts.KeepFolder, "kf", false, "Keep the supplied folder around one movie or episode video; matching SRTs are included where supported")
+	fs.BoolVar(&opts.KeepFolder, "keep-folder", false, "Keep the supplied folder around one movie or episode video, excluding sidecars")
+	fs.BoolVar(&opts.KeepFolder, "kf", false, "Keep the supplied folder around one movie or episode video, excluding sidecars")
 	fs.BoolVar(&opts.OnlyID, "onlyID", false, "Only grab tracker metadata IDs")
 	fs.BoolVar(&opts.UploadOnly, "upload-only", false, "Upload using prepared metadata cache only")
 	fs.StringVar(&opts.Category, "category", "", "Override category")

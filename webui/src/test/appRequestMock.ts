@@ -46,6 +46,7 @@ export const invokeAppRequestMock = async (
     RevokeAPIToken: [payload.id],
     GetHistoryOverview: [payload.SourcePath],
     DeleteHistoryRelease: [payload.SourcePath],
+    DeleteInputLogs: [payload.SourcePath],
     GetTrackerIcon: [payload.Domain, payload.URL],
   };
   return operation(...(argsByMethod[method] || []));

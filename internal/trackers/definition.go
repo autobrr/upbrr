@@ -509,7 +509,7 @@ type TrackerAnswerSchemaProvider interface {
 	TrackerAnswerSchema(PreparationInput) *api.TrackerQuestionnaire
 }
 
-// UploadArtifactPolicy declares tracker torrent packaging and personalization.
+// UploadArtifactPolicy declares tracker torrent personalization fields.
 type UploadArtifactPolicy struct {
 	// Source replaces the torrent info dictionary's private-tracker source field.
 	Source string
@@ -519,8 +519,6 @@ type UploadArtifactPolicy struct {
 	UseMyAnnounce bool
 	// RequireAnnounce prevents artifact preparation without an announce URL.
 	RequireAnnounce bool
-	// IncludeMatchingSubtitles keeps matching .srt sidecars in single-tracker movie folder uploads.
-	IncludeMatchingSubtitles bool
 }
 
 // UploadArtifactPolicyProvider declares tracker-owned personalization policy.

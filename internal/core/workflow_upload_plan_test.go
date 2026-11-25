@@ -23,6 +23,7 @@ import (
 	"github.com/autobrr/go-torrent/metainfo"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/torrentclient"
@@ -187,6 +188,9 @@ func TestWorkflowUploadExecutionResolveActionReprojectsResolvedPreparation(t *te
 				plan: &workflowRetainedUploadPlanFake{preparations: []trackers.RetainedTrackerPreparation{{
 					Tracker:     "BTN",
 					TorrentPath: test.torrentPath,
+					Preview: api.TrackerDryRunEntry{
+						Payload: map[string]string{"name": "Revised upload name"},
+					},
 				}}},
 				projections: map[api.TrackerID]api.TrackerReleaseProjection{
 					"BTN": {TrackerID: "BTN"},
@@ -203,14 +207,20 @@ func TestWorkflowUploadExecutionResolveActionReprojectsResolvedPreparation(t *te
 					ClientFailureCode:      api.OperationFailureDryRunClientInjection,
 				}},
 			}
+			logger := &recordingMediaLogger{}
 			resolved, err := execution.ResolveAction(
-				context.Background(),
+				logging.WithOperationLogger(t.Context(), logger),
 				"BTN",
 				api.RequiredActionResolveTrackerPreparation,
 				false,
 			)
 			if err != nil {
 				t.Fatalf("resolve tracker preparation: %v", err)
+			}
+			if !slices.ContainsFunc(logger.entries, func(entry mediaLogEntry) bool {
+				return strings.Contains(entry.message, `"name":"Revised upload name"`)
+			}) {
+				t.Fatal("resolved payload was absent from operation diagnostics")
 			}
 			if resolved.Status != test.wantStatus || resolved.Eligible != test.wantEligible ||
 				resolved.ClientInjectionStatus != api.StageStatusSkipped ||
@@ -231,6 +241,7 @@ func TestWorkflowUploadExecutionResolveActionReprojectsResolvedPreparation(t *te
 
 type workflowRetainedUploadServiceFake struct {
 	blockedPreviews map[api.TrackerID]string
+	payload         map[string]string
 	questionnaires  map[api.TrackerID]*api.TrackerQuestionnaire
 	projections     []api.TrackerReleaseProjection
 	failures        map[api.TrackerID]trackers.TrackerFailure
@@ -258,6 +269,7 @@ func (f *workflowRetainedUploadServiceFake) PrepareRetainedUploadPlan(
 			Preview: api.TrackerDryRunEntry{
 				Tracker:         string(projection.TrackerID),
 				Status:          "ready",
+				Payload:         f.payload,
 				RequiredActions: append([]api.RequiredAction(nil), f.actions[projection.TrackerID]...),
 				Questionnaire:   f.questionnaires[projection.TrackerID],
 				EditionFeatures: slices.Clone(projection.EditionFeatures),
@@ -1559,6 +1571,11 @@ func TestWorkflowLiveUploadInjectsRegisteredTorrentAfterPreparation(t *testing.T
 
 			clientService := &dryRunClientService{}
 			service := &workflowRetainedUploadServiceFake{
+				payload: map[string]string{
+					"name":       "Example reviewed upload",
+					"file_input": "synthetic-encoded-attachment",
+					"api_token":  "synthetic-private-token",
+				},
 				torrentPaths: map[api.TrackerID]string{"ALPHA": preparedPath},
 				results: []trackers.RetainedTrackerResult{{
 					Tracker: "ALPHA",
@@ -1614,8 +1631,9 @@ func TestWorkflowLiveUploadInjectsRegisteredTorrentAfterPreparation(t *testing.T
 				InputFingerprint: workflowTestFingerprint(t, "live-review-descriptions"),
 			}
 
+			logger := &recordingMediaLogger{}
 			plan, execution, err := builder.Build(
-				context.Background(),
+				logging.WithOperationLogger(t.Context(), logger),
 				projections,
 				dupes,
 				workflowDupePrivateEvidence{},
@@ -1630,6 +1648,15 @@ func TestWorkflowLiveUploadInjectsRegisteredTorrentAfterPreparation(t *testing.T
 				t.Fatalf("build live upload review: %v", err)
 			}
 			defer func() { _ = execution.Release() }()
+			if !slices.ContainsFunc(logger.entries, func(entry mediaLogEntry) bool {
+				return strings.Contains(entry.message, "dry-run tracker payload tracker=ALPHA") &&
+					strings.Contains(entry.message, `"name":"Example reviewed upload"`) &&
+					strings.Contains(entry.message, `"file_input":"[attachment]"`) &&
+					strings.Contains(entry.message, `"files":{"file_input":true}`) &&
+					!strings.Contains(entry.message, "synthetic-")
+			}) {
+				t.Fatalf("missing sanitized prepared payload in trace entries: %v", logger.entries)
+			}
 			if reviewOnly {
 				if len(plan.Trackers) != 1 || plan.Trackers[0].ClientInjectionStatus != api.StageStatusSkipped ||
 					!strings.Contains(plan.Trackers[0].ClientInjectionMessage, "deferred") || len(clientService.injections) != 0 {

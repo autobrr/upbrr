@@ -13,7 +13,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-type workflowTrackerDescriptorRegistry interface {
+type submissionFenceTrackerRegistry interface {
 	LookupDescriptor(string) (trackers.Descriptor, bool)
 }
 
@@ -21,7 +21,7 @@ type workflowTrackerDescriptorRegistry interface {
 // from a tracker selection. Started and unknown attempts remain fail-closed.
 type workflowSubmissionHistoryFilter struct {
 	fences   api.SubmissionFenceRepository
-	registry workflowTrackerDescriptorRegistry
+	registry submissionFenceTrackerRegistry
 }
 
 func (f workflowSubmissionHistoryFilter) FilterConfirmedSubmissions(

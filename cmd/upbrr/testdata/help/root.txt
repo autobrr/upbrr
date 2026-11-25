@@ -291,7 +291,7 @@ Client and Torrent:
   -skip_auto_torrent, --skip_auto_torrent, -sat
       Skip initial torrent-client discovery; BASE reuse still checks clients before hashing
   -keep-folder, --keep-folder, -kf
-      Keep the supplied folder around one movie or episode video; matching SRTs are included where supported
+      Keep the supplied folder around one movie or episode video, excluding sidecars
   -onlyID, --onlyID
       Only grab tracker metadata IDs
   -infohash, --infohash string
@@ -306,6 +306,10 @@ Client and Torrent:
 Other:
   -3d, --3d
       Set effective 3D; --3d=false clears, reset-input release_name.three_d restores Auto
+  -export-last-log, --export-last-log
+      Save the most recent retained log for one input without processing it
+  -export-log, --export-log
+      Save the retained log for each input processed in this run
   -hdr-active-area, --hdr-active-area
       Measure decoded picture borders against Dolby Vision active areas
   -hdr-all-audio-tracks, --hdr-all-audio-tracks
@@ -342,6 +346,8 @@ Other:
       Explicit comma-separated unsuccessful decoded modes to measure again
   -hdr-scene-sync, --hdr-scene-sync
       Measure decoded scene synchronization against Dolby Vision markers
+  -log-export-dir, --log-export-dir string
+      Directory for exported input logs (defaults to the application logs folder)
   -ui, --ui string
       Presentation: plain (default), auto or tui (uploads, audio and local auth forms; static commands keep ordinary output)
   -ui-keep-open, --ui-keep-open

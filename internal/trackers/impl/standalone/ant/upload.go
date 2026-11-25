@@ -22,6 +22,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/autobrr/upbrr/internal/httpclient"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
@@ -85,6 +86,7 @@ func submitPreparedUpload(
 	announceURL string,
 	artifactPath string,
 ) (api.UploadSummary, error) {
+	logger = logging.FromContext(ctx, logger)
 	client := httpclient.New(httpclient.DefaultTimeout)
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 || req.URL.Scheme != "https" || req.URL.Host != "anthelion.me" {

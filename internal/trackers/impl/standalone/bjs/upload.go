@@ -17,6 +17,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/httpclient"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -91,6 +92,7 @@ func submitPreparedUpload(
 	announceURL string,
 	artifactPath string,
 ) (api.UploadSummary, error) {
+	req.Logger = logging.FromContext(ctx, req.Logger)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, bytes.NewReader(body))
 	if err != nil {
 		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("trackers: BJS request build: %w", err))
@@ -104,6 +106,7 @@ func submitPreparedUpload(
 		return api.UploadSummary{}, fmt.Errorf("trackers: BJS upload request: %w", err)
 	}
 	defer resp.Body.Close()
+	commonhttp.LogUploadResponse(ctx, "BJS", resp)
 	finalURL := ""
 	if resp.Request != nil && resp.Request.URL != nil {
 		finalURL = resp.Request.URL.String()

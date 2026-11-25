@@ -457,6 +457,7 @@ func (s *Service) injectQbit(
 	if verification != nil {
 		// Reuse installed state before creating any staging for a new add.
 		if installed, _ := verification.installed(qbitCtx, qbit); installed {
+			logger.Debugf("clients: qbit injection verification client=%s tracker=%s state=reused", name, logTracker(torrent.Tracker))
 			return nil
 		}
 		cancel()
@@ -481,12 +482,11 @@ func (s *Service) injectQbit(
 	if staging.Linked {
 		options.SavePath = staging.SavePath
 		logger.Debugf(
-			"clients: qbit link staging selected client=%s tracker=%s files=%d layout_validated=%t save_path=%s",
+			"clients: qbit link staging selected client=%s tracker=%s files=%d layout_validated=%t save_path=[REDACTED]",
 			name,
 			strings.TrimSpace(torrent.Tracker),
 			staging.FileCount,
 			staging.LayoutValidated,
-			staging.SavePath,
 		)
 	} else {
 		// Without link staging, save beside the prepared source unless a
@@ -496,7 +496,7 @@ func (s *Service) injectQbit(
 			return fmt.Errorf("clients: %s resolve qBittorrent save path: %w", name, err)
 		}
 		options.SavePath = savePath
-		logger.Debugf("clients: qbit save path ready client=%s mapped=%t save_path=%s", name, mapped, savePath)
+		logger.Debugf("clients: qbit save path ready client=%s mapped=%t save_path=[REDACTED]", name, mapped)
 	}
 	if category := strings.TrimSpace(client.QbitCrossCategory); torrent.CrossSeed && category != "" {
 		options.Category = category
@@ -523,11 +523,18 @@ func (s *Service) injectQbit(
 
 	if torrentPath := strings.TrimSpace(torrent.Path); torrentPath != "" {
 		logger.Debugf("clients: adding torrent file to qbit client %s for %s", name, meta.SourcePath)
-		_, addErr := qbit.AddTorrentFromFileCtx(qbitCtx, torrentPath, addOptions)
+		response, addErr := qbit.AddTorrentFromFileCtx(qbitCtx, torrentPath, addOptions)
+		logQbitAddResponse(logger, name, torrent.Tracker, response, safeClientError(addErr, host))
 		if verification != nil {
 			// Neither an HTTP success nor a duplicate-add failure proves which
 			// trackers the client retained. Never resubmit while verifying.
-			return verification.waitInstalled(qbitCtx, qbit)
+			err := verification.waitInstalled(qbitCtx, qbit)
+			state := "verified"
+			if err != nil {
+				state = "unconfirmed"
+			}
+			logger.Debugf("clients: qbit injection verification client=%s tracker=%s state=%s", name, logTracker(torrent.Tracker), state)
+			return err
 		}
 		if addErr != nil {
 			s.cleanupFailedLinkStaging(ctx, name, torrent.Tracker, staging)
@@ -546,7 +553,9 @@ func (s *Service) injectQbit(
 
 	if torrentURL := strings.TrimSpace(torrent.URL); torrentURL != "" {
 		logger.Debugf("clients: adding tracker torrent URL to qbit client %s for %s", name, meta.SourcePath)
-		if _, err := qbit.AddTorrentFromUrlCtx(qbitCtx, torrentURL, addOptions); err != nil {
+		response, err := qbit.AddTorrentFromUrlCtx(qbitCtx, torrentURL, addOptions)
+		logQbitAddResponse(logger, name, torrent.Tracker, response, safeClientError(err, host))
+		if err != nil {
 			s.cleanupFailedLinkStaging(ctx, name, torrent.Tracker, staging)
 			return fmt.Errorf("clients: %s qbit add torrent URL: %w", name, err)
 		}
@@ -561,6 +570,16 @@ func (s *Service) injectQbit(
 	}
 
 	return internalerrors.ErrInvalidInput
+}
+
+func logQbitAddResponse(logger api.Logger, name, tracker string, response *qbittorrent.TorrentAddResponse, err error) {
+	if err != nil {
+		logger.Debugf("clients: qbit add response client=%s tracker=%s error=%q", name, logTracker(tracker), logging.SanitizeMessage(err.Error()))
+	}
+	if response != nil {
+		logger.Debugf("clients: qbit add response client=%s tracker=%s success_count=%d pending_count=%d failure_count=%d",
+			name, logTracker(tracker), response.SuccessCount, response.PendingCount, response.FailureCount)
+	}
 }
 
 // qbitAutomaticManagementEnabled reports whether the original local save path

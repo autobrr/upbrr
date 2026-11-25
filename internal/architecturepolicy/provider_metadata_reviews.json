@@ -336,8 +336,8 @@
     "sha256": "0da7f1b7bd8fe8d9d989c7ab3450a139d2d884436e92f0e010985a93aa6af2d6"
   },
   "internal/trackers/impl/standalone/asc/profile.go:Profile": {
-    "reason": "The migrated origin, local screenshots, and subtitle policy leave release-name and metadata selectors unchanged.",
-    "sha256": "2bd622f16ad24bc9ef0837261bc0ebb4cc3a37315aa64617e40760db8f0bc1cb"
+    "reason": "The migrated origin and local screenshot policy preserve release-name and metadata precedence.",
+    "sha256": "5a6a95f69364dbffaf531bf46283fcb00aedd49f1688cc5a6f5435baf7355c33"
   },
   "internal/trackers/impl/standalone/asc/questionnaire.go:buildQuestionnaire": {
     "reason": "Retains answered controls and displays the same resolved values as upload. Nonempty questionnaire overview/genre answers precede localized and base provider defaults; manual genres still bypass localized genres, and blank answers preserve existing fallbacks.",
@@ -973,7 +973,7 @@
   },
   "internal/trackers/impl/standalone/hds/upload.go:prepareUpload": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "b36917b86506381dcc0c47d2da9d1eb7dc97b482fc4f44c572ecca8c1b2a85e7"
+    "sha256": "2b9cdf8105632a3f3db8b2b52a454998c301fc7b92be878b5f32a368b8b87ca6"
   },
   "internal/trackers/impl/standalone/hds/upload.go:prepareUploadState": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -1009,7 +1009,7 @@
   },
   "internal/trackers/impl/standalone/hdt/upload.go:prepareUpload": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "69df54c1a53140bfd5045d3fd7241b78f4aa551f141d3b5023bdcab27d3a3186"
+    "sha256": "51385809f3e0f8ed1c9520ba1668f68b41eb9eab4191abd5d1c6472a1262d9ab"
   },
   "internal/trackers/impl/standalone/hdt/upload.go:prepareUploadState": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -1049,7 +1049,7 @@
   },
   "internal/trackers/impl/standalone/is/upload.go:prepareUpload": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "ac969ac390ff5f040f6a857aa6d7424f2ad08903313f5b080478ffa628521f4d"
+    "sha256": "e3fce82066a613d83ea79131c8bf4c3d64e4d405bde4e4b1a6a7115a59eb39d6"
   },
   "internal/trackers/impl/standalone/is/upload.go:prepareUploadState": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",

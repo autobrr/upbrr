@@ -8,7 +8,7 @@ import "testing"
 func TestRedactValueURLPatterns(t *testing.T) {
 	t.Parallel()
 
-	input := "https://tracker.example/0123456789abcdef/announce?passkey=secret&token=abc&info_hash=deadbeef&authkey=private&auth-key=private2&apiKey=api-secret&api-token=api-token-secret&rss_key=rss-secret&torrent-pass=torrent-secret&AntiCsrfToken=csrf-secret&uid=123"
+	input := "https://tracker.example/0123456789abcdef/announce?passkey=secret[private-bracket-value]&token=[123456789]&info_hash=deadbeef&authkey=private&auth-key=private2&apiKey=api-secret&api-token=api-token-secret&rss_key=rss-secret&torrent-pass=torrent-secret&AntiCsrfToken=csrf-secret&uid=123"
 	output := RedactValue(input, nil)
 
 	if output == input {
@@ -17,13 +17,32 @@ func TestRedactValueURLPatterns(t *testing.T) {
 	if contains(output, "0123456789abcdef") {
 		t.Fatal("expected passkey redacted")
 	}
-	for _, secret := range []string{"secret", "token=abc", "authkey=private", "auth-key=private2", "api-secret", "api-token-secret", "rss-secret", "torrent-secret", "csrf-secret", "uid=123"} {
+	for _, secret := range []string{"secret", "private-bracket-value", "123456789", "authkey=private", "auth-key=private2", "api-secret", "api-token-secret", "rss-secret", "torrent-secret", "csrf-secret", "uid=123"} {
 		if contains(output, secret) {
 			t.Fatal("expected sensitive query param redacted")
 		}
 	}
 	if !contains(output, "apiKey=[REDACTED]") || !contains(output, "auth-key=[REDACTED]") || !contains(output, "torrent-pass=[REDACTED]") {
 		t.Fatal("expected query params redacted")
+	}
+}
+
+func TestRedactValuePreservesBBCodeAroundUnicodeURLs(t *testing.T) {
+	t.Parallel()
+	for _, tags := range [][2]string{{"[URL]", "[/URL]"}, {"[img=350]", "[/img]"}, {"[img width=350]", "[/IMG]"}} {
+		input := tags[0] + "https://images.invalid/ȺȺȺȺȺȺ[/arbitrary]?token=synthetic-token" + tags[1]
+		want := tags[0] + "https://images.invalid/%C8%BA%C8%BA%C8%BA%C8%BA%C8%BA%C8%BA%5B/arbitrary%5D?token=[REDACTED]" + tags[1]
+		if output := RedactValue(input, nil); output != want {
+			t.Errorf("redaction changed the closing tag or URL for %s", tags[0])
+		}
+	}
+}
+
+func TestRedactValueMasksStructuredCredentialValues(t *testing.T) {
+	t.Parallel()
+	input := "credentials api_\x1b[0m" + `key=[123456789] Authorization: Bearer {"value":"synthetic-token"} state=ready`
+	if output := RedactValue(input, nil); output != `credentials api_key=[REDACTED] Authorization: Bearer [REDACTED] state=ready` {
+		t.Fatal("structured credential was not fully redacted")
 	}
 }
 
@@ -189,13 +208,33 @@ func TestRedactValuePlainKeyValuePairs(t *testing.T) {
 func TestRedactValueDelimitedAuthAndCookieTails(t *testing.T) {
 	t.Parallel()
 
-	input := `Cookie: uid=first-secret; session=second-secret, Authorization=Bearer alpha-secret,beta-secret token=third-secret`
-	output := RedactValue(input, nil)
-
-	for _, secret := range []string{"first-secret", "second-secret", "alpha-secret", "beta-secret", "third-secret"} {
-		if contains(output, secret) {
-			t.Fatal("expected delimited auth and cookie tails redacted")
+	for _, input := range []string{
+		`Cookie: uid=first-secret; session=second-secret, Authorization=Bearer alpha-secret,beta-secret token=third-secret`,
+		"Cookie: uid=first-secret; preferences=[1,2]; other=second-secret\nresponse: {\"status\":\"kept\"}",
+		"Cookie: [REDACTED][1]; other=second-secret\nresponse: {\"status\":\"kept\"}",
+	} {
+		output := RedactValue(input, nil)
+		for _, secret := range []string{"first-secret", "second-secret", "alpha-secret", "beta-secret", "third-secret"} {
+			if contains(output, secret) {
+				t.Fatal("expected delimited auth and cookie tails redacted")
+			}
 		}
+		if contains(input, "kept") && !contains(output, `response: {"status":"kept"}`) {
+			t.Fatal("expected separate diagnostic JSON to survive")
+		}
+	}
+}
+
+func TestRedactValueEmbeddedJSONKeys(t *testing.T) {
+	t.Parallel()
+
+	input := `diagnostic {"0123456789abcdef0123456789abcdef01234567":{"state":"kept"},"https://tracker.invalid/syntheticpasskey/announce":true}`
+	output := RedactValue(input, nil)
+	if contains(output, "0123456789abcdef0123456789abcdef01234567") || contains(output, "syntheticpasskey") {
+		t.Fatal("expected private JSON map keys redacted")
+	}
+	if !contains(output, `"[REDACTED]":{"state":"kept"}`) {
+		t.Fatal("expected the safe JSON value to survive")
 	}
 }
 

@@ -3655,6 +3655,10 @@ func (r *SQLiteRepository) DeleteUploadedImage(
 }
 
 func (r *SQLiteRepository) ListStoredReleasePaths(ctx context.Context) ([]string, error) {
+	return r.listStoredReleasePaths(ctx, true)
+}
+
+func (r *SQLiteRepository) listStoredReleasePaths(ctx context.Context, includeLogOnly bool) ([]string, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("db: repository not initialized")
 	}
@@ -3705,10 +3709,12 @@ func (r *SQLiteRepository) ListStoredReleasePaths(ctx context.Context) ([]string
 			SELECT source_path FROM media_reusable_commits
 			UNION
 			SELECT source_path FROM media_reusable_tombstones
+			UNION
+			SELECT source_path FROM input_log_attempts WHERE ?
 		)
 		WHERE TRIM(source_path) <> ''
 		ORDER BY source_path ASC
-	`)
+	`, includeLogOnly)
 	if err != nil {
 		return nil, fmt.Errorf("db list stored release paths: %w", err)
 	}
@@ -3974,6 +3980,16 @@ func matchingStoredReleaseWorkflowStates(
 // path, including matching workflow state and retired UI-state rows. It does
 // not remove local files or remote uploads.
 func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) error {
+	return r.purgeContentData(ctx, path, true)
+}
+
+// PurgeOrphanContentData removes orphaned release state while retaining input
+// log associations, which can exist without any stored release metadata.
+func (r *SQLiteRepository) PurgeOrphanContentData(ctx context.Context, path string) error {
+	return r.purgeContentData(ctx, path, false)
+}
+
+func (r *SQLiteRepository) purgeContentData(ctx context.Context, path string, deleteInputLogs bool) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
 	}
@@ -4022,6 +4038,20 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 			return err
 		}
 		totalRemoved = 0
+		if deleteInputLogs {
+			logPaths, err := inputLogSourceAliases(ctx, tx, trimmedPath)
+			if err != nil {
+				return err
+			}
+			for _, logPath := range logPaths {
+				result, err := tx.ExecContext(ctx, `DELETE FROM input_log_attempts WHERE source_path = ?`, logPath)
+				if err != nil {
+					return fmt.Errorf("db purge input logs: %w", err)
+				}
+				removed, _ := result.RowsAffected()
+				totalRemoved += removed
+			}
+		}
 		workflowStates, err := matchingStoredReleaseWorkflowStates(ctx, tx, trimmedPath)
 		if err != nil {
 			return err
@@ -4132,6 +4162,12 @@ func rejectHistoryPurgeWorkflowActivity(
 // rejectActiveHistoryPurge prevents direct repository callers from deleting
 // history that is still attached to the active input.
 func rejectActiveHistoryPurge(ctx context.Context, query workflowStateQueryer, path string) error {
+	return rejectActiveHistoryDeletion(ctx, query, "db purge content", true, func(activePath string) bool {
+		return strings.TrimSpace(activePath) != "" && pathutil.SamePath(activePath, path)
+	})
+}
+
+func rejectActiveHistoryDeletion(ctx context.Context, query workflowStateQueryer, operation string, inspectWork bool, matches func(string) bool) error {
 	slot, err := loadActiveInput(ctx, query)
 	if err != nil {
 		return err
@@ -4147,33 +4183,29 @@ func rejectActiveHistoryPurge(ctx context.Context, query workflowStateQueryer, p
 			if errors.Is(err, sql.ErrNoRows) {
 				return api.ErrActiveInputBusy
 			}
-			return fmt.Errorf("db purge content: active input path: %w", err)
+			return fmt.Errorf("%s: active input path: %w", operation, err)
 		}
 		activePaths = append(activePaths, canonicalPath)
 	}
-	active := false
-	for _, activePath := range activePaths {
-		if strings.TrimSpace(activePath) != "" && pathutil.SamePath(activePath, path) {
-			active = true
-			break
-		}
-	}
-	if !active {
+	if !slices.ContainsFunc(activePaths, matches) {
 		return nil
 	}
 	if slot.WorkflowID != "" {
 		var unresolved int
 		if err := query.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM release_workflow_effects
 			WHERE owner_id = ? AND workflow_id = ? AND status IN ('started', 'unknown'))`, slot.OwnerID, slot.WorkflowID).Scan(&unresolved); err != nil {
-			return fmt.Errorf("db purge content: inspect active input effects: %w", err)
+			return fmt.Errorf("%s: inspect active input effects: %w", operation, err)
 		}
 		if unresolved != 0 {
 			return api.ErrReleaseWorkflowEffectOutcomeUnknown
 		}
+		if !inspectWork {
+			return api.ErrActiveInputBusy
+		}
 		var running int
 		if err := query.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM release_workflow_operations
 			WHERE owner_id = ? AND workflow_id = ? AND status IN ('queued', 'running'))`, slot.OwnerID, slot.WorkflowID).Scan(&running); err != nil {
-			return fmt.Errorf("db purge content: inspect active input work: %w", err)
+			return fmt.Errorf("%s: inspect active input work: %w", operation, err)
 		}
 		if running != 0 {
 			return api.ErrActiveInputBusy
