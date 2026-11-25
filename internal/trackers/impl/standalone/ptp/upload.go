@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/providerid"
@@ -101,6 +102,7 @@ func submitPreparedUpload(
 	contentType string,
 	trackerTorrentPath string,
 ) (api.UploadSummary, error) {
+	req.Logger = logging.FromContext(ctx, req.Logger)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, state.uploadURL, bytes.NewReader(body))
 	if err != nil {
 		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("trackers: PTP request build: %w", err))
@@ -113,6 +115,7 @@ func submitPreparedUpload(
 		return api.UploadSummary{}, fmt.Errorf("trackers: PTP upload request: %w", err)
 	}
 	defer resp.Body.Close()
+	commonhttp.LogUploadResponse(ctx, "PTP", resp)
 
 	finalURL := ""
 	if resp.Request != nil && resp.Request.URL != nil {
@@ -230,7 +233,10 @@ func prepareUploadStateAt(ctx context.Context, req trackers.PreparationInput, dr
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description := buildDescription(req.Meta, req.TrackerConfig, req.Runtime.DescriptionConfig(), assets)
+	description, err := buildDescription(req.Meta, req.TrackerConfig, req.Runtime.DescriptionConfig(), assets)
+	if err != nil {
+		return uploadState{}, err
+	}
 	groupID, err := lookupGroupID(ctx, baseURL, req.TrackerConfig, req.Meta)
 	if err != nil {
 		return uploadState{}, err

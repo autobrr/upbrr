@@ -46,19 +46,11 @@ See the [reverse proxy guide](../configuration/web-server.md#path-prefix-proxy).
 
 Startup retains completed operation checkpoints and marks unfinished operations interrupted. It can wait for prior-process input and work leases to expire before cleanup. It does not automatically repeat the interrupted command. Input starts empty, even when the prior workflow retained HDR analysis or was waiting for feedback. Explicitly reopen the source from **History** or Input before continuing. Startup does not require the old source to be available; the explicit open checks availability.
 
-For an interrupted upload or client injection, check the tracker and torrent client before retrying. Startup retains unresolved external attempts as uncertain and keeps their retry blocks; an interrupted operation is not proof that the remote action failed. Confirmed successful tracker submissions remain recorded and must not be submitted again.
+Startup recovers interrupted external effects automatically, even if configuration changed while upbrr was stopped. Reopening an affected input also runs recovery. upbrr preserves confirmed successes and their repeat-submission protection. It marks interrupted attempts without a saved success as not completed and logs the workflow ID and effect. Recovery does not submit an upload, host images, or inject a torrent.
 
-A tracker response that explicitly rejects an upload is a failed submission, rather than an unknown outcome. Correct the reported problem before preparing and reviewing a new attempt. An accepted upload remains accepted if retrieving its torrent or injecting it into the client fails. If the local submission receipt could not be saved, the result reports that bookkeeping failure separately and keeps retries blocked. Do not confirm that an accepted submission did not complete to bypass this block.
+A remote service may have accepted an action before upbrr recorded the result. Recovery can clear the retry block for an interrupted attempt without proving it failed remotely. Check the tracker, image host, or client before retrying when possible. A definite tracker rejection is a failed submission: correct the reported problem before preparing another attempt. A confirmed upload remains accepted if retrieving its torrent or injecting it into the client fails.
 
-During legacy recovery, retained proof for the exact accepted attempt settles that effect so it no longer keeps the shared input slot occupied. Other uncertain attempts still require reconciliation, and the accepted upload's retry blocks remain in place.
-
-An upload blocked by an older uncertain attempt offers confirmation only when the exact receipt belongs to the current workflow. A fence owned by another workflow remains protected and cannot be confirmed from the new workflow.
-
-An unresolved tracker submission does not prevent independent CLI queue items from running when its durable submission protection remains available. Legacy attempts without that protection still require reconciliation before new inputs. The affected source remains protected until reconciliation; resuming the queue selects its other pending items. Missing or contradictory retained source information still requires manual recovery.
-
-If configuration also changed while an external outcome is uncertain, startup keeps the existing activation blocked rather than clearing the outcome. Resolve the uncertainty before activating the changed configuration.
-
-If **Legacy workflow recovery** still appears, inspect each listed remote outcome. Choose **Confirmed not completed; allow a fresh exact attempt** only after confirming it did not complete. Do not delete History simply to bypass an uncertain outcome: deletion also removes local repeat-submission protection.
+Queue recovery does not automatically select previously interrupted items for retry. If automatic recovery reports a local failure, keep the database and use the affected workflow ID to locate its log entries. Do not delete History to bypass an error: doing so removes local repeat-submission protection.
 
 ## FFmpeg is not found
 
@@ -99,7 +91,7 @@ See [HDR analysis](../workflow/hdr-analysis.md) for mode selection, borders, ref
 
 ## A Blu-ray scan appears stalled
 
-Enable `debug` logging to see BDInfo progress for full-disc and selected-playlist scans. In the CLI, use `--log-level debug`; in the Web UI, set the runtime level on [Logging](../web-ui/logging.md). The `--debug` upload option controls workflow behavior and is separate from log verbosity.
+BDInfo emits progress for full-disc and selected-playlist scans at `debug` level. In the CLI, use `--log-level debug` to see live progress. The `--debug` upload option controls workflow behavior separately. In the Web UI, open [Logging](../web-ui/logging.md), set **Runtime log level** to **DEBUG** or **TRACE**, select **Save**, and enable the **DEBUG** display filter. To inspect retained progress from a completed input, open **History → Logs**. Input logs capture through `trace`. File entries can expire as shared log files rotate. If an entry is still in memory, History can include it in the download until the app exits or discards it. When file logging is off, only recent entries from the current session remain.
 
 BDInfo logs each crossed 5% threshold through 95%, with the scan stage, source path, and selected playlist (empty for a full-disc scan). Percentages restart for each stage and scan; stream scanning uses processed bytes, while other measured stages use completed item counts. These are stage percentages, not an estimate of total elapsed time. A jump can produce several threshold entries at once, but repeated callbacks within the same interval do not repeat them. The final `stage=done percent=100%` entry appears only after processing and report persistence succeed. Failed or canceled scans, including reports with recorded scanner errors, do not emit it. Progress logging also works when no CLI or Web UI progress display is attached.
 

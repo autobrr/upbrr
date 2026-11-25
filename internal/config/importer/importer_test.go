@@ -867,3 +867,18 @@ func withRemovedTrackerSecrets(t *testing.T, filename string, payload []byte) []
 	}
 	return result
 }
+
+func TestImportFromContentIgnoresRetiredPackAndEmbySettings(t *testing.T) {
+ for _, test := range []struct{ file, content string }{
+  {"config.yaml", "description_settings:\n  multiScreens: 2\n  pack_thumb_size: 240\n  charLimit: 100\n  fileLimit: 3\n  processLimit: 5\narr_integration:\n  emby_dir: old-movie\n  emby_tv_dir: old-tv\nscreenshot_handling:\n  process_limit: 7\n"},
+  {"config.json", `{"Description":{"MultiScreens":2,"PackThumbSize":240,"CharLimit":100,"FileLimit":3,"ProcessLimit":5},"ArrIntegration":{"EmbyDir":"old-movie","EmbyTVDir":"old-tv"},"ScreenshotHandling":{"ProcessLimit":7}}`},
+ } {
+  t.Run(test.file, func(t *testing.T) {
+   cfg, _, err := ImportFromContent(test.file, []byte(test.content))
+   if err != nil { t.Fatal(err) }
+   if got := cfg.ScreenshotHandling.ProcessLimit; got != 7 {
+    t.Fatalf("active screenshot process limit = %d, want 7", got)
+   }
+  })
+ }
+}

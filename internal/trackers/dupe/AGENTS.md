@@ -13,7 +13,10 @@ Scoped rules for the shared duplicate-search coordinator and evaluator. Root, `i
   - different normalized media type or class. Full disc, remux, encode, WEB, and broadcast are distinct. Remux versus non-remux is bidirectional. DVD and BDMV must not block each other when both types are authoritative;
   - different evidenced HDR slot, edition/cut, region, or 2D/3D presentation.
 - A distinct candidate resolves to `coexists`: it must not block, count as actionable, or appear in the user-facing potential-duplicate list. Sanitized diagnostic/fingerprint evidence may retain the `coexists` evaluation.
-- Missing or partial facts never prove equality or coexistence except for configured group restrictions: when the structured group is absent, one unambiguous normalized release-name suffix may prove different-group ownership. Structured/title conflicts and every other partial fact remain conservative. Use `insufficient_evidence`; contradictory facts require `manual_review`. Unresolved overlapping candidates fall back to actionable `same_slot`.
+- Missing or partial facts never prove equality or coexistence, with two narrow exceptions:
+  - Under configured group restrictions, one unambiguous normalized release-name suffix may establish different-group ownership when the structured group is absent.
+  - For general 2160p HDR coexistence only, an explicit, noncontradictory candidate title token may establish candidate resolution. It does not complete the candidate's HDR evidence.
+- All other partial facts remain conservative. Use `insufficient_evidence`; contradictory facts require `manual_review`. Unresolved overlapping candidates fall back to actionable `same_slot`.
 - After authoritative same-work and same-season binding, the default policy prefers a season pack over individual episodes. An existing pack blocks a proposed episode; individual episodes are irrelevant to a proposed pack. A tracker-selected `PackContainmentRequiresReview` policy instead requires explicit review of non-disc pack/episode comparisons when matching technical/language content is unverified. Its acknowledgement permits ordinary upload approval without establishing a match or trump qualification; independent exact/in-client blocks and established coexistence remain authoritative.
 
 ## Evidence
@@ -26,11 +29,11 @@ Scoped rules for the shared duplicate-search coordinator and evaluator. Root, `i
 ## HDR
 
 - Do not collapse HDR to one boolean. Preserve `sdr`, `dolby_vision`, `hdr10`, `hdr10_plus`, `hlg`, `pq10`, `hdr_vivid`, and `wide_color_gamut` independently, including Dolby Vision profile and fallback formats.
-- At 2160p, general policy gives SDR and DV-only distinct slots. Plain HDR and DV+HDR share one compatibility slot: DV+HDR trumps plain HDR in either direction.
-- Apply general HDR coexistence or trumping only when both releases have complete, authoritative 2160p resolution and HDR evidence.
+- At 2160p, general policy gives SDR, DV-only, HDR without DV, and DV+HDR distinct slots. Releases in different slots can coexist. Directional HDR trumping requires an explicit tracker policy.
+- General HDR coexistence requires complete HDR evidence on both sides and an authoritative 2160p target. The candidate may establish its 2160p resolution with an explicit, noncontradictory title token. Title-only HDR markers remain partial evidence.
 - At 1080p, general policy ignores HDR type; SDR, HDR, DV, and DV+HDR do not form distinct slots unless specific tracker rule/slot evidence allows it.
 - General policy creates no HDR-based coexistence slots at other resolutions and does not split generic HDR formats or Dolby Vision profiles into additional slots.
-- Finer distinctions such as HDR10 versus HDR10+, HLG, PQ10, HDR Vivid, WCG, Dolby Vision profiles, or directional compatibility beyond DV+HDR trumping plain HDR require specific tracker rule/slot evidence.
+- Finer distinctions such as HDR10 versus HDR10+, HLG, PQ10, HDR Vivid, WCG, and Dolby Vision profiles require specific tracker rule or slot evidence.
 - Missing, partial, or contradictory HDR evidence must fail closed according to `HDRPartialMode`; never manufacture SDR from an absent field unless the adapter contract proves absence is authoritative.
 
 ## Tracker Overlays

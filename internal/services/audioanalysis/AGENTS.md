@@ -1,8 +1,8 @@
 # Audio-analysis processing fidelity
 
-Scope: `internal/services/audioanalysis/`. Follow the repository and `internal/AGENTS.md` rules too. This is a reference for contributors changing waveform or spectrogram processing, not a PNG styling specification.
+Scope: `internal/services/audioanalysis/`. Follow the repository and `internal/AGENTS.md` rules too. This is a reference for contributors changing waveform, spectrogram, or amplitude statistics processing.
 
-Keep generated images and decode intermediates under the caller's owned release output directory; do not introduce a separate analysis root under application `tmp`.
+Managed workflows keep images, amplitude reports, and decode intermediates under the owning release directory. Standalone CLI analysis writes to the caller's explicit `--audio-output` directory.
 
 ## Spectrogram signal contract
 
@@ -26,6 +26,10 @@ Why these are fixed: FFT length sets frequency resolution; window shape and hop 
 Follow Audacity's default linear-amplitude peak envelope: preserve the signed minimum and maximum sample in each channel's time slice. RMS is off; clipping visualization is enabled here by request and marks a slice containing a sample at or beyond full scale. Do not normalize, average peaks, merge channels, or use image resizing to conceal altered extrema.
 
 The current bounded dyadic waveform buckets preserve peak values but can spread a peak into an adjacent output pixel when a bucket crosses the final pixel boundary. Treat exact Audacity per-pixel timing as an outstanding fidelity check, not a proven property of that compaction scheme.
+
+## Amplitude statistics
+
+The `stats` variant produces a retained text report from the selected track's decoded PCM. Preserve its per-channel statistics and aggregate calculations. Use `UPBRR_AUDIO_STATS_SOX_PATH` to enable the SoX parity test when changing those calculations.
 
 ## Change gate
 

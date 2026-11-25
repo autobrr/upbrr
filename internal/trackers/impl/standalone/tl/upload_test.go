@@ -12,6 +12,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -80,5 +81,21 @@ func TestAPIPayloadUsesSelectedProviderIdentity(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestUploadPreviewIncludesInMemoryNFO(t *testing.T) {
+	t.Parallel()
+	state := uploadState{files: []commonhttp.FileField{
+		{FieldName: "torrent", Path: "example.torrent"},
+		{
+			FieldName: "nfo",
+			FileName:  "description.txt",
+			Content:   []byte("Example description"),
+		},
+	}}
+	files := buildUploadPreview(state).Files
+	if len(files) != 2 || files[1].Field != "nfo" || !files[1].Present || files[1].Path != "" {
+		t.Fatalf("web upload NFO missing from preview: %#v", files)
 	}
 }

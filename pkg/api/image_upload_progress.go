@@ -23,7 +23,7 @@ const (
 // ImageUploadProgressTarget identifies one host/scope attempt and its immutable
 // presentation metadata. Total includes reused images as well as network uploads.
 type ImageUploadProgressTarget struct {
-	// AttemptID is stable for the host/scope pair within one command.
+	// AttemptID is unique and stable for this attempt within one command.
 	AttemptID string
 	// Host is the normalized configured image-host name.
 	Host string
@@ -44,7 +44,7 @@ type ImageUploadProgressTarget struct {
 type ImageUploadProgressUpdate struct {
 	// CorrelationID binds the update to one frontend upload command.
 	CorrelationID string `json:"correlationID"`
-	// AttemptID identifies the host/scope row updated by this snapshot.
+	// AttemptID identifies the attempt row updated by this snapshot.
 	AttemptID string `json:"attemptID"`
 	// Host is the normalized configured image-host name.
 	Host string `json:"host"`

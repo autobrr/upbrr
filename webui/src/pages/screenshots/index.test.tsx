@@ -216,6 +216,23 @@ describe("ScreenshotsPage", () => {
     expect(screen.getByRole("button", { name: "Generate screenshots" })).toBeDisabled();
   });
 
+  it("can generate automatic pack screenshots without manual frame choices", () => {
+    const base = facet();
+    const screenshots: ScreenshotsFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        plan: { ...plan(), SuggestedSelections: [], AutomaticPackScreenshots: true },
+        selections: [],
+      },
+    };
+    render(
+      <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Generate screenshots" }));
+    expect(screenshots.generate).toHaveBeenCalledWith("final");
+  });
+
   it("labels imported images alongside new captures and keeps their normal selection and deletion controls", () => {
     const base = facet();
     const screenshots: ScreenshotsFacet = {

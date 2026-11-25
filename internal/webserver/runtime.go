@@ -123,7 +123,7 @@ func buildRuntimeGeneration(ctx context.Context, cfg config.Config, repo *db.SQL
 	if err != nil {
 		return RuntimeGeneration{}, fmt.Errorf("webserver: fingerprint runtime config: %w", err)
 	}
-	return buildRuntimeGenerationWithCoordinator(ctx, cfg, repo, nil, nil, 0, fingerprint)
+	return buildRuntimeGenerationWithCoordinator(ctx, cfg, repo, nil, nil, 0, fingerprint, nil)
 }
 
 func buildRuntimeGenerationWithCoordinator(
@@ -134,13 +134,14 @@ func buildRuntimeGenerationWithCoordinator(
 	coordinator *releaseworkflow.Coordinator,
 	configGeneration uint64,
 	configFingerprint api.WorkflowFingerprint,
+	inputLogStore *logging.InputLogStore,
 	maintenance ...*core.RuntimeMaintenance,
 ) (RuntimeGeneration, error) {
 	if ctx == nil {
 		return RuntimeGeneration{}, errors.New("webserver: context is required")
 	}
 
-	logger, err := logging.New(cfg.Logging, cfg.MainSettings.DBPath)
+	logger, err := logging.NewWithInputLogStore(cfg.Logging, cfg.MainSettings.DBPath, inputLogStore)
 	if err != nil {
 		return RuntimeGeneration{}, fmt.Errorf("web: %w", err)
 	}

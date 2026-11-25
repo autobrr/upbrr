@@ -1022,11 +1022,18 @@ func TestCollectDiscEvidenceNamespacesDuplicatePlaylists(t *testing.T) {
 		t.Fatalf("resolve layout: %v", err)
 	}
 	discoverBDMVPlaylists = func(_ context.Context, _ string) ([]filesystem.PlaylistInfo, error) {
-		return []filesystem.PlaylistInfo{{
-			File:     "00001.MPLS",
-			Duration: 5400,
-			Score:    100,
-		}}, nil
+		return []filesystem.PlaylistInfo{
+			{
+File: "00001.MPLS",
+ Duration: 5400,
+ Score: 100,
+},
+			{
+File: "00002.MPLS",
+ Duration: 5300,
+ Score: 90,
+},
+		}, nil
 	}
 	parseBDMVPlaylist = func(_ string) (float64, []filesystem.PlaylistItem, error) {
 		return 5400, []filesystem.PlaylistItem{{File: "00001.m2ts", Size: 100}}, nil
@@ -1050,11 +1057,12 @@ func TestCollectDiscEvidenceNamespacesDuplicatePlaylists(t *testing.T) {
 			t.Fatal(err)
 		}
 		writeBDMVSummaryFixture(t, discDir, "00001.MPLS", fmt.Sprintf("extended summary %d", index+1))
+		writeBDMVSummaryFixture(t, discDir, "00002.MPLS", fmt.Sprintf("second extended summary %d", index+1))
 	}
 
 	selected := make([]string, 0, len(layout.Discs))
 	for _, disc := range layout.Discs {
-		selected = append(selected, disc.ID+":00001.MPLS")
+		selected = append(selected, disc.ID+":00001.MPLS", disc.ID+":00002.MPLS")
 	}
 	service := newTestService(t,
 		&stubRepo{},
@@ -1067,18 +1075,36 @@ func TestCollectDiscEvidenceNamespacesDuplicatePlaylists(t *testing.T) {
 		Paths:      []string{sourcePath},
 		DiscType:   "BDMV",
 	}
-	err = service.collectDiscEvidence(context.Background(), preparationstate.Request{
+		var updates []api.PreparationProgressUpdate
+	ctx := api.WithPreparationProgressReporter(t.Context(), func(update api.PreparationProgressUpdate) {
+		updates = append(updates, update)
+	})
+	err = service.collectDiscEvidence(ctx, preparationstate.Request{
 		Input: api.PrepareInput{SourcePath: sourcePath, Instructions: api.ReleaseFactInstructions{Playlist: api.PlaylistInstruction{
 			Set: true, Selected: selected,
 		}}},
 		Layout:            layout,
 		SourceFingerprint: "inventory-fingerprint",
-	}, &meta, func(api.PreparationProgressStatus, string) {})
+	}, &meta)
 	if err != nil {
 		t.Fatalf("collect disc evidence: %v", err)
 	}
-	if len(meta.Discs) != 2 || len(meta.SelectedBDMVPlaylists) != 2 || len(meta.FileList) != 2 {
+	if len(meta.Discs) != 2 || len(meta.SelectedBDMVPlaylists) != 4 || len(meta.FileList) != 2 {
 		t.Fatalf("disc evidence = discs:%d playlists:%d files:%d", len(meta.Discs), len(meta.SelectedBDMVPlaylists), len(meta.FileList))
+	}
+	if len(updates) != 4 {
+		t.Fatalf("expected start and completion for both cached discs, got %#v", updates)
+	}
+	for i, update := range updates {
+		disc := i / 2
+		if update.Phase != api.PreparationPhaseBDInfo || update.Status != api.PreparationProgressRunning ||
+			update.Substep != fmt.Sprintf("Disc %d of 2 (2 selected playlists)", disc+1) ||
+			update.CompletedItems != disc+i%2 || update.TotalItems != 2 || strings.Contains(update.Detail(), sourcePath) {
+			t.Fatalf("wrong disc progress for update %d: %+v", i, update)
+		}
+		if i%2 == 1 && !strings.Contains(update.Message, "from cache") {
+			t.Fatalf("cached evidence reported as scanning: %+v", update)
+		}
 	}
 	firstPath := meta.Discs[0].Reports[0].SummaryPath
 	secondPath := meta.Discs[1].Reports[0].SummaryPath

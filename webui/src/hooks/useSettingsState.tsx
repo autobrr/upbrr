@@ -288,9 +288,6 @@ const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
   Description: {
     LogoSize: { key: "LogoSize", advanced: true },
     LogoLanguage: { key: "LogoLanguage", advanced: true },
-    CharLimit: { key: "CharLimit", advanced: true },
-    FileLimit: { key: "FileLimit", advanced: true },
-    ProcessLimit: { key: "ProcessLimit", advanced: true },
     CustomSignature: { key: "CustomSignature", advanced: true },
   },
   ArrIntegration: {
@@ -306,8 +303,6 @@ const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
     RadarrAPIKey2: { key: "RadarrAPIKey2", advanced: true, sensitive: true },
     RadarrURL3: { key: "RadarrURL3", advanced: true },
     RadarrAPIKey3: { key: "RadarrAPIKey3", advanced: true, sensitive: true },
-    EmbyDir: { key: "EmbyDir", advanced: true },
-    EmbyTVDir: { key: "EmbyTVDir", advanced: true },
   },
   TorrentCreation: {},
   PostUpload: {

@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -98,9 +99,6 @@ func submitUnit3DUpload(
 	if !execution.Success {
 		failure := commonhttp.UploadHTTPError(trackerName, execution.StatusCode, bodyPreview)
 		logger.Errorf("trackers: %s upload request failed: %v", trackerName, failure)
-		if len(bodyPreview) > 0 {
-			logger.Tracef("trackers: %s response body: %s", trackerName, redaction.RedactValue(string(bodyPreview), nil))
-		}
 		if decodeErr == nil && result.Success != nil && !*result.Success {
 			return api.UploadSummary{}, submission.NewError(submission.Rejected, failure)
 		}
@@ -109,7 +107,6 @@ func submitUnit3DUpload(
 
 	if decodeErr != nil {
 		logger.Errorf("trackers: %s failed to parse response JSON: %v", trackerName, decodeErr)
-		logger.Tracef("trackers: %s response body: %s", trackerName, redaction.RedactValue(string(bodyPreview), nil))
 		return api.UploadSummary{}, fmt.Errorf("trackers: %s response json: %w", trackerName, decodeErr)
 	}
 	if result.Success == nil {
@@ -224,7 +221,7 @@ func prepareUnit3DUpload(
 			payload,
 			req.Meta,
 			req.Runtime.DBPath,
-			logger,
+			logging.FromContext(submitCtx, logger),
 			reportGuidance,
 		)
 	}, nil), nil

@@ -144,8 +144,6 @@ func TestConfigImpactsIgnoreCompatibilitySettingsAndRetainActiveTrackerScope(t *
 			CheckPredb:    true,
 		},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{CutoffScreens: 3},
-		Description:        config.DescriptionSettingsConfig{MultiScreens: 2, CharLimit: 100},
-		ArrIntegration:     config.ArrIntegrationConfig{EmbyDir: "legacy"},
 		TorrentCreation:    config.TorrentCreationConfig{MkbrrThreads: 2},
 		PostUpload:         config.PostUploadConfig{CrossSeeding: true, ShowUploadDuration: true},
 		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{

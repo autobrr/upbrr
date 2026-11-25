@@ -11,11 +11,13 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"math"
 	"os"
 	slashpath "path" //nolint:depguard // Joins torrent-internal slash-delimited metainfo paths.
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -25,7 +27,7 @@ import (
 	mkbrr "github.com/autobrr/mkbrr/torrent"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
-	"github.com/autobrr/upbrr/internal/filesystem"
+	"github.com/autobrr/upbrr/internal/filelock"
 	"github.com/autobrr/upbrr/internal/logging"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
@@ -66,7 +68,9 @@ func NewServiceWithRegistry(logger api.Logger, tmpRoot string, registry *tracker
 
 // createSingle generates one artifact under the supplied tracker policy. It also
 // validates direct .torrent inputs, for which there is no local media to hash.
-func (s *Service) createSingle(ctx context.Context, meta api.TorrentSubject) (api.TorrentResult, error) {
+func (s *Service) createSingle(
+	ctx context.Context, meta api.TorrentSubject, reportProgress func(status, message string),
+) (_ api.TorrentResult, err error) {
 	logger := logging.FromContext(ctx, s.logger)
 
 	select {
@@ -89,10 +93,23 @@ func (s *Service) createSingle(ctx context.Context, meta api.TorrentSubject) (ap
 		reuseOnly = false
 	}
 	logger.Debugf("torrent: reuse decision=scan source=%s force_rehash=%t reuse_only=%t", source, forceRehash, reuseOnly)
-	emitTorrentProgress(ctx, meta, "running", "Checking reusable torrent")
+
+	failMessage := "Torrent preparation failed"
+	defer func() {
+		if err == nil {
+			return
+		}
+		if ctx.Err() != nil {
+			reportProgress("canceled", "Torrent preparation canceled")
+			return
+		}
+		reportProgress("failed", failMessage)
+	}()
 
 	// If user already provided a .torrent file, re-use it directly.
 	if strings.EqualFold(filepath.Ext(source), ".torrent") {
+		failMessage = "Provided torrent validation failed"
+		reportProgress("running", "Validating provided torrent")
 		info, err := os.Stat(source)
 		if err != nil {
 			return api.TorrentResult{}, fmt.Errorf("torrent: path %q: %w", source, err)
@@ -108,31 +125,28 @@ func (s *Service) createSingle(ctx context.Context, meta api.TorrentSubject) (ap
 	}
 
 	policy := resolveTrackerPolicy(meta, s.registry)
+	reportProgress("running", "Preparing torrent")
 
 	logger.Debugf("torrent: resolving create spec for %s", source)
-	createSpec, err := resolveCreateSpec(meta, source, s.tmpRoot)
+	spec, err := resolveCreateSpec(ctx, meta, s.tmpRoot, false, logger)
 	if err != nil {
 		return api.TorrentResult{}, err
 	}
 	logger.Debugf(
 		"torrent: create spec path=%s name=%q include_patterns=%d staged=%t",
-		createSpec.path,
-		createSpec.name,
-		len(createSpec.includePatterns),
-		createSpec.cleanupPath != "",
+		spec.path,
+		spec.name,
+		len(spec.includePatterns),
+		spec.cleanupLock != nil,
 	)
-	if createSpec.cleanupPath != "" {
-		defer func() {
-			if err := os.RemoveAll(createSpec.cleanupPath); err != nil {
-				logger.Warnf("torrent: failed to remove staging path path=%s err=%s", createSpec.cleanupPath, redaction.RedactValue(err.Error(), nil))
-			}
-		}()
+	if spec.cleanupLock != nil {
+		defer spec.cleanup(ctx, logger)
 	}
-	if _, err := os.Stat(createSpec.path); err != nil {
+	if _, err := os.Stat(spec.path); err != nil {
 		if os.IsNotExist(err) {
-			return api.TorrentResult{}, fmt.Errorf("torrent: path %q: %w", createSpec.path, internalerrors.ErrNotFound)
+			return api.TorrentResult{}, fmt.Errorf("torrent: path %q: %w", spec.path, internalerrors.ErrNotFound)
 		}
-		return api.TorrentResult{}, fmt.Errorf("torrent: path %q: %w", createSpec.path, err)
+		return api.TorrentResult{}, fmt.Errorf("torrent: path %q: %w", spec.path, err)
 	}
 
 	select {
@@ -157,7 +171,11 @@ func (s *Service) createSingle(ctx context.Context, meta api.TorrentSubject) (ap
 		_ = os.Remove(stagePath)
 		return api.TorrentResult{}, fmt.Errorf("torrent: close generation staging file: %w", err)
 	}
-	publication := &generatedTorrentPublication{stage: stagePath, destination: outputPath}
+	publication := &generatedTorrentPublication{
+		stage:       stagePath,
+		destination: outputPath,
+		cancelErr:   ctx.Err,
+	}
 	owned := true
 	defer func() {
 		if owned {
@@ -168,6 +186,7 @@ func (s *Service) createSingle(ctx context.Context, meta api.TorrentSubject) (ap
 	}()
 	pieceOptions := policy.createOptions(meta)
 	if err := policy.validateCreateOptions(meta, pieceOptions); err != nil {
+		failMessage = "Torrent policy validation failed"
 		return api.TorrentResult{}, fmt.Errorf("torrent: resolve tracker piece size: %w", err)
 	}
 	logger.Infof("torrent: creating torrent output=%s max_piece_exp=%d piece_exp_set=%t", outputPath, pieceOptions.maxPieceExp, pieceOptions.pieceExp != nil)
@@ -188,41 +207,61 @@ func (s *Service) createSingle(ctx context.Context, meta api.TorrentSubject) (ap
 	if pieceOptions.pieceExp == nil {
 		target = new(uint(1000))
 	}
-	info, err := mkbrr.CreateContext(ctx, mkbrr.CreateOptions{
-		Path:             createSpec.path,
-		Name:             createSpec.name,
-		OutputPath:       stagePath,
-		IsPrivate:        true,
-		TrackerURLs:      trackerURLs,
-		MaxPieceLength:   &pieceOptions.maxPieceExp,
-		TargetPieceCount: target,
-		PieceLengthExp:   pieceOptions.pieceExp,
-		IncludePatterns:  createSpec.includePatterns,
-		ProgressCallback: torrentProgressCallback(ctx, meta),
-	})
-	if cancelErr := ctx.Err(); cancelErr != nil {
-		return api.TorrentResult{}, fmt.Errorf("torrent: canceled after hashing: %w", cancelErr)
+	createFromSpec := func(targetSpec createSpec) (*mkbrr.TorrentInfo, error) {
+		failMessage = "Torrent creation failed"
+		createdInfo, createErr := mkbrr.CreateContext(ctx, mkbrr.CreateOptions{
+			Path:             targetSpec.path,
+			Name:             targetSpec.name,
+			OutputPath:       stagePath,
+			IsPrivate:        true,
+			TrackerURLs:      trackerURLs,
+			MaxPieceLength:   &pieceOptions.maxPieceExp,
+			TargetPieceCount: target,
+			PieceLengthExp:   pieceOptions.pieceExp,
+			IncludePatterns:  targetSpec.includePatterns,
+			ProgressCallback: torrentProgressCallback(ctx, meta),
+		})
+		if cancelErr := ctx.Err(); cancelErr != nil {
+			return nil, fmt.Errorf("torrent: canceled after hashing: %w", cancelErr)
+		}
+		if createErr != nil {
+			return nil, fmt.Errorf("torrent: create %q: %w", targetSpec.path, createErr)
+		}
+		failMessage = "Torrent validation failed"
+		if err := validateTorrentContent(createdInfo.Path, meta); err != nil {
+			return nil, fmt.Errorf("torrent: validate created torrent %q: %w", createdInfo.Path, err)
+		}
+		return createdInfo, nil
+	}
+	info, err := createFromSpec(spec)
+	if err != nil && spec.fullDirBypass && ctx.Err() == nil {
+		logger.Warnf("torrent: full-directory bypass failed during hashing; retrying with staging err=%s", redaction.RedactValue(err.Error(), nil))
+		failMessage = "Torrent preparation failed"
+		stagedSpec, stageErr := resolveCreateSpec(ctx, meta, s.tmpRoot, true, logger)
+		if stageErr != nil {
+			return api.TorrentResult{}, stageErr
+		}
+		defer stagedSpec.cleanup(ctx, logger)
+		info, err = createFromSpec(stagedSpec)
 	}
 	if err != nil {
-		emitTorrentProgress(ctx, meta, "failed", "Torrent creation failed")
-		return api.TorrentResult{}, fmt.Errorf("torrent: create %q: %w", createSpec.path, err)
+		return api.TorrentResult{}, err
 	}
-	if err := validateTorrentContent(info.Path, meta); err != nil {
-		emitTorrentProgress(ctx, meta, "failed", "Torrent validation failed")
-		return api.TorrentResult{}, fmt.Errorf("torrent: validate created torrent %q: %w", info.Path, err)
+	if err := ctx.Err(); err != nil {
+		return api.TorrentResult{}, fmt.Errorf("torrent: canceled after validation: %w", err)
 	}
 	if policy != nil {
 		trackerCount := len(normalizedTrackerNames(meta.Trackers))
 		logger.Infof("torrent: tracker policy validation tracker=%s state=start decision=validate count=%d", policy.name, trackerCount)
 		if err := policy.validateTorrent(info.Path, meta); err != nil {
 			logger.Warnf("torrent: tracker policy validation tracker=%s state=completed decision=rejected count=%d", policy.name, trackerCount)
-			emitTorrentProgress(ctx, meta, "failed", "Torrent policy validation failed")
+			failMessage = "Torrent policy validation failed"
 			return api.TorrentResult{}, fmt.Errorf("torrent: validate created torrent policy %q: %w", info.Path, err)
 		}
 		logger.Infof("torrent: tracker policy validation tracker=%s state=completed decision=accepted count=%d", policy.name, trackerCount)
 	}
 	if err := setUploadMetadata(info.Path); err != nil {
-		emitTorrentProgress(ctx, meta, "failed", "Torrent metadata update failed")
+		failMessage = "Torrent metadata update failed"
 		return api.TorrentResult{}, err
 	}
 	if cancelErr := ctx.Err(); cancelErr != nil {
@@ -235,6 +274,7 @@ func (s *Service) createSingle(ctx context.Context, meta api.TorrentSubject) (ap
 	} else {
 		resultPath, err = publication.Publish()
 		if err != nil {
+			failMessage = "Torrent publication failed"
 			return api.TorrentResult{}, err
 		}
 	}
@@ -280,11 +320,24 @@ func setUploadMetadata(path string) error {
 type generatedTorrentPublication struct {
 	stage       string
 	destination string
+	cancelErr   func() error
+}
+
+func (p *generatedTorrentPublication) checkCancellation() error {
+	if p.cancelErr != nil {
+		if err := p.cancelErr(); err != nil {
+			return fmt.Errorf("torrent: canceled before publication: %w", err)
+		}
+	}
+	return nil
 }
 
 func (p *generatedTorrentPublication) Publish() (string, error) {
 	if p.stage == "" {
 		return "", errors.New("torrent: generation staging file is no longer available")
+	}
+	if err := p.checkCancellation(); err != nil {
+		return "", err
 	}
 	if err := os.Rename(p.stage, p.destination); err != nil {
 		return "", fmt.Errorf("torrent: publish generated artifact: %w", err)
@@ -320,6 +373,17 @@ func emitTorrentProgress(ctx context.Context, meta api.TorrentSubject, status st
 	emitTorrentHashProgress(ctx, meta, status, message, 0, 0, 0)
 }
 
+func emitTorrentProgressForTracker(ctx context.Context, sourcePath string, tracker string, status string, message string) {
+	emitTorrentHashProgressForTracker(ctx, sourcePath, tracker, status, message, 0, 0, 0)
+}
+
+func progressScopeTracker(meta api.TorrentSubject) string {
+	if len(meta.Trackers) == 1 {
+		return strings.ToUpper(strings.TrimSpace(meta.Trackers[0]))
+	}
+	return ""
+}
+
 func torrentProgressCallback(ctx context.Context, meta api.TorrentSubject) mkbrr.ProgressCallback {
 	return func(completed, total int, hashRate float64) {
 		if total <= 0 {
@@ -338,12 +402,21 @@ func torrentProgressCallback(ctx context.Context, meta api.TorrentSubject) mkbrr
 }
 
 func emitTorrentHashProgress(ctx context.Context, meta api.TorrentSubject, status string, message string, completed int, total int, hashRate float64) {
-	tracker := ""
-	if len(meta.Trackers) == 1 {
-		tracker = meta.Trackers[0]
-	}
+	emitTorrentHashProgressForTracker(ctx, meta.SourcePath, progressScopeTracker(meta), status, message, completed, total, hashRate)
+}
+
+func emitTorrentHashProgressForTracker(
+	ctx context.Context,
+	sourcePath string,
+	tracker string,
+	status string,
+	message string,
+	completed int,
+	total int,
+	hashRate float64,
+) {
 	api.EmitUploadProgress(ctx, api.UploadProgressUpdate{
-		SourcePath:      meta.SourcePath,
+		SourcePath:      sourcePath,
 		Tracker:         tracker,
 		Task:            "torrent",
 		Status:          status,
@@ -434,46 +507,44 @@ func appendUniqueTorrentCandidate(candidates []string, candidate string) []strin
 	return append(candidates, candidate)
 }
 
-// findReusableTorrent returns the first candidate that satisfies the provided
+// findReusableTorrent returns candidate if it satisfies the provided
 // tracker policy and source content. Content verification is cached by path.
 func findReusableTorrent(
 	ctx context.Context,
-	candidates []string,
+	candidate string,
 	policy *trackerTorrentPolicy,
 	meta api.TorrentSubject,
 	validationCache map[string]error,
 	logger api.Logger,
 ) (string, error) {
-	for _, candidate := range candidates {
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("torrent: canceled while checking candidates: %w", err)
+	}
+	info, err := os.Stat(candidate)
+	if err != nil || info.IsDir() {
+		return "", nil
+	}
+	if err := validateCandidateTorrentPolicy(candidate, policy, meta, logger); err != nil {
+		return "", nil
+	}
+	validationErr, checked := validationCache[candidate]
+	if !checked {
+		validationErr = validateCandidateTorrentContent(ctx, candidate, meta, logger)
 		if err := ctx.Err(); err != nil {
-			return "", fmt.Errorf("torrent: canceled while checking candidates: %w", err)
+			return "", fmt.Errorf("torrent: canceled after checking candidate: %w", err)
 		}
-		info, err := os.Stat(candidate)
-		if err != nil || info.IsDir() {
-			continue
-		}
-		if err := validateCandidateTorrentPolicy(candidate, policy, meta, logger); err != nil {
-			continue
-		}
-		validationErr, checked := validationCache[candidate]
-		if !checked {
-			validationErr = validateCandidateTorrentContent(ctx, candidate, meta, logger)
-			if err := ctx.Err(); err != nil {
-				return "", fmt.Errorf("torrent: canceled after checking candidate: %w", err)
-			}
-			validationCache[candidate] = validationErr
-			if errors.Is(validationErr, internalerrors.ErrClientRecheckFailed) {
-				return "", validationErr
-			}
-		}
-		if validationErr == nil {
-			if logger != nil {
-				logger.Debugf("torrent: reusable candidate validated path=%s tracker_policy=%t", candidate, policy != nil)
-			}
-			return candidate, nil
+		validationCache[candidate] = validationErr
+		if errors.Is(validationErr, internalerrors.ErrClientRecheckFailed) {
+			return "", validationErr
 		}
 	}
-	return "", nil
+	if validationErr != nil {
+		return "", nil
+	}
+	if logger != nil {
+		logger.Debugf("torrent: reusable candidate validated path=%s tracker_policy=%t", candidate, policy != nil)
+	}
+	return candidate, nil
 }
 
 func normalizedTrackerNames(trackers []string) []string {
@@ -495,7 +566,7 @@ func normalizedTrackerNames(trackers []string) []string {
 
 // validateCandidateTorrent checks an existing torrent against the active
 // tracker policy and prepared source layout. Expected candidate rejection is
-// logged at debug level so discovery can continue without operator warnings.
+// logged at trace level so discovery can continue without operator warnings.
 func validateCandidateTorrent(ctx context.Context, path string, policy *trackerTorrentPolicy, meta api.TorrentSubject, logger api.Logger) error {
 	if err := validateCandidateTorrentPolicy(path, policy, meta, logger); err != nil {
 		return err
@@ -505,9 +576,7 @@ func validateCandidateTorrent(ctx context.Context, path string, policy *trackerT
 
 func validateCandidateTorrentPolicy(path string, policy *trackerTorrentPolicy, meta api.TorrentSubject, logger api.Logger) error {
 	if err := policy.validateTorrent(path, meta); err != nil {
-		if logger != nil {
-			logger.Debugf("torrent: reusable candidate rejected path=%s stage=tracker_policy reason=%s", path, redaction.RedactValue(err.Error(), nil))
-		}
+		logReusableCandidateRejection(logger, path, "tracker_policy", err)
 		return err
 	}
 	mi, err := metainfo.LoadFromFile(path)
@@ -518,14 +587,16 @@ func validateCandidateTorrentPolicy(path string, policy *trackerTorrentPolicy, m
 	if err != nil {
 		return fmt.Errorf("decode reusable torrent: %w", err)
 	}
-	return validateReusablePieceCount(&info, policy, meta)
+	if err := validateReusablePieceCount(&info, policy, meta); err != nil {
+		logReusableCandidateRejection(logger, path, "piece_count", err)
+		return err
+	}
+	return nil
 }
 
 func validateCandidateTorrentContent(ctx context.Context, path string, meta api.TorrentSubject, logger api.Logger) error {
 	if err := validateTorrentContent(path, meta); err != nil {
-		if logger != nil {
-			logger.Debugf("torrent: reusable candidate rejected path=%s stage=content_layout reason=%s", path, redaction.RedactValue(err.Error(), nil))
-		}
+		logReusableCandidateRejection(logger, path, "content_layout", err)
 		return err
 	}
 	data, err := os.ReadFile(path)
@@ -539,12 +610,16 @@ func validateCandidateTorrentContent(ctx context.Context, path string, meta api.
 		return nil
 	}
 	if err := verifyCandidateTorrentData(ctx, path, meta); err != nil {
-		if logger != nil {
-			logger.Debugf("torrent: reusable candidate rejected path=%s stage=piece_hash reason=%s", path, redaction.RedactValue(err.Error(), nil))
-		}
+		logReusableCandidateRejection(logger, path, "piece_hash", err)
 		return fmt.Errorf("%w: %w", internalerrors.ErrClientRecheckFailed, err)
 	}
 	return nil
+}
+
+func logReusableCandidateRejection(logger api.Logger, path, stage string, err error) {
+	if logger != nil {
+		logger.Tracef("torrent: reusable candidate rejected path=%s stage=%s reason=%s", path, stage, redaction.RedactValue(err.Error(), nil))
+	}
 }
 
 func validateClientCandidateBytes(path string, data []byte, meta api.TorrentSubject) error {
@@ -605,11 +680,9 @@ func verifyCandidateTorrentData(ctx context.Context, path string, meta api.Torre
 		return fmt.Errorf("torrent: canceled after verification: %w", cancelErr)
 	}
 	if err != nil {
-		emitTorrentProgress(ctx, meta, "failed", "Torrent piece verification failed")
 		return fmt.Errorf("torrent: verify candidate data: %w", err)
 	}
 	if result.BadPieces > 0 || result.MissingPieces > 0 || len(result.MissingFiles) > 0 || result.GoodPieces != result.TotalPieces {
-		emitTorrentProgress(ctx, meta, "failed", "Torrent piece verification failed")
 		return fmt.Errorf(
 			"torrent: candidate piece mismatch good=%d total=%d bad=%d missing=%d",
 			result.GoodPieces,
@@ -618,7 +691,6 @@ func verifyCandidateTorrentData(ctx context.Context, path string, meta api.Torre
 			result.MissingPieces,
 		)
 	}
-	emitTorrentProgress(ctx, meta, "completed", "Torrent pieces verified")
 	return nil
 }
 
@@ -626,7 +698,35 @@ type createSpec struct {
 	path            string
 	name            string
 	includePatterns []string
-	cleanupPath     string
+	cleanupLock     *os.File
+	fullDirBypass   bool
+}
+
+func (c *createSpec) cleanup(ctx context.Context, logger api.Logger) {
+	lock := c.cleanupLock
+	if lock == nil {
+		return
+	}
+	dir := filepath.Dir(lock.Name())
+	coordPath := filepath.Join(filepath.Dir(dir), wantedStagingCoordLockName)
+	coordLock, err := filelock.AcquireContext(ctx, coordPath)
+	if ctx.Err() != nil && coordLock == nil {
+		// Clean up immediately if possible. If the lock is held, leave the
+		// marker for the next coordinated stale sweep.
+		coordLock, err = filelock.Acquire(coordPath)
+	}
+	_ = lock.Close()
+	c.cleanupLock = nil
+	if err != nil {
+		if logger != nil {
+			logger.Warnf("torrent: failed to lock staging coordination path=%s err=%s", dir, redaction.RedactValue(err.Error(), nil))
+		}
+		return
+	}
+	defer coordLock.Close()
+	if err := removeWantedStagingDir(context.WithoutCancel(ctx), dir); err != nil && logger != nil {
+		logger.Warnf("torrent: failed to remove staging path path=%s err=%s", dir, redaction.RedactValue(err.Error(), nil))
+	}
 }
 
 type contentFile struct {
@@ -638,11 +738,21 @@ type sourceContentFile struct {
 	contentFile
 }
 
-func resolveCreateSpec(meta api.TorrentSubject, source string, tmpRoot string) (createSpec, error) {
-	source = strings.TrimSpace(source)
+func resolveCreateSpec(
+	ctx context.Context,
+	meta api.TorrentSubject,
+	tmpRoot string,
+	forceStaging bool,
+	logger api.Logger,
+) (createSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return createSpec{}, fmt.Errorf("context canceled: %w", err)
+	}
+	source := strings.TrimSpace(meta.SourcePath)
 	if source == "" {
 		return createSpec{}, internalerrors.ErrInvalidInput
 	}
+	meta.SourcePath = source
 	info, err := os.Stat(source)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -667,15 +777,14 @@ func resolveCreateSpec(meta api.TorrentSubject, source string, tmpRoot string) (
 	}
 	if len(wanted) > 0 {
 		if needsWantedFileStaging(source, wanted) {
-			stagedRoot, cleanupPath, err := stageWantedFiles(tmpRoot, source, wanted)
-			if err != nil {
-				return createSpec{}, err
+			if !forceStaging && wantedMatchesFullDirectory(ctx, source, wanted) {
+				return createSpec{
+					path:          source,
+					name:          filepath.Base(filepath.Clean(source)),
+					fullDirBypass: true,
+				}, nil
 			}
-			return createSpec{
-				path:        stagedRoot,
-				name:        filepath.Base(filepath.Clean(source)),
-				cleanupPath: cleanupPath,
-			}, nil
+			return stageWantedFiles(ctx, meta, tmpRoot, wanted, logger)
 		}
 		include, err := includePatternsForFiles(source, wanted)
 		if err != nil {
@@ -689,6 +798,78 @@ func resolveCreateSpec(meta api.TorrentSubject, source string, tmpRoot string) (
 	}
 
 	return createSpec{path: source}, nil
+}
+
+var errWantedDirectoryMismatch = errors.New("wanted files do not match full directory")
+
+func wantedMatchesFullDirectory(ctx context.Context, root string, wanted []string) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	cleanRoot, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	wantedSet := make(map[string]struct{}, len(wanted))
+	for _, file := range wanted {
+		rel, err := filepath.Rel(cleanRoot, file)
+		if err != nil {
+			return false
+		}
+		wantedSet[filepath.ToSlash(rel)] = struct{}{}
+	}
+	matched := 0
+	err = walkNonIgnoredDirEntries(cleanRoot, ctx.Err, func(rel string, info os.FileInfo) error {
+		if !info.Mode().IsRegular() {
+			return errWantedDirectoryMismatch
+		}
+		if _, ok := wantedSet[filepath.ToSlash(rel)]; !ok {
+			return errWantedDirectoryMismatch
+		}
+		matched++
+		return nil
+	})
+	return err == nil && matched == len(wantedSet)
+}
+
+func walkNonIgnoredDirEntries(root string, checkStop func() error, visit func(rel string, info os.FileInfo) error) error {
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if checkStop != nil {
+			if err := checkStop(); err != nil {
+				return fmt.Errorf("walk stopped: %w", err)
+			}
+		}
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			if path != root {
+				rel, err := filepath.Rel(root, path)
+				if err != nil {
+					return fmt.Errorf("relative path: %w", err)
+				}
+				if mkbrrIgnoredPath(rel, true) {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return fmt.Errorf("relative path: %w", err)
+		}
+		if mkbrrIgnoredPath(rel, false) {
+			return nil
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("file info: %w", err)
+		}
+		return visit(rel, info)
+	}); err != nil {
+		return fmt.Errorf("walk directory: %w", err)
+	}
+	return nil
 }
 
 func normalizeDiscSource(source string) string {
@@ -720,6 +901,7 @@ func wantedFilesWithin(root string, files []string) ([]string, error) {
 		return nil, fmt.Errorf("torrent: resolve source root: %w", err)
 	}
 	wanted := make([]string, 0, len(files))
+	seen := newSubmissionPathIndex(len(files))
 	for _, file := range files {
 		trimmed := strings.TrimSpace(file)
 		if trimmed == "" {
@@ -743,10 +925,12 @@ func wantedFilesWithin(root string, files []string) ([]string, error) {
 			return nil, fmt.Errorf("torrent: wanted file %q is not a regular file", absFile)
 		}
 		cleanFile := filepath.Clean(absFile)
-		if slices.ContainsFunc(wanted, func(path string) bool { return pathutil.SamePath(path, cleanFile) }) {
+		keys := pathutil.ResolvePathMatchKeys(cleanFile)
+		if seen.match(keys) != 0 {
 			continue
 		}
 		wanted = append(wanted, cleanFile)
+		seen.add(keys, len(wanted))
 	}
 	sort.Strings(wanted)
 	return wanted, nil
@@ -797,52 +981,296 @@ func needsWantedFileStaging(root string, files []string) bool {
 	return false
 }
 
-func stageWantedFiles(tmpRoot string, root string, files []string) (string, string, error) {
-	if strings.TrimSpace(tmpRoot) == "" {
-		return "", "", errors.New("torrent: tmp root is required for staged wanted files")
+type wantedStageOps struct {
+	link    func(oldname, newname string) error
+	symlink func(oldname, newname string) error
+}
+
+func defaultWantedStageOps() wantedStageOps {
+	return wantedStageOps{
+		link:    os.Link,
+		symlink: os.Symlink,
 	}
+}
+
+func stageWantedFiles(
+	ctx context.Context,
+	meta api.TorrentSubject,
+	tmpRoot string,
+	files []string,
+	logger api.Logger,
+) (createSpec, error) {
+	return stageWantedFilesWithOps(ctx, meta, tmpRoot, files, logger, defaultWantedStageOps())
+}
+
+// stageWantedFilesWithOps stages the cleaned absolute paths returned by wantedFilesWithin.
+func stageWantedFilesWithOps(
+	ctx context.Context,
+	meta api.TorrentSubject,
+	tmpRoot string,
+	files []string,
+	logger api.Logger,
+	ops wantedStageOps,
+) (createSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return createSpec{}, fmt.Errorf("torrent: canceled before staging wanted files: %w", err)
+	}
+	if strings.TrimSpace(tmpRoot) == "" {
+		return createSpec{}, errors.New("torrent: tmp root is required for staged wanted files")
+	}
+	root := strings.TrimSpace(meta.SourcePath)
+	meta.SourcePath = root
 	rootName, err := safeTorrentRootName(root)
 	if err != nil {
-		return "", "", err
+		return createSpec{}, err
+	}
+	cleanRoot, err := filepath.Abs(root)
+	if err != nil {
+		return createSpec{}, fmt.Errorf("torrent: resolve source root: %w", err)
 	}
 	releaseRoot, _, err := paths.ReleaseTempDirFor(tmpRoot, root, api.ReleaseInfo{})
 	if err != nil {
-		return "", "", fmt.Errorf("torrent: resolve staging owner: %w", err)
+		return createSpec{}, fmt.Errorf("torrent: resolve staging owner: %w", err)
 	}
-	stageParent, err := os.MkdirTemp(releaseRoot, "wanted-files-*")
+	stageParent, stageLock, err := createLockedWantedStagingDir(ctx, releaseRoot, cleanRoot, files, logger)
 	if err != nil {
-		return "", "", fmt.Errorf("torrent: create wanted file staging dir: %w", err)
+		return createSpec{}, err
 	}
-	stagedRoot := filepath.Join(stageParent, rootName)
-	cleanRoot, err := filepath.Abs(root)
-	if err != nil {
-		_ = os.RemoveAll(stageParent)
-		return "", "", fmt.Errorf("torrent: resolve source root: %w", err)
+	spec := createSpec{
+		path:        filepath.Join(stageParent, "payload"),
+		name:        rootName,
+		cleanupLock: stageLock,
 	}
-	for _, file := range files {
-		absFile, err := filepath.Abs(file)
-		if err != nil {
-			_ = os.RemoveAll(stageParent)
-			return "", "", fmt.Errorf("torrent: resolve wanted file: %w", err)
+	succeeded := false
+	defer func() {
+		if !succeeded {
+			spec.cleanup(ctx, logger)
+		}
+	}()
+	emitTorrentProgress(ctx, meta, "running", "Staging torrent files")
+	if logger != nil {
+		logger.Debugf("torrent: staging wanted files count=%d dir=%s", len(files), stageParent)
+	}
+	copyFallbackLogged := false
+	for index, absFile := range files {
+		if err := ctx.Err(); err != nil {
+			return createSpec{}, fmt.Errorf("torrent: canceled while staging wanted files: %w", err)
 		}
 		rel, err := filepath.Rel(cleanRoot, absFile)
 		if err != nil {
-			_ = os.RemoveAll(stageParent)
-			return "", "", fmt.Errorf("torrent: wanted file relative path: %w", err)
+			return createSpec{}, fmt.Errorf("torrent: wanted file relative path: %w", err)
 		}
-		dst := filepath.Join(stagedRoot, rel)
+		dst := filepath.Join(spec.path, rel)
 		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-			_ = os.RemoveAll(stageParent)
-			return "", "", fmt.Errorf("torrent: create wanted file staging parent: %w", err)
+			return createSpec{}, fmt.Errorf("torrent: create wanted file staging parent: %w", err)
 		}
-		if err := os.Link(absFile, dst); err != nil {
-			if copyErr := filesystem.CopyFile(absFile, dst); copyErr != nil {
-				_ = os.RemoveAll(stageParent)
-				return "", "", fmt.Errorf("torrent: stage wanted file %q: link: %w; copy: %w", absFile, err, copyErr)
-			}
+		var linkErr error
+		info, statErr := os.Lstat(absFile)
+		switch {
+		case statErr != nil:
+			linkErr = fmt.Errorf("stat source before hardlink: %w", statErr)
+		case info.Mode()&os.ModeSymlink != 0:
+			linkErr = errors.New("skip hardlink for symlink source")
+		case runtime.GOOS == "windows" && info.Mode()&0o200 == 0:
+			linkErr = errors.New("skip hardlink for read-only source on windows")
+		default:
+			linkErr = ops.link(absFile, dst)
+		}
+		if linkErr == nil {
+			continue
+		}
+		if errors.Is(linkErr, os.ErrExist) {
+			return createSpec{}, fmt.Errorf("torrent: stage wanted file %q: destination collision: %w", absFile, linkErr)
+		}
+		symlinkErr := ops.symlink(absFile, dst)
+		if symlinkErr == nil {
+			continue
+		}
+		if errors.Is(symlinkErr, os.ErrExist) {
+			return createSpec{}, fmt.Errorf("torrent: stage wanted file %q: destination collision: %w", absFile, symlinkErr)
+		}
+		if !copyFallbackLogged && logger != nil {
+			logger.Warnf(
+				"torrent: staging wanted files via copy fallback count=%d link_err=%s symlink_err=%s",
+				len(files),
+				redaction.RedactValue(linkErr.Error(), nil),
+				redaction.RedactValue(symlinkErr.Error(), nil),
+			)
+			copyFallbackLogged = true
+		}
+		emitTorrentProgress(ctx, meta, "running", fmt.Sprintf("Staging torrent files (%d/%d)", index+1, len(files)))
+		if copyErr := copyFileContext(ctx, absFile, dst); copyErr != nil {
+			return createSpec{}, fmt.Errorf("torrent: stage wanted file %q: link: %w; symlink: %w; copy: %w", absFile, linkErr, symlinkErr, copyErr)
 		}
 	}
-	return stagedRoot, stageParent, nil
+	succeeded = true
+	return spec, nil
+}
+
+const (
+	wantedStagingLockName      = ".staging.lock"
+	wantedStagingCoordLockName = ".wanted-staging.lock"
+)
+
+func createLockedWantedStagingDir(ctx context.Context, releaseRoot string, cleanSource string, wanted []string, logger api.Logger) (string, *os.File, error) {
+	// Each open handle contends on the same on-disk lock, including handles
+	// owned by this process or opened through another spelling of releaseRoot.
+	coordLock, err := filelock.AcquireContext(ctx, filepath.Join(releaseRoot, wantedStagingCoordLockName))
+	if err != nil {
+		return "", nil, fmt.Errorf("torrent: lock wanted file staging coordination: %w", err)
+	}
+	defer coordLock.Close()
+
+	cleanupStaleWantedStagingDirs(ctx, releaseRoot, cleanSource, wanted, logger)
+	if err := ctx.Err(); err != nil {
+		return "", nil, fmt.Errorf("torrent: canceled while preparing wanted file staging: %w", err)
+	}
+	stageParent, err := os.MkdirTemp(releaseRoot, "wanted-files-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("torrent: create wanted file staging dir: %w", err)
+	}
+	lock, err := filelock.Acquire(filepath.Join(stageParent, wantedStagingLockName))
+	if err != nil {
+		// The directory is still empty and under the coordination lock.
+		_ = removeWantedStagingDir(context.WithoutCancel(ctx), stageParent)
+		return "", nil, fmt.Errorf("torrent: lock wanted file staging dir: %w", err)
+	}
+	return stageParent, lock, nil
+}
+
+func cleanupStaleWantedStagingDirs(ctx context.Context, releaseRoot string, cleanSource string, wanted []string, logger api.Logger) {
+	if ctx.Err() != nil || pathutil.PathsOverlap(releaseRoot, cleanSource) {
+		return
+	}
+	entries, err := os.ReadDir(releaseRoot)
+	if err != nil {
+		return
+	}
+	var protected []os.FileInfo
+	for _, entry := range entries {
+		if ctx.Err() != nil {
+			return
+		}
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "wanted-files-") {
+			continue
+		}
+		dir := filepath.Join(releaseRoot, entry.Name())
+		lockPath := filepath.Join(dir, wantedStagingLockName)
+		lockInfo, statErr := os.Lstat(lockPath)
+		if statErr != nil || !lockInfo.Mode().IsRegular() {
+			continue
+		}
+		lock, err := filelock.Acquire(lockPath)
+		if err != nil {
+			continue
+		}
+		_ = lock.Close()
+		if protected == nil {
+			protected = stagingSourceDirectories(ctx, cleanSource, wanted)
+			if protected == nil {
+				return
+			}
+		}
+		if !staleStagingTreeDisjoint(ctx, dir, cleanSource, protected) {
+			continue
+		}
+		if removeErr := removeWantedStagingDir(ctx, dir); removeErr != nil && logger != nil && ctx.Err() == nil {
+			logger.Warnf("torrent: failed to remove stale staging path path=%s err=%s", dir, redaction.RedactValue(removeErr.Error(), nil))
+		}
+	}
+}
+
+// removeWantedStagingDir removes staged payload entries before removing
+// .staging.lock and restores the marker if removing dir fails so partial
+// cleanup failures never strand an unmarked wanted-files-* directory that
+// future stale sweeps would skip.
+func removeWantedStagingDir(ctx context.Context, dir string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("remove wanted staging dir: %w", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("read staging dir %q: %w", dir, err)
+	}
+	var removeErr error
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(removeErr, err)
+		}
+		if entry.Name() == wantedStagingLockName {
+			continue
+		}
+		if err := removeStagedPayload(ctx, filepath.Join(dir, entry.Name())); err != nil {
+			removeErr = errors.Join(removeErr, err)
+		}
+	}
+	if removeErr != nil {
+		return removeErr
+	}
+	lockPath := filepath.Join(dir, wantedStagingLockName)
+	if err := removeStagedEntry(lockPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove staging lock %q: %w", lockPath, err)
+	}
+	if err := removeStagedEntry(dir); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if marker, restoreErr := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600); restoreErr == nil {
+			_ = marker.Close()
+		}
+		return fmt.Errorf("remove staging dir %q: %w", dir, err)
+	}
+	return nil
+}
+
+func copyFileContext(ctx context.Context, src, dst string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("copy canceled: %w", err)
+	}
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("open source file: %w", err)
+	}
+	defer sourceFile.Close()
+
+	destFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("create destination file: %w", err)
+	}
+	succeeded := false
+	defer func() {
+		if !succeeded {
+			_ = destFile.Close()
+			_ = os.Remove(dst)
+		}
+	}()
+
+	buf := make([]byte, 256<<10)
+	for {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("copy canceled: %w", err)
+		}
+		n, readErr := sourceFile.Read(buf)
+		if n > 0 {
+			if err := ctx.Err(); err != nil {
+				return fmt.Errorf("copy canceled: %w", err)
+			}
+			if _, writeErr := destFile.Write(buf[:n]); writeErr != nil {
+				return fmt.Errorf("copy content: %w", writeErr)
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil {
+			return fmt.Errorf("copy content: %w", readErr)
+		}
+	}
+	if err := destFile.Close(); err != nil {
+		return fmt.Errorf("close destination file: %w", err)
+	}
+	succeeded = true
+	return nil
 }
 
 func safeTorrentRootName(root string) (string, error) {
@@ -898,18 +1326,14 @@ func ValidateTorrentLayout(info metainfo.Info, meta api.TorrentSubject) error {
 		return err
 	}
 	expectedFiles, scope, ok, err := expectedTorrentFiles(meta)
-	if err != nil {
+	if err != nil || !ok {
 		return err
 	}
-	expectedName, nameOK, err := expectedTorrentName(meta)
-	if err != nil {
-		return err
+	expectedName := filepath.Base(filepath.Clean(strings.TrimSpace(meta.SourcePath)))
+	if scope == api.SubmissionContentScopeSingleFile {
+		expectedName = expectedFiles[0].path
 	}
-	if !ok {
-		return nil
-	}
-	expected := sourceContentPaths(expectedFiles)
-	if nameOK && info.BestName() != expectedName {
+	if info.BestName() != expectedName {
 		return errors.New("torrent: candidate name mismatch")
 	}
 	if (scope == api.SubmissionContentScopeSingleFile && len(info.Files) != 0) ||
@@ -920,7 +1344,7 @@ func ValidateTorrentLayout(info metainfo.Info, meta api.TorrentSubject) error {
 	if len(actual) == 0 {
 		return errors.New("torrent: candidate has no files")
 	}
-	if !sameContentSet(actual, expected) {
+	if !sameContentSet(actual, sourceContentPaths(expectedFiles)) {
 		return errors.New("torrent: candidate content mismatch")
 	}
 	return nil
@@ -976,37 +1400,6 @@ func expectedTorrentFiles(meta api.TorrentSubject) ([]sourceContentFile, api.Sub
 	return expected, inventory.Scope, true, nil
 }
 
-func expectedTorrentName(meta api.TorrentSubject) (string, bool, error) {
-	source := strings.TrimSpace(meta.SourcePath)
-	if source == "" || strings.EqualFold(filepath.Ext(source), ".torrent") {
-		return "", false, nil
-	}
-	if strings.TrimSpace(meta.DiscType) != "" {
-		return filepath.Base(filepath.Clean(normalizeDiscSource(source))), true, nil
-	}
-	info, err := os.Stat(source)
-	if err != nil {
-		return "", false, fmt.Errorf("torrent: stat source %q: %w", source, err)
-	}
-	if !info.IsDir() {
-		return filepath.Base(source), true, nil
-	}
-	if len(meta.FileList) == 0 {
-		return filepath.Base(filepath.Clean(source)), true, nil
-	}
-	wanted, err := wantedFilesWithin(source, meta.FileList)
-	if err != nil {
-		return "", false, err
-	}
-	if len(wanted) == 0 {
-		return "", false, errors.New("torrent: no valid wanted files")
-	}
-	if len(wanted) == 1 && !meta.KeepFolder {
-		return filepath.Base(wanted[0]), true, nil
-	}
-	return filepath.Base(filepath.Clean(source)), true, nil
-}
-
 func torrentContentPaths(info metainfo.Info) []contentFile {
 	if !info.HasV1() {
 		return nil
@@ -1033,33 +1426,7 @@ func diskContentFiles(root string) ([]sourceContentFile, error) {
 		}}, nil
 	}
 	paths := make([]sourceContentFile, 0)
-	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			if path != root {
-				rel, err := filepath.Rel(root, path)
-				if err != nil {
-					return fmt.Errorf("disc relative path: %w", err)
-				}
-				if mkbrrIgnoredPath(rel, true) {
-					return filepath.SkipDir
-				}
-			}
-			return nil
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return fmt.Errorf("disc relative path: %w", err)
-		}
-		if mkbrrIgnoredPath(rel, false) {
-			return nil
-		}
-		info, err := os.Stat(path)
-		if err != nil {
-			return fmt.Errorf("disc file info: %w", err)
-		}
+	err = walkNonIgnoredDirEntries(root, nil, func(rel string, info os.FileInfo) error {
 		if !info.Mode().IsRegular() {
 			return nil
 		}

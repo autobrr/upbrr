@@ -124,8 +124,23 @@ type ScreenshotSubject struct {
 	// KeepImages is the effective image-collection policy for this prepared generation.
 	KeepImages   bool
 	DefaultCount int
-	ManualFrames []int
-	Discs        []ScreenshotDiscSubject
+	// AdditionalDiscCount, when positive, uses DefaultCount for the first disc
+	// and plans this many automatic frames on each remaining disc.
+	AdditionalDiscCount int
+	// AdditionalDisc isolates a renderer sub-subject for a later disc from ordinary captures.
+	AdditionalDisc bool `json:"-"`
+	ManualFrames   []int
+	Discs          []ScreenshotDiscSubject
+	// PackMembers is private exact-generation authority for per-file captures.
+	PackMembers []ScreenshotPackMember `json:"-"`
+	// PackMemberID scopes the renderer's cache to one server-selected video.
+	PackMemberID string `json:"-"`
+}
+
+// ScreenshotPackMember binds an opaque prepared file identity to its private source path.
+type ScreenshotPackMember struct {
+	ID   string
+	Path string `json:"-"`
 }
 
 // ScreenshotDiscSubject contains private capture inputs for one ordered disc.
@@ -226,7 +241,11 @@ type ScreenshotLinkedImage struct {
 }
 
 type ScreenshotImage struct {
-	Processing *ScreenshotProcessing `json:",omitempty"`
+	// AdditionalDisc marks a frame captured for a tracker’s extra-disc quota.
+	AdditionalDisc bool `json:",omitempty"`
+	// PackMemberID identifies the eligible video that actually produced this screenshot.
+	PackMemberID string                `json:",omitempty"`
+	Processing   *ScreenshotProcessing `json:",omitempty"`
 	// Tonemapping records actual processing; empty means unknown. ContentSHA256 binds it to image bytes.
 	Tonemapping   ScreenshotTonemapping `json:",omitempty"`
 	ContentSHA256 string                `json:",omitempty"`

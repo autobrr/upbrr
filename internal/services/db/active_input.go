@@ -176,7 +176,10 @@ func (r *SQLiteRepository) transitionActiveInput(ctx context.Context, expected, 
 			if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
 				SELECT 1 FROM release_workflow_effects
 				WHERE owner_id = ? AND workflow_id = ? AND status IN ('started', 'unknown')
-			)`, next.OwnerID, next.WorkflowID).Scan(&unresolved); err != nil {
+				UNION ALL
+				SELECT 1 FROM (`+completedEffectPendingActions+`) AS stale
+				WHERE stale.owner_id = ? AND stale.workflow_id = ?
+			)`, next.OwnerID, next.WorkflowID, next.OwnerID, next.WorkflowID).Scan(&unresolved); err != nil {
 				return fmt.Errorf("db inspect legacy recovery effects: %w", err)
 			}
 			if unresolved == 0 {

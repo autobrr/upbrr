@@ -49,6 +49,17 @@ func (d *Definition) InputReadiness(meta api.UploadSubject) []api.InputReadiness
 	return nil
 }
 
+// WorkflowMediaRequirements is PTP's automatic two-per-file pack policy.
+func (*Definition) WorkflowMediaRequirements() *trackers.WorkflowMediaRequirements {
+	return &trackers.WorkflowMediaRequirements{
+		PackScreenshotsPerMember:  packScreenshotsPerMember,
+		AdditionalDiscScreenshots: screenshotsPerAdditionalDisc,
+	}
+}
+
+// UsesOwnDiscDescriptionLayout keeps PTP's per-disc MediaInfo and gallery pairs.
+func (*Definition) UsesOwnDiscDescriptionLayout() bool { return true }
+
 func prepareDescription(ctx context.Context, req trackers.PreparationInput) (trackers.DescriptionResult, error) {
 	select {
 	case <-ctx.Done():
@@ -75,7 +86,19 @@ func prepareDescription(ctx context.Context, req trackers.PreparationInput) (tra
 
 	description := strings.TrimSpace(assets.Description)
 	if !assets.Final {
-		description = buildDescription(req.Meta, req.TrackerConfig, req.Runtime.DescriptionConfig(), assets)
+		if req.Meta.ExactMedia != nil && len(req.Meta.Discs) > 1 && len(ptpDiscScreenshotGroups(req.Meta.Discs, assets.Screenshots, "\n")) == 0 {
+			return trackers.DescriptionResult{}, errors.New(
+				"PTP multi-disc upload needs hosted screenshots from the first disc and two from every additional disc",
+			)
+		}
+		if members := ptpExactPackMembers(req.Meta); len(members) > 0 && len(ptpPackScreenshotImages(members, assets.Screenshots)) == 0 {
+			return trackers.DescriptionResult{}, errors.New("PTP pack needs two hosted screenshots from each eligible video")
+		}
+		var err error
+		description, err = buildDescription(req.Meta, req.TrackerConfig, req.Runtime.DescriptionConfig(), assets)
+		if err != nil {
+			return trackers.DescriptionResult{}, err
+		}
 	}
 	if strings.TrimSpace(description) == "" && req.Logger != nil {
 		req.Logger.Infof("trackers: PTP preparation description empty")

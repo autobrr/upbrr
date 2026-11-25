@@ -239,6 +239,30 @@ func runUploadDriver(
 ) (result error) {
 	configFlagProvided := visitedFlags["config"]
 
+	if opts.ExportLastLog {
+		if len(paths) != 1 || opts.ExportLog {
+			return exitError(2, errors.New("--export-last-log requires one input and cannot use --export-log"))
+		}
+		for flag := range visitedFlags {
+			switch flag {
+			case "export-last-log", "log-export-dir", "config":
+			default:
+				return exitError(2, fmt.Errorf("--export-last-log cannot be combined with --%s", flag))
+			}
+		}
+		dbPath, err := configstore.ResolveExistingDBPath(ctx, opts.ConfigPath, configFlagProvided)
+		if err != nil {
+			return exitError(1, err)
+		}
+		return runLastInputLogExport(ctx, dbPath, paths[0], opts.LogExportDir, streams.out)
+	}
+	if visitedFlags["log-export-dir"] && !opts.ExportLog {
+		return exitError(2, errors.New("--log-export-dir requires --export-log or --export-last-log"))
+	}
+	if opts.ExportLog && (opts.ShowVersion || opts.Cleanup || opts.CreateAuth || opts.ExportConfigPath != "" || opts.ImportConfigPath != "" ||
+		opts.HDRAnalysisOnly || opts.AudioAnalysisOnly || opts.HDRResumeWorkflow != "") {
+		return exitError(2, errors.New("--export-log requires an input processing run"))
+	}
 	if opts.ShowVersion {
 		showCLIVersion(ctx, streams.out)
 		return nil
@@ -452,6 +476,13 @@ func runUploadDriver(
 
 	batch := newCLIPreparationBatch(api.Request{}, paths)
 	batch.queue = queue
+	batch.logs = &cliInputLogs{
+		core:      coreSvc,
+		logger:    logger,
+		dbPath:    dbPath,
+		export:    opts.ExportLog,
+		directory: opts.LogExportDir,
+	}
 
 	if opts.UploadOnly {
 		uploadReq, err := buildCLIRequest(opts, visitedFlags, paths, screens)
@@ -472,8 +503,9 @@ func runUploadDriver(
 		streams,
 		logger,
 		func(itemCtx context.Context, item cliPreparationItem) (cliQueueOutcome, error) {
+			itemLogger := logging.FromContext(itemCtx, logger)
 			if opts.SiteCheck {
-				return runCLIWorkflowSiteCheck(itemCtx, coreSvc, opts, visitedFlags, item, screens, cfg, streams, logger)
+				return runCLIWorkflowSiteCheck(itemCtx, coreSvc, opts, visitedFlags, item, screens, cfg, streams, itemLogger)
 			}
 			return runCLIWorkflowInteractive(
 				itemCtx,
@@ -486,7 +518,7 @@ func runUploadDriver(
 				screens,
 				cfg,
 				streams,
-				logger,
+				itemLogger,
 			)
 		},
 	)
@@ -1476,6 +1508,7 @@ type cliPreparationBatch struct {
 	defaults api.Request
 	items    []cliPreparationItem
 	queue    *cliNamedQueue
+	logs     *cliInputLogs
 }
 
 // cloneCLIPlaylistInstruction detaches the selected-playlist slice.
@@ -1568,8 +1601,7 @@ func processCLIPreparationItems(
 				return &cliQueueCheckpointError{err: err}
 			}
 		}
-		outcome, err := process(itemCtx, item)
-		err = errors.Join(err, itemCtx.Err())
+		outcome, err := batch.logs.process(itemCtx, item, streams, process)
 		if batch.queue != nil {
 			if saveErr := batch.queue.finish(queueIndex, outcome, err); saveErr != nil {
 				return &cliQueueCheckpointError{err: errors.Join(err, saveErr)}

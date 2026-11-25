@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"net/url"
 	"regexp"
-	"slices"
 	"strings"
 	"unicode"
 
@@ -42,6 +41,8 @@ var DefaultSensitiveKeys = map[string]struct{}{
 	"popcron":       {},
 }
 
+const textSensitiveField = `\b(anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|authorization|auth|auth[_-]?key|cookie|csrf|passkey|password|rss[_-]?key|secret|session(?:[_-]?id)?|token|torrent[_-]?pass)\b(\s*[:=]\s*)`
+
 var (
 	passkeyPathRe       = regexp.MustCompile(`(?i)/([A-Za-z0-9]{10,})(/announce(?:\.php)?)`) // /<passkey>/announce
 	announcePathTokenRe = regexp.MustCompile(`(?i)(/announce(?:\.php)?/)([A-Za-z0-9]{10,})($|[/?#])`)
@@ -52,15 +53,13 @@ var (
 	queryParamRe        = regexp.MustCompile(
 		`(?i)([?&](anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|auth|auth[_-]?key|csrf|info[_-]?hash|key|passkey|password|rss[_-]?key|secret|session(?:[_-]?id)?|token|torrent[_-]?pass|uid|user|user[_-]?id|userid)=)(?:\[REDACTED\]|[^&\s,\[\])}"']+)`,
 	)
-	keyValueQuotedRe = regexp.MustCompile(
-		`(?i)\b(anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|authorization|auth|auth[_-]?key|cookie|csrf|passkey|password|rss[_-]?key|secret|session(?:[_-]?id)?|token|torrent[_-]?pass)\b(\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')`,
-	)
-	keyValuePlainRe = regexp.MustCompile(
-		`(?i)\b(anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|authorization|auth|auth[_-]?key|cookie|csrf|passkey|password|rss[_-]?key|secret|session(?:[_-]?id)?|token|torrent[_-]?pass)\b(\s*[:=]\s*)(bearer\s+)?([^"'\s,;)\]}]+)`,
-	)
-	cookieTailRe   = regexp.MustCompile(`(?i)(\bcookie\b\s*[:=]\s*\[REDACTED\])(?:[;]\s*[^,\r\n]+)+`)
-	authTailRe     = regexp.MustCompile(`(?i)(\bauthorization\b\s*[:=]\s*bearer\s+\[REDACTED\])(?:,\s*[^,\s]+)+`)
-	longHexTokenRe = regexp.MustCompile(`\b[a-fA-F0-9]{32,}\b`)
+	keyValueQuotedRe = regexp.MustCompile(`(?i)` + textSensitiveField + `("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')`)
+	keyValuePlainRe  = regexp.MustCompile(`(?i)` + textSensitiveField + `(bearer\s+)?([^"'\s,;)\]}]+)`)
+	keyValueJSONRe   = regexp.MustCompile(`(?i)` + textSensitiveField + `(?:bearer\s+)?$`)
+	cookieHeaderRe   = regexp.MustCompile(`(?im)(^|[ \t(])(cookie\b[ \t]*[:=][ \t]*)(?:[^\s"'=;,{\[]+=|\[REDACTED\](?:[ \t]*;|[\[{]))[^\r\n]*`)
+	cookieTailRe     = regexp.MustCompile(`(?i)(\bcookie\b\s*[:=]\s*\[REDACTED\])(?:[;]\s*[^,\r\n]+)+`)
+	authTailRe       = regexp.MustCompile(`(?i)(\bauthorization\b\s*[:=]\s*bearer\s+\[REDACTED\])(?:,\s*[^,\s]+)+`)
+	longHexTokenRe   = regexp.MustCompile(`\b[a-fA-F0-9]{32,}\b`)
 )
 
 // ExtractJSONBlocks returns balanced top-level object and array candidates in
@@ -127,38 +126,61 @@ func ExtractJSONBlocks(text string) []Block {
 // patterns use the package's fixed secret vocabulary.
 // Optional known secrets are also removed from decoded JSON and URL components.
 func RedactValue(value string, sensitiveKeys map[string]struct{}, secrets ...string) string {
-	value = redactKnownSecrets(value, secrets)
+	original := redactKnownSecrets(value, secrets)
+	value = normalizeSecretText(original)
 	keys := sensitiveKeys
 	if keys == nil {
 		keys = DefaultSensitiveKeys
 	}
 
-	blocks := ExtractJSONBlocks(value)
-	if len(blocks) > 0 {
-		for _, block := range slices.Backward(blocks) {
-			if block.Start < 0 || block.End > len(value) || block.Start >= block.End {
-				continue
-			}
-			segment := value[block.Start:block.End]
-			var parsed any
-			if err := json.Unmarshal([]byte(segment), &parsed); err != nil {
-				continue
-			}
-			redacted := RedactPrivateInfo(parsed, keys, secrets...)
-			data, err := json.Marshal(redacted)
-			if err != nil {
-				continue
-			}
-			value = value[:block.Start] + string(data) + value[block.End:]
+	var result strings.Builder
+	end := 0
+	for _, block := range ExtractJSONBlocks(value) {
+		// A URL may contain a JSON-looking path or query value. Keep
+		// that value with the URL so it is redacted in context.
+		prefix := value[end:block.Start]
+		// Leave JSON inside a plaintext Cookie header with the rest of the header.
+		lineStart := end + strings.LastIndexAny(prefix, "\r\n") + 1
+		if cookieHeaderRe.MatchString(value[lineStart : block.Start+1]) {
+			continue
 		}
+		start := strings.LastIndexAny(prefix, " \t\n\r<>\"'") + 1
+		if urlRe.MatchString(prefix[start:]) || strings.HasSuffix(prefix[start:], "://") {
+			continue
+		}
+		var parsed any
+		if err := json.Unmarshal([]byte(value[block.Start:block.End]), &parsed); err != nil {
+			continue
+		}
+		if field := keyValueJSONRe.FindStringIndex(prefix); field != nil {
+			result.WriteString(redactText(prefix[:field[0]], keys, secrets))
+			result.WriteString(prefix[field[0]:])
+			result.WriteString("[REDACTED]")
+			end = block.End
+			continue
+		}
+		data, err := json.Marshal(RedactPrivateInfo(parsed, keys, secrets...))
+		if err != nil {
+			continue
+		}
+		result.WriteString(redactText(prefix, keys, secrets))
+		result.Write(data)
+		end = block.End
 	}
+	output := redactText(value[end:], keys, secrets)
+	if end != 0 {
+		result.WriteString(output)
+		output = result.String()
+	}
+	if output == value {
+		return original
+	}
+	return output
+}
 
-	original := value
-	value = normalizeSecretText(value)
-	normalized := value
-	value = urlRe.ReplaceAllStringFunc(value, func(raw string) string {
-		return redactURL(raw, keys, secrets...)
-	})
+func redactText(value string, keys map[string]struct{}, secrets []string) string {
+	value = cookieHeaderRe.ReplaceAllString(value, "${1}${2}[REDACTED]")
+	value = redactURLs(value, keys, secrets...)
 	value = redactURLPath(value)
 	value = urlUserinfoRe.ReplaceAllString(value, `${1}[REDACTED]@`)
 	value = queryParamRe.ReplaceAllString(value, `${1}[REDACTED]`)
@@ -167,12 +189,64 @@ func RedactValue(value string, sensitiveKeys map[string]struct{}, secrets ...str
 	value = cookieTailRe.ReplaceAllString(value, `${1}`)
 	value = authTailRe.ReplaceAllString(value, `${1}`)
 	value = longHexTokenRe.ReplaceAllString(value, `[REDACTED]`)
-	value = redactKnownSecrets(value, secrets)
-	if value == normalized {
-		return original
-	}
+	return redactKnownSecrets(value, secrets)
+}
 
-	return value
+func redactURLs(value string, keys map[string]struct{}, secrets ...string) string {
+	var result strings.Builder
+	offset := 0
+	for {
+		loc := urlRe.FindStringIndex(value[offset:])
+		if loc == nil {
+			if offset == 0 {
+				return value
+			}
+			result.WriteString(value[offset:])
+			return result.String()
+		}
+		start, end := offset+loc[0], offset+loc[1]
+		if tag := strings.LastIndexByte(value[offset:start], '['); tag >= 0 {
+			// Only interpret brackets as markup after a known BBCode tag.
+			// Ordinary URL query values may contain literal brackets.
+			end = start + bbcodeURLLength(value[offset+tag:start], value[start:end])
+		}
+		result.WriteString(value[offset:start])
+		result.WriteString(redactURL(value[start:end], keys, secrets...))
+		offset = end
+	}
+}
+
+var (
+	bbcodeCloseURL = regexp.MustCompile(`(?i)\[/url\]`)
+	bbcodeCloseImg = regexp.MustCompile(`(?i)\[/img\]`)
+	bbcodeOpenImg  = regexp.MustCompile(`(?i)^\[img(?:[= ][^\[\]]*)?\]$`)
+)
+
+func bbcodeURLLength(prefix, raw string) int {
+	switch {
+	case strings.EqualFold(prefix, "[url="):
+		depth := 0
+		for i, char := range raw {
+			switch char {
+			case '[':
+				depth++
+			case ']':
+				if depth == 0 {
+					return i
+				}
+				depth--
+			}
+		}
+	case strings.EqualFold(prefix, "[url]"):
+		if match := bbcodeCloseURL.FindStringIndex(raw); match != nil {
+			return match[0]
+		}
+	case bbcodeOpenImg.MatchString(prefix):
+		if match := bbcodeCloseImg.FindStringIndex(raw); match != nil {
+			return match[0]
+		}
+	}
+	return len(raw)
 }
 
 func redactKnownSecrets(value string, secrets []string) string {
@@ -358,8 +432,8 @@ func RedactPrivateInfo(data any, sensitiveKeys map[string]struct{}, secrets ...s
 	case map[string]any:
 		redacted := make(map[string]any, len(typed))
 		for key, value := range typed {
-			redactedKey := redactKnownSecrets(key, secrets)
-			if isSensitiveKey(key, keys) {
+			redactedKey := redactText(normalizeSecretText(key), keys, secrets)
+			if _, collision := redacted[redactedKey]; collision || isSensitiveKey(key, keys) {
 				redacted[redactedKey] = "[REDACTED]"
 				continue
 			}
@@ -396,7 +470,15 @@ func isSensitiveKey(key string, keys map[string]struct{}) bool {
 	}
 	lower := canonicalSensitiveKey(key)
 	for candidate := range keys {
-		if strings.Contains(lower, canonicalSensitiveKey(candidate)) {
+		normalized := canonicalSensitiveKey(candidate)
+		if lower == "keywords" && normalized == "key" {
+			continue
+		}
+		// CZT's user_descr holds the release description. Its text still goes through redaction.
+		if strings.EqualFold(key, "user_descr") && normalized == "user" {
+			continue
+		}
+		if strings.Contains(lower, normalized) {
 			return true
 		}
 	}

@@ -10,6 +10,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+const errLockBusy = windows.ERROR_LOCK_VIOLATION
+
 func lockFile(file *os.File, wait bool) error {
 	flags := uint32(windows.LOCKFILE_EXCLUSIVE_LOCK)
 	if !wait {

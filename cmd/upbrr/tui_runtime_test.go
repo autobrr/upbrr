@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"os"
 	"strconv"
 	"strings"
@@ -437,6 +438,28 @@ func TestOperationEpochRejectsOldProgressAndCopiesAuthority(t *testing.T) {
 	api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{Completed: 2, Total: 3})
 	if b.progress == nil || b.progress.Completed != 2 {
 		t.Fatal("operation progress did not reach the bridge")
+	}
+	update := api.NewPreparationProgressUpdate(api.PreparationPhaseBDInfo, api.PreparationProgressRunning, "Reading streams.")
+	update.Substep = "Disc 2 of 3 (2 selected playlists)"
+	update.CompletedItems, update.TotalItems = 1, 3
+	priorRows := len(b.telemetry)
+	api.EmitPreparationProgress(ctx, api.NewPreparationProgressUpdate(api.PreparationPhaseBDInfo, api.PreparationProgressFailed, "Analysis failed."))
+	if len(b.telemetry) != priorRows || slices.ContainsFunc(b.telemetry, func(row cliTelemetry) bool { return row.Lane == "bdinfo" }) {
+		t.Fatal("terminal BDInfo update created a disc row before any disc was analyzed")
+	}
+	api.EmitPreparationProgress(ctx, update)
+	last := b.telemetry[len(b.telemetry)-1]
+	if last.Lane != "bdinfo" || last.Completed != 1 || last.Total != 3 || !strings.Contains(last.Phase, update.Substep) ||
+		b.progress.Completed != 2 {
+		t.Fatalf("BDInfo detail changed or advanced aggregate progress: %#v", last)
+	}
+	for _, status := range []api.PreparationProgressStatus{api.PreparationProgressCanceled, api.PreparationProgressFailed, api.PreparationProgressCompleted} {
+		api.EmitPreparationProgress(ctx, api.NewPreparationProgressUpdate(api.PreparationPhaseBDInfo, status, "Analysis ended."))
+		last = b.telemetry[len(b.telemetry)-1]
+		if last.Lane != "bdinfo" || last.Status != api.StageStatus(status) || last.Completed != 1 || last.Total != 3 ||
+			!strings.Contains(last.Phase, "Analysis ended.") || len(b.telemetry) != priorRows+1 {
+			t.Fatalf("terminal BDInfo update did not retire the existing disc row: %#v", last)
+		}
 	}
 }
 

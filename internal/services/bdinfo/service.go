@@ -102,9 +102,7 @@ func emitProgressEvent(reporter ProgressReporter, event bdrunner.ProgressEvent) 
 	//nolint:exhaustive // We intentionally emit progress only for user-facing stages.
 	switch event.Stage {
 	case bdrunner.StageStarting, bdrunner.StageScanning:
-		if strings.TrimSpace(event.Path) != "" {
-			reporter("Scanning: " + event.Path)
-		}
+		reporter("Scanning Blu-ray disc")
 	case bdrunner.StageClipInfo, bdrunner.StagePlaylist, bdrunner.StageStream:
 		emitDetailedProgressEvent(reporter, event)
 	case bdrunner.StageDiscovered:

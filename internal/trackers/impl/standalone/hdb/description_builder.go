@@ -49,6 +49,7 @@ func BuildDescription(
 	}
 
 	keptDescription = trackers.StripDescriptionSignatures(keptDescription)
+	keptDescription, discReports := description.SplitLeadingDiscReports(keptDescription)
 	keptDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(keptDescription)
 	parts := make([]string, 0, 8)
 
@@ -80,7 +81,10 @@ func BuildDescription(
 		parts = append(parts, transformBaseDescription(audioAnalysis, false))
 	}
 
-	if section := buildDiscScreenshotSections(meta, screenshots, meta.Options.Screens); section != "" {
+	if discReports != "" {
+		parts = append(parts, transformBaseDescription(discReports, false))
+	}
+	if section := buildScreenshotSection(screenshots, meta.Options.Screens); section != "" {
 		parts = append(parts, section)
 	}
 
@@ -100,7 +104,7 @@ func buildDiscSection(meta api.UploadSubject, dbPath string) (string, error) {
 		return "", nil
 	}
 
-	content, err := trackers.ReadBDInfo(dbPath, meta)
+	content, err := trackers.ReadBDInfoForDescription(dbPath, meta)
 	if err != nil {
 		return "", fmt.Errorf("description: HDB read BDInfo: %w", err)
 	}

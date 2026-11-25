@@ -273,14 +273,13 @@ func (s *Service) prepareLinkStaging(
 			Cleanup:         cleanup,
 		}
 		logger.Debugf(
-			"clients: linked torrent staging ready client=%s tracker=%s mode=%s files=%d layout_validated=%t path_mapping=%s save_path=%s",
+			"clients: linked torrent staging ready client=%s tracker=%s mode=%s files=%d layout_validated=%t path_mapping=%s save_path=[REDACTED]",
 			clientName,
 			tracker,
 			mode,
 			result.FileCount,
 			result.LayoutValidated,
 			mappingState,
-			result.SavePath,
 		)
 		return result, nil
 	}

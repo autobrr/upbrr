@@ -147,12 +147,12 @@ func TestReleaseWorkflowDurabilitySurvivesRestart(t *testing.T) {
 		t.Fatalf("checkpointed workflow work=%#v, want %#v", loadedWork, work)
 	}
 
-	effect := workflowEffectForTest(workflow, operation.OperationID, "effect-1", "semantic-1", now)
+	effect := workflowEffectForTest(workflow, operation.OperationID, "effect-1", "semantic-1", now.Add(123*time.Millisecond))
 	started, idempotent, err := repo.BeginReleaseWorkflowEffect(ctx, effect)
 	if err != nil || idempotent || started.Status != api.WorkflowEffectStatusStarted {
 		t.Fatalf("begin effect=%#v idempotent=%v err=%v", started, idempotent, err)
 	}
-	completedAt := now.Add(3 * time.Second)
+	completedAt := effect.StartedAt.Add(time.Microsecond)
 	started.UpdatedAt = completedAt
 	started.CompletedAt = &completedAt
 	if err := repo.CompleteReleaseWorkflowEffect(ctx, api.WorkflowEffectStatusSucceeded, started); err != nil {
@@ -163,7 +163,7 @@ func TestReleaseWorkflowDurabilitySurvivesRestart(t *testing.T) {
 		prior.EffectID != effect.EffectID {
 		t.Fatalf("repeat effect=%#v idempotent=%v err=%v", prior, idempotent, err)
 	}
-	uncertain := workflowEffectForTest(workflow, operation.OperationID, "effect-2", "semantic-2", now.Add(4*time.Second))
+	uncertain := workflowEffectForTest(workflow, operation.OperationID, "effect-2", "semantic-2", effect.StartedAt.Add(800*time.Microsecond))
 	if _, idempotent, err := repo.BeginReleaseWorkflowEffect(ctx, uncertain); err != nil || idempotent {
 		t.Fatalf("begin uncertain effect idempotent=%v err=%v", idempotent, err)
 	}
@@ -204,6 +204,13 @@ func TestReleaseWorkflowDurabilitySurvivesRestart(t *testing.T) {
 	loadedEvents, err := repo.LoadReleaseWorkflowEvents(ctx, workflow.OwnerID, workflow.WorkflowID, 1, 10)
 	if err != nil || len(loadedEvents) != 2 || loadedEvents[0].Sequence != 2 || loadedEvents[1].Sequence != 3 {
 		t.Fatalf("events after restart=%#v err=%v", loadedEvents, err)
+	}
+	// The newer unresolved receipt must win even if the retry matches the older success.
+	repeatedEffect.StartedAt = now.Add(6 * time.Second)
+	repeatedEffect.UpdatedAt = repeatedEffect.StartedAt
+	if prior, idempotent, err := repo.BeginReleaseWorkflowEffect(ctx, repeatedEffect); !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) ||
+		idempotent || prior.EffectID != uncertain.EffectID {
+		t.Fatalf("repeat across unresolved receipt=%q idempotent=%v err=%v", prior.EffectID, idempotent, err)
 	}
 	retry := workflowEffectForTest(workflow, operation.OperationID, "effect-3", "semantic-2", now.Add(6*time.Second))
 	if _, _, err := repo.BeginReleaseWorkflowEffect(ctx, retry); !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {

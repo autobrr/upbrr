@@ -27,7 +27,7 @@ The left navigation follows the release workflow. Some pages appear or unlock on
 
 The database owns one active input. Tabs in the same session follow its current state, including after reconnecting. Use **Close input** to release it before another session or CLI process starts work. Selecting another input waits for safe cleanup; an unfinished submission or unknown outcome must be resolved first. See [input lifecycle and reuse](../workflow/index.md#1-select-the-source).
 
-If **Legacy workflow recovery** appears, choose **Recover workflow** and check the tracker or torrent client for the interrupted operation. Use **Confirmed not completed; allow a fresh exact attempt** only after verifying that it did not complete. Recovery does not resubmit anything, and unresolved outcomes keep new inputs blocked.
+Startup and reopening an affected input recover interrupted attempts automatically without submitting anything. Check [restart recovery](../troubleshooting/index.md#an-operation-was-interrupted-by-restart) if a remote action might have completed or recovery reports an error.
 
 | Page               | Purpose                                                                  |
 | ------------------ | ------------------------------------------------------------------------ |
@@ -66,6 +66,8 @@ Existing description images are marked with unknown capture timestamps and prove
 Unselected or deleted screenshots are excluded from the links shown on **Upload Images** and from generated descriptions. You can select an unselected screenshot again to include it.
 
 Review the final screenshot selection and order before continuing. Existing URLs are reused only when the destination tracker and chosen image host allow them; other images need rehosting. Existing comparison blocks remain part of the description. Structured comparison sets can optionally supply their main column as ordinary screenshots; other columns never count toward screenshot requirements. See [image-host requirements](./settings/image-hosting.md).
+
+When you reopen the same input, compatible tracker-specific screenshots and their saved upload links are reused only for destinations that require those images. Other trackers keep the ordinary screenshot set.
 
 ### Comparison sets
 
@@ -238,7 +240,7 @@ Restarting the application leaves the previous idle input closed. Its History an
 
 ## Logging
 
-**Logging** shows recent sanitized application logs, a live stream, runtime verbosity, and file-rotation settings.
+**Logging** shows recent sanitized application logs, a live stream, display filters, and file-rotation settings.
 
 Logs are designed for safer sharing, but inspect them before posting. Never include configuration exports, cookies, credentials, announce URLs, or private API payloads.
 

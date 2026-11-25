@@ -367,26 +367,13 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 	var meta preparationstate.State
 	logger := logging.FromContext(ctx, s.logger)
 
-	bdinfoActive := false
-	bdinfoTerminal := false
-	var discProgress *progress.Step
 	reportBDInfo := func(status api.PreparationProgressStatus, message string) {
-		if discProgress == nil {
-			discProgress = progress.Begin(ctx, "Analyze selected Blu-ray playlists")
-		}
-		discProgress.Update(0, 0, message)
-		if status != api.PreparationProgressRunning {
-			discProgress.Finish(message, status == api.PreparationProgressFailed)
-		}
 		api.EmitPreparationProgress(ctx, api.NewPreparationProgressUpdate(api.PreparationPhaseBDInfo, status, message))
 	}
 	defer func() {
 		if err != nil {
 			for _, disc := range meta.Discs {
 				preparationstate.ReleaseHDRCaptures(disc.HDRCaptures)
-			}
-			if bdinfoActive && !bdinfoTerminal {
-				reportBDInfo(api.PreparationProgressFailed, "Blu-ray analysis failed.")
 			}
 			logger.Warnf("metadata: preparation blocked err=%s", redaction.RedactValue(err.Error(), nil))
 		}
@@ -465,18 +452,19 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 
 	if discType != "" {
 		if discType == "BDMV" && s.bdinfo != nil {
-			bdinfoActive = true
 			reportBDInfo(api.PreparationProgressRunning, "Analyzing selected Blu-ray playlists.")
 		}
-		if derr := s.collectDiscEvidence(ctx, request, &meta, reportBDInfo); derr != nil {
+		if derr := s.collectDiscEvidence(ctx, request, &meta); derr != nil {
 			if discType == "BDMV" && s.bdinfo != nil {
-				bdinfoTerminal = true
-				reportBDInfo(api.PreparationProgressFailed, "Blu-ray analysis failed.")
+				if errors.Is(derr, context.Canceled) || errors.Is(derr, context.DeadlineExceeded) {
+					reportBDInfo(api.PreparationProgressCanceled, "Blu-ray analysis canceled.")
+				} else {
+					reportBDInfo(api.PreparationProgressFailed, "Blu-ray analysis failed.")
+				}
 			}
 			return preparationstate.State{}, derr
 		}
 		if discType == "BDMV" {
-			bdinfoTerminal = true
 			if s.bdinfo == nil {
 				api.SkipPreparationProgress(ctx, api.PreparationPhaseBDInfo, "Blu-ray analysis is unavailable.")
 			} else {
@@ -770,7 +758,6 @@ func (s *Service) collectDiscEvidence(
 	ctx context.Context,
 	request preparationstate.Request,
 	meta *preparationstate.State,
-	reportBDInfo func(api.PreparationProgressStatus, string),
 ) (resultErr error) {
 	logger := logging.FromContext(ctx, s.logger)
 
@@ -806,7 +793,7 @@ func (s *Service) collectDiscEvidence(
 
 	resources := make([]preparationstate.DiscResource, 0, len(request.Layout.Discs))
 	var dvdPrimarySelected bool
-	for _, disc := range request.Layout.Discs {
+	for discIndex, disc := range request.Layout.Discs {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("metadata: disc analysis canceled: %w", err)
 		}
@@ -866,16 +853,22 @@ func (s *Service) collectDiscEvidence(
 			}
 
 			if s.bdinfo != nil {
-				analysisCtx := bdinfo.WithProgressReporter(ctx, func(message string) {
-					reportBDInfo(api.PreparationProgressRunning, message)
-				})
+				substep := fmt.Sprintf("Disc %d of %d (%d selected playlists)", discIndex+1, len(request.Layout.Discs), len(playlistFiles))
+				reportDisc := func(completed int, message string) {
+					update := api.NewPreparationProgressUpdate(api.PreparationPhaseBDInfo, api.PreparationProgressRunning, message)
+					update.Substep = substep
+					update.CompletedItems, update.TotalItems = completed, len(request.Layout.Discs)
+					api.EmitPreparationProgress(ctx, update)
+				}
+				reportDisc(discIndex, "Checking retained reports.")
+				analysisCtx := bdinfo.WithProgressReporter(ctx, func(message string) { reportDisc(discIndex, message) })
 				if request.Input.Controls.CaptureHDRMetadata {
 					analysisCtx = bdinfo.WithHDRCapture(
 						analysisCtx,
 						capturePreparedHDR(analysisCtx, &resource, artifactDir, request.SourceFingerprint),
 						playlistFiles...)
 				}
-				outputPath, _, err := s.resolveOrCreateBDMVSummaries(analysisCtx, request.Input, artifactDir, disc.Root, playlistFiles)
+				outputPath, scanned, err := s.resolveOrCreateBDMVSummaries(analysisCtx, request.Input, artifactDir, disc.Root, playlistFiles)
 				if err != nil {
 					return fmt.Errorf("metadata: analyze BDMV disc %s: %w", disc.Name, err)
 				}
@@ -895,6 +888,11 @@ func (s *Service) collectDiscEvidence(
 					}
 					meta.BDInfo = parsed
 				}
+				message := "Selected playlist reports ready from cache."
+				if scanned {
+					message = "Selected playlist reports generated."
+				}
+				reportDisc(discIndex+1, message)
 			}
 		}
 

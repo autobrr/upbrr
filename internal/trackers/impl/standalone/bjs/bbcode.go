@@ -13,6 +13,7 @@ func finalizeDescription(value string) string {
 	value = strings.TrimSpace(bbcode.NormalizeNewlines(value))
 	value = bbcode.ConvertNamedSpoilerToNamedHide(value)
 	value = bbcode.ConvertSpoilerToHide(value)
+	value = bbcode.ConvertCodeToPre(value)
 	value = bbcode.RemoveImageResize(value)
 	value = bbcode.ConvertToAlign(value)
 	value = bbcode.RemoveList(value)

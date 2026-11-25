@@ -21,7 +21,6 @@ type Props = Readonly<{
     path: string[],
     meta?: FieldMeta,
   ) => ReactElement;
-  updateConfigValue: (path: string[], value: ConfigValue) => void;
   sectionFieldMeta: Record<string, Record<string, FieldMeta>>;
 }>;
 
@@ -35,7 +34,6 @@ export default function LoggingPage(props: Props) {
     loadSettings,
     handleSaveSettings,
     renderField,
-    updateConfigValue,
     sectionFieldMeta,
   } = props;
 
@@ -92,7 +90,6 @@ export default function LoggingPage(props: Props) {
               <LogSettingsPanel
                 configData={configData}
                 renderField={renderField}
-                updateConfigValue={updateConfigValue}
                 fieldMeta={sectionFieldMeta.Logging || {}}
               />
             </div>

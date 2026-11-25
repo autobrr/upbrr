@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -223,6 +224,7 @@ func submitPreparedUpload(
 	trackerTorrentPath string,
 	logger api.Logger,
 ) (api.UploadSummary, error) {
+	logger = logging.FromContext(ctx, logger)
 	resp, err := postForm(ctx, noRedirectClient(client), redirectURL, payload, map[string]string{
 		"Referer":    redirectURL,
 		"User-Agent": azCookieUserAgent,
@@ -231,6 +233,7 @@ func submitPreparedUpload(
 		return api.UploadSummary{}, fmt.Errorf("trackers: %s upload finalize: %w", site.Name, err)
 	}
 	defer resp.Body.Close()
+	commonhttp.LogUploadResponse(ctx, site.Name, resp)
 	if resp.StatusCode != http.StatusFound {
 		_, responseDetail, readErr := commonhttp.ReadUploadResponseBody(resp, false, commonhttp.DefaultResponsePreviewBytes)
 		return api.UploadSummary{}, errors.Join(commonhttp.UploadHTTPError(site.Name, resp.StatusCode, responseDetail), readErr)

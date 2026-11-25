@@ -57,6 +57,22 @@ type FileField struct {
 	Content     []byte
 }
 
+// PreviewFileFields describes the attachments without reading them.
+func PreviewFileFields(files []FileField) []api.TrackerDryRunFile {
+	preview := make([]api.TrackerDryRunFile, 0, len(files))
+	for _, file := range files {
+		if strings.TrimSpace(file.FieldName) == "" {
+			continue
+		}
+		preview = append(preview, api.TrackerDryRunFile{
+			Field:   file.FieldName,
+			Path:    file.Path,
+			Present: len(file.Content) != 0 || strings.TrimSpace(file.Path) != "",
+		})
+	}
+	return preview
+}
+
 // CookiePathCandidates returns cleaned legacy cookie file paths beside dbPath
 // for the supplied tracker name and extensions.
 func CookiePathCandidates(dbPath string, name string, exts ...string) []string {

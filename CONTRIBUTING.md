@@ -56,7 +56,7 @@ Install the following on your machine:
 
 ### Supported platforms
 
-Every script, hook, and VS Code task runs on macOS, Linux, and Windows using native tooling:
+Local builds and contributor checks support native tooling on macOS, Linux, and Windows.
 
 - **macOS 13 Ventura or newer** — zsh or bash (required by Go 1.27).
 - **Linux** — bash.
@@ -72,8 +72,8 @@ Pull-request Go checks use seven shards on Linux, Windows, and macOS: general
 core, native HDR core, decoded core, workflow, media, metadata/config/database, and
 the remaining packages. Core tests are partitioned by their top-level names; all
 other packages enter exactly one shard. New packages default to the remaining
-packages shard unless they match an existing owner; `scripts/ci/go-test-packages.ps1 -Shard <name>` lists
-its packages. Linux shards use the race detector; Windows and macOS shards run native tests. `make test-go` still runs the full race suite locally.
+packages shard unless they match an existing owner. List the packages for a shard with
+`pwsh -NoProfile -File scripts/ci/go-test-packages.ps1 -Shard <name>`. Linux shards use the race detector; Windows and macOS shards run native tests. `make test-go` still runs the full race suite locally.
 Go ownership/policy checks and golangci-lint run on separate runners.
 
 ## How to contribute
@@ -81,10 +81,10 @@ Go ownership/policy checks and golangci-lint run on separate runners.
 - **Fork and clone:** [Fork the upbrr repository](https://github.com/autobrr/upbrr/fork) and clone it to start working on your changes.
 - **Branching:** Create a descriptively named branch.
   - Example: `git checkout -b fix/bt-dupe-check` or `git checkout -b feat/playlist-selection`
-- **Coding:** Keep changes narrow and match the surrounding style. For Go, follow the rules in [`AGENTS.md`](./AGENTS.md) and let `golangci-lint` drive. For frontend work, see the [Web UI development guide](./webui/README.md) and [`webui/AGENTS.md`](./webui/AGENTS.md), and let the Lefthook Prettier + ESLint hooks do the work.
+- **Coding:** Keep changes narrow and match the surrounding style. For Go, follow [the backend guidance](internal/AGENTS.md) and run the applicable checks. For frontend work, see the [Web UI development guide](./webui/README.md) and [`webui/AGENTS.md`](./webui/AGENTS.md), and let the Lefthook Prettier + ESLint hooks do the work.
 - **Commit messages:** We enforce [Conventional Commits](https://www.conventionalcommits.org/) via a repo-local validator. See [Commit message format](#commit-message-format) below.
   - No need to force-push or rebase — we squash on merge.
-- **Pull requests:** Submit a PR with a clear description. Mark it _Draft_ if still in progress. Reference related issues. Update public documentation for user-visible changes.
+- **Pull requests:** Use the [pull request template](.github/pull_request_template.md) unless a maintainer explicitly specifies another format. Mark it _Draft_ if still in progress. Reference related issues. Update public documentation for user-visible changes.
 - **Code review:** Be open to feedback during review.
 
 ### Pull request Docker images
@@ -283,7 +283,7 @@ make build
 
 On Windows, run `./dist/upbrr.exe serve --dev-no-auth` instead.
 
-Use `http://localhost:7480` for Playwright or browser automation. Avoid `5173` for embedded parity checks; stale embedded assets can otherwise hide or misrepresent frontend changes.
+The manually launched embedded server defaults to `http://localhost:7480`. Use that server for embedded parity checks. Managed Playwright runs start their own embedded servers on dynamically allocated loopback ports.
 
 Stop the embedded server after inspection so later runs do not reuse an old process.
 
@@ -294,7 +294,7 @@ Input correction suggestions are generated from the backend's metadata dictionar
 ### Backend
 
 ```sh
-# Run the CLI (defaults to ~/.upbrr/db.sqlite):
+# Run the CLI:
 go run ./cmd/upbrr
 
 # Run the embedded web server:
@@ -304,6 +304,8 @@ go run ./cmd/upbrr serve
 go run ./cmd/upbrr serve --dev-no-auth
 
 ```
+
+By default the database is `~/.upbrr/db.sqlite`. With `XDG_CONFIG_HOME` set, the canonical path is `upbrr/db.sqlite` beneath that directory. An existing `.upbrr/db.sqlite` under the same directory is the fallback when the canonical database is absent.
 
 ### Build
 
@@ -403,15 +405,36 @@ For Go modernization, check changed-package drift with `make gofix-check-changed
 Alternatively, `make precommit` and `make prepush` run the configured Lefthook checks.
 `make precommit` also runs stronger local validation: whitespace/conflict-marker checks, changed-package Go fix drift, full Go lint plus architecture/path/literal policies, log policy, and frontend lint/dead-code/type/unit/format checks. Hook wrappers do not replace focused Go tests, CSS Stylelint, embedded parity checks, or E2E checks when those areas changed.
 
+### Native comparison authoring checks
+
+The reproducible DVD/Blu-ray comparison integration test authors synthetic media
+with FFmpeg, dvdauthor 0.7.2 and tsMuxeR 2.7.0. These are test-only prerequisites;
+they are not additional upbrr runtime dependencies. Install the authoring tools
+from their upstream distributions before opting in. Set executable paths when
+they are not on `PATH`:
+
+```powershell
+$env:UPBRR_TEST_DISC_AUTHORING = '1'
+$env:UPBRR_TEST_DVDAUTHOR = 'C:\Tools\dvdauthor\dvdauthor.exe'
+$env:UPBRR_TEST_TSMUXER = 'C:\Tools\tsMuxeR\tsMuxeR.exe'
+go test -count=1 -v ./internal/core -run TestComparisonAuthoredDiscFastAcceptance -timeout 20m
+```
+
+With the opt-in enabled, missing prerequisites fail the test. It verifies both
+file/disc pairs and a three-column set with a 24000/1001-to-25 playback-rate
+relationship, independent original-frame checks and retained native replay.
+Ordinary tests do not require private media. dvdauthor is only required for the
+opt-in authored-disc integration test.
+
 ## Project conventions
 
 - The CLI and embedded WebUI share core services/config under `internal/`; frontend output is embedded from `internal/webserver/assets`.
 - `internal/preparedrelease` owns canonical prepared generations and display projections; `internal/externalidentity`, `internal/sourcelayout` and `internal/clientdiscovery` own external identity, source resources and torrent-client discovery.
 - `internal/webserver` owns runtime activation and workflow HTTP adapters; `internal/releaseworkflow` owns durable coordination; `webui/src/releaseSession` owns frontend release state and operation coordination. `pkg/api` holds shared request/response contracts.
 - Tracker families live under `internal/trackers/impl/{unit3d,azfamily,standalone}`. `internal/trackers/impl/registry.go` is the sole supported manifest; generic auth/dupe/data coordination lives under `internal/trackers/{auth,dupe,data}`, and encrypted cookies under `internal/cookies`.
-- Before tracker changes, follow [`ADDING_TRACKERS.md`](ADDING_TRACKERS.md) for semantic file ownership, registration/config, auth, naming, questions, immutable upload preparation and validation contracts. Do not duplicate those algorithms in generic infrastructure or UI. In particular, [content-filename transformations are prohibited](ADDING_TRACKERS.md#content-filename-policy); upload/search-title resolution is separate.
+- Before tracker changes, follow [`ADDING_TRACKERS.md`](ADDING_TRACKERS.md) for semantic file ownership, registration/config, auth, naming, questions, immutable upload preparation and validation contracts. Do not duplicate those algorithms in generic infrastructure or UI.
 - Metadata producers resolve parser/provider/media/user precedence before publishing a generation. Trackers consume [finalized facts](ADDING_TRACKERS.md#finalized-metadata-source-of-truth), preserving provider overrides and presentation-independent facts. Changes need producer-to-projection coverage, conflicting/empty parser cases and a prepared-contract version bump when cached semantics change.
-- Generic release policy, paths, clients and metainfo live under `internal/releasepolicy`, `internal/pathing`, `internal/torrentclient` and `internal/torrent/metainfo`. Generic BBCode, descriptions and image hosting live under `internal/{bbcode,description,imagehosting}`; tracker policy stays tracker-owned.
+- Generic release policy, paths, clients and metainfo live under `internal/releasepolicy`, `internal/pathing`, `internal/torrentclient` and `internal/torrent/metainfo`. Follow the root [torrent structure and content-name rules](AGENTS.md#torrent-structure-and-content-names) when changing torrent creation, reuse, or validation. Generic BBCode, descriptions and image hosting live under `internal/{bbcode,description,imagehosting}`; tracker policy stays tracker-owned.
 - Managed release files share the `internal/pathing/layout.ReleaseTempDirFor` owner under application `tmp`; feature outputs may nest inside it. Source fingerprints and verified-content identity govern reuse independently of names. Artifact layout changes require coordinated producers, persistence/hydration, consumers, History cleanup and upgrade docs; never add automatic legacy cache discovery or migration.
 - `make architecturepolicy` enforces release artifact roots, tracker semantic ownership and reviewed-name boundaries; `make pathpolicy` checks filesystem portability and containment conventions. Generated frontend bundles, populated embedded assets, Playwright output and local binaries remain uncommitted local artifacts.
 
@@ -437,7 +460,8 @@ Keep log levels purposeful.
 - `DEBUG` should include richer decision-making context useful for developer troubleshooting.
 - `TRACE` should capture near-complete operational flow for high-fidelity execution reporting.
 
-The logging CI posts a `github-actions[bot]` PR comment only when the analysis
+The [logging count reporter](.github/workflows/logpolicy-report.yml) posts a
+`github-actions[bot]` PR comment only when the analysis
 finds added Go logging statements. It refreshes the same comment when counts
 change, including a return to zero. Each report shows the counts by level and
 the analyzed head/base commits. It counts the added side of the complete
@@ -508,7 +532,8 @@ upbrr targets Windows, Linux, and macOS. Do not assume POSIX path behavior in Go
 
 [`AGENTS.md`](./AGENTS.md) contains cross-cutting repository rules and links to area guidance. Keep commands and contracts near their owner; do not repeat an ancestor's rules in every scoped file. Read the applicable ancestor chain and any explicitly required cross-area references before editing.
 
-- Go: [`internal/AGENTS.md`](internal/AGENTS.md), also referenced for `cmd/` and `pkg/` work.
+- Go across the repository is covered by [`internal/AGENTS.md`](internal/AGENTS.md).
+- MediaInfo artifact ownership is covered by [`internal/metadata/AGENTS.md`](internal/metadata/AGENTS.md).
 - CLI: [`cmd/upbrr/AGENTS.md`](cmd/upbrr/AGENTS.md); shared contracts: [`pkg/api/AGENTS.md`](pkg/api/AGENTS.md).
 - Tracker contracts: [`internal/trackers/AGENTS.md`](internal/trackers/AGENTS.md); duplicate evaluation: [`internal/trackers/dupe/AGENTS.md`](internal/trackers/dupe/AGENTS.md).
 - Browser transport/runtime: [`internal/webserver/AGENTS.md`](internal/webserver/AGENTS.md).
@@ -519,24 +544,3 @@ upbrr targets Windows, Linux, and macOS. Do not assume POSIX path behavior in Go
 Discovery depends on the agent. [Codex](https://developers.openai.com/codex/guides/agents-md) loads the root-to-working-directory chain at startup; cross-area references still need explicit reading. `GUIDANCE.md` is not a default Codex discovery name, and none exists here. Existing `CLAUDE.md` symlinks point to the corresponding guidance for Claude Code.
 
 When maintaining these files, keep the root small and route to scoped instructions or existing contributor documentation. Retain non-obvious repository invariants and verified commands rather than generic advice or copies of configuration. This follows [OpenAI's progressive-disclosure guidance](https://openai.com/index/harness-engineering/); it is not a line or token quota.
-
-### Native comparison authoring checks
-
-The reproducible DVD/Blu-ray comparison integration test authors synthetic media
-with FFmpeg, dvdauthor 0.7.2 and tsMuxeR 2.7.0. These are test-only prerequisites;
-they are not additional upbrr runtime dependencies. Install the authoring tools
-from their upstream distributions before opting in. Set executable paths when
-they are not on `PATH`:
-
-```powershell
-$env:UPBRR_TEST_DISC_AUTHORING = '1'
-$env:UPBRR_TEST_DVDAUTHOR = 'C:\Tools\dvdauthor\dvdauthor.exe'
-$env:UPBRR_TEST_TSMUXER = 'C:\Tools\tsMuxeR\tsMuxeR.exe'
-go test -count=1 -v ./internal/core -run TestComparisonAuthoredDiscFastAcceptance -timeout 20m
-```
-
-With the opt-in enabled, missing prerequisites fail the test. It verifies both
-file/disc pairs and a three-column set with a 24000/1001-to-25 playback-rate
-relationship, independent original-frame checks and retained native replay.
-Ordinary tests do not require private media. dvdauthor is only required for the
-opt-in authored-disc integration test.

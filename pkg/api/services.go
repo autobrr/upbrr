@@ -1934,6 +1934,9 @@ type DescriptionSubject struct {
 	ImageHost                            ImageHostOverrides
 	TrackerData                          []TrackerMetadata
 	ExactMedia                           *ExactMediaAssets
+
+	// FileList is the prepared file inventory used by per-file description rules.
+	FileList []string `json:",omitempty"`
 }
 
 // NewDescriptionSubject projects upload state into the description builder's
@@ -1951,6 +1954,7 @@ func NewDescriptionSubject(subject UploadSubject) DescriptionSubject {
 		HardcodedSubtitleCoverage:   slices.Clone(subject.HardcodedSubtitleCoverage),
 		MediaBinding:                subject.MediaBinding,
 		SourcePath:                  subject.SourcePath,
+		FileList:                    slices.Clone(subject.FileList),
 		DiscType:                    subject.DiscType,
 		MediaInfoTextPath:           subject.MediaInfoTextPath,
 		DVDVOBMediaInfoText:         subject.DVDVOBMediaInfoText,

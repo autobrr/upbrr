@@ -13,6 +13,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -420,6 +421,28 @@ func applyWorkflowProjectionRequirements(
 	}
 	if descriptor.WorkflowMedia != nil {
 		projection.Artifacts.DVDMenuCount = max(projection.Artifacts.DVDMenuCount, descriptor.WorkflowMedia.DVDMenuCount)
+		if count := descriptor.WorkflowMedia.AdditionalDiscScreenshots; count > 0 && len(subject.Discs) > 1 &&
+			projection.Artifacts.ScreenshotCount > 0 {
+			ids := make([]string, len(subject.Discs))
+			for index, disc := range subject.Discs {
+				ids[index] = disc.ID
+			}
+			projection.Artifacts.DiscScreenshots = &api.DiscScreenshotRequirement{DiscIDs: ids, AdditionalCount: count}
+		}
+		if count := descriptor.WorkflowMedia.PackScreenshotsPerMember; count > 0 && strings.TrimSpace(subject.DiscType) == "" {
+			members := mediafacts.PackScreenshotMembers(subject.FileList)
+			if len(members) > 1 {
+				ids := make([]string, len(members))
+				for i, member := range members {
+					ids[i] = member.ID
+				}
+				projection.Artifacts.ScreenshotCount = 0
+				projection.Artifacts.PackScreenshots = &api.PackScreenshotRequirement{
+					MemberIDs:      ids,
+					CountPerMember: count,
+				}
+			}
+		}
 	}
 	projection.Artifacts.Description = descriptor.UploadContentMode.UsesDescription()
 	projection.Artifacts.AllowEmptyDescription = descriptor.UploadContentMode == UploadContentModeOptionalDescription
