@@ -836,6 +836,55 @@ func TestStageWantedFilesFallbackOrderCancellationAndStaleCleanup(t *testing.T) 
 		}
 	})
 
+	t.Run("removeWantedStagingDir restores lock marker when directory removal fails", func(t *testing.T) {
+		t.Parallel()
+		if runtime.GOOS != "windows" && os.Geteuid() == 0 {
+			t.Skip("root can remove entries inside read-only directories on Unix")
+		}
+		releaseRoot := t.TempDir()
+		sourceDir := filepath.Join(t.TempDir(), "source")
+		sourceFile := filepath.Join(sourceDir, "ep1.mkv")
+		writeTestFile(t, sourceFile, "source bytes")
+
+		stageDir := filepath.Join(releaseRoot, "wanted-files-dirfail")
+		payloadFile := filepath.Join(stageDir, "ep1.mkv")
+		lockPath := filepath.Join(stageDir, wantedStagingLockName)
+		writeTestFile(t, payloadFile, "staged bytes")
+		writeTestFile(t, lockPath, "")
+
+		var unlock func()
+		if runtime.GOOS == "windows" {
+			handle, openErr := os.Open(stageDir)
+			if openErr != nil {
+				t.Fatalf("open staging dir: %v", openErr)
+			}
+			unlock = func() { _ = handle.Close() }
+		} else {
+			if chmodErr := os.Chmod(releaseRoot, 0o500); chmodErr != nil {
+				t.Fatalf("chmod release root: %v", chmodErr)
+			}
+			unlock = func() { _ = os.Chmod(releaseRoot, 0o700) }
+		}
+		t.Cleanup(unlock)
+
+		if err := removeWantedStagingDir(t.Context(), stageDir); err == nil {
+			t.Fatal("expected removeWantedStagingDir to fail while staging dir cannot be removed")
+		}
+		if _, statErr := os.Lstat(payloadFile); !os.IsNotExist(statErr) {
+			t.Fatalf("expected payload file to be removed before final dir unlink, stat err = %v", statErr)
+		}
+		lockInfo, statErr := os.Lstat(lockPath)
+		if statErr != nil || !lockInfo.Mode().IsRegular() {
+			t.Fatalf("expected .staging.lock to be restored after dir removal failure, info=%v err=%v", lockInfo, statErr)
+		}
+
+		unlock()
+		cleanupStaleWantedStagingDirs(t.Context(), releaseRoot, sourceDir, []string{sourceFile}, api.NopLogger{})
+		if _, statErr := os.Stat(stageDir); !os.IsNotExist(statErr) {
+			t.Fatalf("expected stale sweep to remove staging dir after marker restore, stat err = %v", statErr)
+		}
+	})
+
 	t.Run("stale cleanup protects directory reached through symlinked source", func(t *testing.T) {
 		t.Parallel()
 		base := t.TempDir()
@@ -919,6 +968,21 @@ func TestStagingPreservesReadOnlyAttributeChangedAfterHardlink(t *testing.T) {
 	}
 }
 
+func withLockWaitSignal(ctx context.Context, waiting chan struct{}) context.Context {
+	return &lockWaitSignalContext{Context: ctx, waiting: waiting}
+}
+
+type lockWaitSignalContext struct {
+	context.Context
+	once    sync.Once
+	waiting chan struct{}
+}
+
+func (c *lockWaitSignalContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.waiting) })
+	return c.Context.Done()
+}
+
 func TestWantedStagingCoordinationIsReleaseScopedAndCancelable(t *testing.T) {
 	t.Parallel()
 	tmpRoot := t.TempDir()
@@ -946,16 +1010,22 @@ func TestWantedStagingCoordinationIsReleaseScopedAndCancelable(t *testing.T) {
 	ctxA, cancelA := context.WithCancel(t.Context())
 	defer cancelA()
 	waiting := make(chan struct{})
+	waitCtxA := withLockWaitSignal(ctxA, waiting)
 	done := make(chan error, 1)
 	go func() {
-		close(waiting)
-		spec, err := stage(ctxA, sourceA, fileA)
+		spec, err := stage(waitCtxA, sourceA, fileA)
 		spec.cleanup(ctxA, api.NopLogger{})
 		done <- err
 	}()
-	<-waiting
 	ctxB, cancelB := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancelB()
+	select {
+	case <-waiting:
+	case err := <-done:
+		t.Fatalf("release A returned before waiting on its own lock: %v", err)
+	case <-ctxB.Done():
+		t.Fatal("release A did not reach lock contention")
+	}
 	otherDone := make(chan error, 1)
 	go func() {
 		spec, err := stage(ctxB, sourceB, fileB)

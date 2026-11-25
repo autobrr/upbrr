@@ -267,13 +267,14 @@ func TestGeneratedBasesRemainStagedUntilPublication(t *testing.T) {
 	}
 }
 
-func TestVariantPublicationCanceledWhileRetentionLockHeld(t *testing.T) {
+func TestVariantPublicationCanceledBeforeCommitPreservesStageForDiscard(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	stage := filepath.Join(dir, "staged.torrent")
 	destination := filepath.Join(dir, "retained.torrent")
 	writeTestFile(t, stage, "synthetic torrent")
 	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
+	cancel()
 	file := &generatedTorrentPublication{
 		stage:       stage,
 		destination: destination,
@@ -281,19 +282,7 @@ func TestVariantPublicationCanceledWhileRetentionLockHeld(t *testing.T) {
 	}
 	publication := &variantPublication{files: []*generatedTorrentPublication{file}, path: destination}
 
-	started := make(chan struct{})
-	done := make(chan error, 1)
-	retainedVariantMu.Lock()
-	go func() {
-		close(started)
-		_, err := publication.Publish()
-		done <- err
-	}()
-	<-started
-	cancel()
-	retainedVariantMu.Unlock()
-
-	if err := <-done; !errors.Is(err, context.Canceled) {
+	if _, err := publication.Publish(); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Publish error = %v, want context.Canceled", err)
 	}
 	if _, err := os.Lstat(destination); !errors.Is(err, os.ErrNotExist) {
@@ -714,8 +703,15 @@ func TestEffectivePolicySharesGenerationAndValidationMaximum(t *testing.T) {
 
 type recordingDebugLogger struct {
 	api.NopLogger
-	mu    sync.Mutex
-	lines []string
+	mu         sync.Mutex
+	lines      []string
+	traceLines []string
+}
+
+func (l *recordingDebugLogger) Tracef(format string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.traceLines = append(l.traceLines, fmt.Sprintf(format, args...))
 }
 
 func (l *recordingDebugLogger) Debugf(format string, args ...any) {
@@ -734,6 +730,12 @@ func (l *recordingDebugLogger) snapshot() []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return slices.Clone(l.lines)
+}
+
+func (l *recordingDebugLogger) traceSnapshot() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.traceLines)
 }
 
 func TestMultiTrackerAlignedWrapperRecheckClosesTorrentScopes(t *testing.T) {
@@ -839,14 +841,14 @@ func TestCreateProgressAndCandidateRejectionDiagnostics(t *testing.T) {
 		if !slices.Contains(messages, "Hashing torrent: no compatible reusable artifact") {
 			t.Fatalf("expected non-rehash generation reason, got %v", messages)
 		}
-		for _, line := range logger.snapshot() {
+		for _, line := range slices.Concat(logger.snapshot(), logger.traceSnapshot()) {
 			if strings.Contains(line, "reusable candidate rejected") && strings.Contains(line, "stage=content_layout") {
 				t.Fatalf("unexpected nonexistent candidate rejection log: %s", line)
 			}
 		}
 	})
 
-	t.Run("piece-count rejection logs debug reason and terminates skipped nohash scope", func(t *testing.T) {
+	t.Run("piece-count rejection logs trace reason and terminates skipped nohash scope", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
 		source := filepath.Join(dir, "Pack.2026.mkv")
@@ -890,11 +892,16 @@ func TestCreateProgressAndCandidateRejectionDiagnostics(t *testing.T) {
 		if last.Tracker != "TL" || last.Status != "skipped" {
 			t.Fatalf("expected terminal skipped progress for TL, got %+v", last)
 		}
-		loggedPieceCount := slices.ContainsFunc(logger.snapshot(), func(line string) bool {
+		loggedPieceCount := slices.ContainsFunc(logger.traceSnapshot(), func(line string) bool {
 			return strings.Contains(line, "reusable candidate rejected") && strings.Contains(line, "stage=piece_count")
 		})
 		if !loggedPieceCount {
-			t.Fatalf("expected stage=piece_count rejection debug log, got %v", logger.snapshot())
+			t.Fatalf("expected stage=piece_count rejection trace log, got trace=%v other=%v", logger.traceSnapshot(), logger.snapshot())
+		}
+		if slices.ContainsFunc(logger.snapshot(), func(line string) bool {
+			return strings.Contains(line, "reusable candidate rejected")
+		}) {
+			t.Fatalf("expected reusable candidate rejection at TRACE only, got %v", logger.snapshot())
 		}
 	})
 
@@ -1074,10 +1081,10 @@ func TestCreateProgressAndCandidateRejectionDiagnostics(t *testing.T) {
 			if err != nil {
 				t.Fatalf("expected skipped nohash result, got err=%v", err)
 			}
-			if !slices.ContainsFunc(logger.snapshot(), func(line string) bool {
+			if !slices.ContainsFunc(logger.traceSnapshot(), func(line string) bool {
 				return strings.Contains(line, "reusable candidate rejected") && strings.Contains(line, "stage="+tc.stage)
 			}) {
-				t.Fatalf("expected wrapper rejection at stage %s, got %v", tc.stage, logger.snapshot())
+				t.Fatalf("expected wrapper rejection at stage %s, got trace=%v other=%v", tc.stage, logger.traceSnapshot(), logger.snapshot())
 			}
 		})
 	}

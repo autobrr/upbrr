@@ -140,12 +140,19 @@ func TestStaleStagingTreeProtectsNestedSourceDirectoryIdentity(t *testing.T) {
 	nested := filepath.Join(stale, "payload", "nested")
 	writeTestFile(t, filepath.Join(source, "ep1.mkv"), "source bytes")
 	writeTestFile(t, filepath.Join(nested, "ep1.mkv"), "staged bytes")
+	sourceInfo, err := os.Stat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !staleStagingTreeDisjoint(t.Context(), stale, source, []os.FileInfo{sourceInfo}) {
+		t.Fatal("expected staging tree to be disjoint without nested source identity")
+	}
 	// Use the identity observed through an alias to the nested directory.
 	aliasInfo, err := os.Stat(nested)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if staleStagingTreeDisjoint(t.Context(), stale, source, []os.FileInfo{aliasInfo}) {
+	if staleStagingTreeDisjoint(t.Context(), stale, source, []os.FileInfo{sourceInfo, aliasInfo}) {
 		t.Fatal("stale staging tree includes an aliased source directory")
 	}
 }

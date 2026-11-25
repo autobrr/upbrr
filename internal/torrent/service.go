@@ -566,7 +566,7 @@ func normalizedTrackerNames(trackers []string) []string {
 
 // validateCandidateTorrent checks an existing torrent against the active
 // tracker policy and prepared source layout. Expected candidate rejection is
-// logged at debug level so discovery can continue without operator warnings.
+// logged at trace level so discovery can continue without operator warnings.
 func validateCandidateTorrent(ctx context.Context, path string, policy *trackerTorrentPolicy, meta api.TorrentSubject, logger api.Logger) error {
 	if err := validateCandidateTorrentPolicy(path, policy, meta, logger); err != nil {
 		return err
@@ -618,7 +618,7 @@ func validateCandidateTorrentContent(ctx context.Context, path string, meta api.
 
 func logReusableCandidateRejection(logger api.Logger, path, stage string, err error) {
 	if logger != nil {
-		logger.Debugf("torrent: reusable candidate rejected path=%s stage=%s reason=%s", path, stage, redaction.RedactValue(err.Error(), nil))
+		logger.Tracef("torrent: reusable candidate rejected path=%s stage=%s reason=%s", path, stage, redaction.RedactValue(err.Error(), nil))
 	}
 }
 
@@ -1181,8 +1181,9 @@ func cleanupStaleWantedStagingDirs(ctx context.Context, releaseRoot string, clea
 }
 
 // removeWantedStagingDir removes staged payload entries before removing
-// .staging.lock so a partial cleanup failure never strands an unmarked
-// wanted-files-* directory that future stale sweeps would skip.
+// .staging.lock and restores the marker if removing dir fails so partial
+// cleanup failures never strand an unmarked wanted-files-* directory that
+// future stale sweeps would skip.
 func removeWantedStagingDir(ctx context.Context, dir string) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("remove wanted staging dir: %w", err)
@@ -1214,6 +1215,9 @@ func removeWantedStagingDir(ctx context.Context, dir string) error {
 		return fmt.Errorf("remove staging lock %q: %w", lockPath, err)
 	}
 	if err := removeStagedEntry(dir); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if marker, restoreErr := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600); restoreErr == nil {
+			_ = marker.Close()
+		}
 		return fmt.Errorf("remove staging dir %q: %w", dir, err)
 	}
 	return nil
