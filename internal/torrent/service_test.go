@@ -9,10 +9,14 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	slashpath "path" //nolint:depguard // Joins torrent-internal slash-delimited metainfo paths.
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -21,6 +25,8 @@ import (
 	mkbrr "github.com/autobrr/mkbrr/torrent"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/filelock"
+	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/ant"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/hdb"
@@ -310,7 +316,7 @@ func TestCreateFolderPackRejectsPartialMissingWantedFile(t *testing.T) {
 func TestCreateFolderPackEscapesWantedFilePatterns(t *testing.T) {
 	t.Parallel()
 
-	sourceDir := filepath.Join(t.TempDir(), "Show.S01.1080p.WEB-DL-GRP")
+	sourceDir := filepath.Join(t.TempDir(), wantedStagingLockName)
 	episode1 := filepath.Join(sourceDir, "Show, [S01E01].mkv")
 	episode2 := filepath.Join(sourceDir, "Show.{S01E02}.mkv")
 	writeTestFile(t, episode1, "episode 1")
@@ -327,8 +333,748 @@ func TestCreateFolderPackEscapesWantedFilePatterns(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	_, files := loadTorrentShape(t, result.Path)
+	name, files := loadTorrentShape(t, result.Path)
+	if name != wantedStagingLockName {
+		t.Fatalf("staged torrent root = %q, want %q", name, wantedStagingLockName)
+	}
 	assertStringSliceEqual(t, files, []string{"Show, [S01E01].mkv", "Show.{S01E02}.mkv"})
+}
+
+func TestCreateFolderPackStagesRelativeSymlink(t *testing.T) {
+	t.Parallel()
+	source := filepath.Join(t.TempDir(), "Show.S01.1080p.WEB-DL-GRP")
+	target := filepath.Join("originals", "one.mkv")
+	episode1 := filepath.Join(source, "Episode, 1.mkv")
+	episode2 := filepath.Join(source, "Episode 2.mkv")
+	writeTestFile(t, filepath.Join(source, target), "episode 1")
+	writeTestFile(t, episode2, "episode 2")
+	if err := os.Symlink(target, episode1); err != nil {
+		const privilegeNotHeld = syscall.Errno(1314) // Windows ERROR_PRIVILEGE_NOT_HELD.
+		if runtime.GOOS == "windows" && errors.Is(err, privilegeNotHeld) {
+			t.Skipf("symlink creation requires Developer Mode or symlink privilege: %v", err)
+		}
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	_, wanted, err := filesystem.CollectVideoFiles(ctx, source, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !wantedMatchesFullDirectory(ctx, source, append(slices.Clone(wanted), filepath.Join(source, target))) {
+		t.Fatal("expected a regular file symlink to count toward a full-directory match")
+	}
+	if wantedMatchesFullDirectory(ctx, source, wanted) {
+		t.Fatal("expected unselected symlink target to prevent full-directory bypass")
+	}
+	subject := api.TorrentSubject{SourcePath: source, FileList: wanted}
+	tmpRoot := t.TempDir()
+
+	spec, err := stageWantedFilesWithOps(ctx, subject, tmpRoot, wanted, api.NopLogger{}, wantedStageOps{
+		link: func(src, dst string) error {
+			if src == episode1 {
+				t.Fatal("staging tried to hardlink the relative symlink")
+			}
+			return os.Link(src, dst)
+		},
+		symlink: os.Symlink,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer spec.cleanup(ctx, api.NopLogger{})
+	staged, err := os.Lstat(filepath.Join(spec.path, filepath.Base(episode2)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(mustStat(t, episode2), staged) {
+		t.Fatal("expected the regular episode to be staged as a hardlink")
+	}
+
+	result, err := NewService(api.NopLogger{}, tmpRoot).Create(ctx, subject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, files := loadTorrentShape(t, result.Path)
+	if name != filepath.Base(source) {
+		t.Fatalf("torrent root name = %q, want %q", name, filepath.Base(source))
+	}
+	assertStringSliceEqual(t, files, []string{filepath.Base(episode2), filepath.Base(episode1)})
+	if err := verifyCandidateTorrentData(ctx, result.Path, subject); err != nil {
+		t.Fatalf("verify generated torrent: %v", err)
+	}
+}
+
+func TestCreateFolderPackSkipsStagingWhenWantedMatchesFullDirectory(t *testing.T) {
+	t.Parallel()
+
+	t.Run("comma-named full directory bypasses staging and ignores sidecars", func(t *testing.T) {
+		t.Parallel()
+		sourceDir := filepath.Join(t.TempDir(), "Show.S01.1080p.WEB-DL-GRP")
+		episode1 := filepath.Join(sourceDir, "Show, Part 1 S01E01.mkv")
+		episode2 := filepath.Join(sourceDir, "Show, Part 2 S01E02.mkv")
+		writeTestFile(t, episode1, "episode 1")
+		writeTestFile(t, episode2, "episode 2")
+		// Ignored sidecars must not force staging when all non-ignored files are wanted.
+		writeTestFile(t, filepath.Join(sourceDir, "ignored.torrent"), "ignored")
+
+		tmpRoot := t.TempDir()
+		subject := api.TorrentSubject{
+			SourcePath: sourceDir,
+			FileList:   []string{episode1, episode2},
+		}
+		spec, err := resolveCreateSpec(t.Context(), subject, tmpRoot, false, api.NopLogger{})
+		if err != nil {
+			t.Fatalf("resolveCreateSpec failed: %v", err)
+		}
+		defer spec.cleanup(t.Context(), api.NopLogger{})
+		if spec.path != sourceDir || len(spec.includePatterns) != 0 || spec.cleanupLock != nil || !spec.fullDirBypass {
+			t.Fatalf("expected direct full-directory spec without staging, got %+v", spec)
+		}
+
+		result, err := NewService(api.NopLogger{}, tmpRoot).Create(t.Context(), subject)
+		if err != nil {
+			t.Fatalf("Create failed: %v", err)
+		}
+		name, files := loadTorrentShape(t, result.Path)
+		if name != filepath.Base(sourceDir) {
+			t.Fatalf("torrent root name = %q, want %q", name, filepath.Base(sourceDir))
+		}
+		assertStringSliceEqual(t, files, []string{"Show, Part 1 S01E01.mkv", "Show, Part 2 S01E02.mkv"})
+	})
+
+	t.Run("ordinary full directory keeps explicit include patterns without directory walk", func(t *testing.T) {
+		t.Parallel()
+		sourceDir := filepath.Join(t.TempDir(), "Show.S01.1080p.WEB-DL-GRP")
+		episode1 := filepath.Join(sourceDir, "Show.S01E01.mkv")
+		episode2 := filepath.Join(sourceDir, "Show.S01E02.mkv")
+		writeTestFile(t, episode1, "episode 1")
+		writeTestFile(t, episode2, "episode 2")
+
+		spec, err := resolveCreateSpec(t.Context(), api.TorrentSubject{
+			SourcePath: sourceDir,
+			FileList:   []string{episode1, episode2},
+		}, t.TempDir(), false, api.NopLogger{})
+		if err != nil {
+			t.Fatalf("resolveCreateSpec failed: %v", err)
+		}
+		defer spec.cleanup(t.Context(), api.NopLogger{})
+		if spec.fullDirBypass || len(spec.includePatterns) != 2 || spec.cleanupLock != nil {
+			t.Fatalf("expected include-pattern spec for non-comma selection, got %+v", spec)
+		}
+	})
+
+	t.Run("full-directory bypass falls back to staging when an extra file appears before hashing", func(t *testing.T) {
+		t.Parallel()
+		sourceDir := filepath.Join(t.TempDir(), "Show.S01.1080p.WEB-DL-GRP")
+		episode1 := filepath.Join(sourceDir, "Show, Part 1 S01E01.mkv")
+		episode2 := filepath.Join(sourceDir, "Show, Part 2 S01E02.mkv")
+		writeTestFile(t, episode1, "episode 1")
+		writeTestFile(t, episode2, "episode 2")
+
+		var (
+			addedExtra sync.Once
+			mu         sync.Mutex
+			statuses   []string
+		)
+		ctx := api.WithUploadProgressReporter(t.Context(), func(update api.UploadProgressUpdate) {
+			mu.Lock()
+			statuses = append(statuses, update.Status)
+			mu.Unlock()
+			if strings.HasPrefix(update.Message, "Hashing torrent:") {
+				addedExtra.Do(func() {
+					writeTestFile(t, filepath.Join(sourceDir, "unexpected-extra.mkv"), "extra")
+				})
+			}
+		})
+		result, err := NewService(api.NopLogger{}, t.TempDir()).Create(ctx, api.TorrentSubject{
+			SourcePath: sourceDir,
+			FileList:   []string{episode1, episode2},
+		})
+		if err != nil {
+			t.Fatalf("Create failed on TOCTOU retry: %v", err)
+		}
+		_, files := loadTorrentShape(t, result.Path)
+		assertStringSliceEqual(t, files, []string{"Show, Part 1 S01E01.mkv", "Show, Part 2 S01E02.mkv"})
+		mu.Lock()
+		defer mu.Unlock()
+		if slices.Contains(statuses, "failed") {
+			t.Fatalf("bypass retry emitted premature failed status before succeeding: %v", statuses)
+		}
+		if len(statuses) == 0 || statuses[len(statuses)-1] != "completed" {
+			t.Fatalf("expected final completed status after bypass retry, got %v", statuses)
+		}
+	})
+
+	t.Run("wantedMatchesFullDirectory honors canceled context", func(t *testing.T) {
+		t.Parallel()
+		sourceDir := filepath.Join(t.TempDir(), "Show.S01.1080p.WEB-DL-GRP")
+		episode1 := filepath.Join(sourceDir, "Show, Part 1 S01E01.mkv")
+		writeTestFile(t, episode1, "episode 1")
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		if wantedMatchesFullDirectory(ctx, sourceDir, []string{episode1}) {
+			t.Fatalf("expected canceled context to disable full-directory bypass")
+		}
+	})
+}
+
+func TestStageWantedFilesFallbackOrderCancellationAndStaleCleanup(t *testing.T) {
+	t.Parallel()
+
+	sourceDir := filepath.Join(t.TempDir(), "Show.S01.1080p.WEB-DL-GRP")
+	episode1 := filepath.Join(sourceDir, "Show, Ep 1.mkv")
+	episode2 := filepath.Join(sourceDir, "Show, Ep 2.mkv")
+	writeTestFile(t, episode1, "episode 1 bytes")
+	writeTestFile(t, episode2, "episode 2 bytes")
+
+	t.Run("prefers symlink over copy when link fails", func(t *testing.T) {
+		t.Parallel()
+		tmpRoot := t.TempDir()
+		var symlinks int
+		spec, err := stageWantedFilesWithOps(
+			t.Context(),
+			api.TorrentSubject{SourcePath: sourceDir},
+			tmpRoot,
+			[]string{episode1, episode2},
+			api.NopLogger{},
+			wantedStageOps{
+				link: func(string, string) error { return errors.New("cross-device link") },
+				symlink: func(oldname, newname string) error {
+					symlinks++
+					return os.WriteFile(newname, []byte("symlink:"+filepath.Base(oldname)), 0o600)
+				},
+			},
+		)
+		if err != nil {
+			t.Fatalf("stageWantedFilesWithOps failed: %v", err)
+		}
+		defer spec.cleanup(t.Context(), api.NopLogger{})
+		if symlinks != 2 {
+			t.Fatalf("expected symlink fallback for both files, got symlinks=%d", symlinks)
+		}
+		for _, sourceFile := range []string{episode1, episode2} {
+			stagedBytes, readErr := os.ReadFile(filepath.Join(spec.path, filepath.Base(sourceFile)))
+			if readErr != nil {
+				t.Fatalf("read staged file: %v", readErr)
+			}
+			want := "symlink:" + filepath.Base(sourceFile)
+			if string(stagedBytes) != want {
+				t.Fatalf("staged file bytes = %q, want %q (copy fallback should not have run)", string(stagedBytes), want)
+			}
+		}
+	})
+
+	t.Run("copy fallback handles read-only source, logs warning, honors cancellation, and cleans only marked stale dirs", func(t *testing.T) {
+		t.Parallel()
+		roSourceDir := filepath.Join(t.TempDir(), "Show.RO.1080p.WEB-DL-GRP")
+		roEpisode1 := filepath.Join(roSourceDir, "Show, Ep 1.mkv")
+		roEpisode2 := filepath.Join(roSourceDir, "Show, Ep 2.mkv")
+		writeTestFile(t, roEpisode1, "episode 1 bytes")
+		writeTestFile(t, roEpisode2, "episode 2 bytes")
+		if err := os.Chmod(roEpisode1, 0o444); err != nil {
+			t.Fatalf("chmod read-only source: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(roEpisode1, 0o600) })
+
+		tmpRoot := t.TempDir()
+		stageByCopy := func(ctx context.Context, logger api.Logger) (createSpec, error) {
+			return stageWantedFilesWithOps(
+				ctx,
+				api.TorrentSubject{SourcePath: roSourceDir, Trackers: []string{"TL"}},
+				tmpRoot,
+				[]string{roEpisode1, roEpisode2},
+				logger,
+				wantedStageOps{
+					link:    func(string, string) error { return errors.New("cross-device link") },
+					symlink: func(string, string) error { return errors.New("symlink unsupported") },
+				},
+			)
+		}
+		logger := &recordingDebugLogger{}
+		spec, err := stageByCopy(t.Context(), logger)
+		if err != nil {
+			t.Fatalf("copy fallback with read-only source failed: %v", err)
+		}
+		cleanupPath := filepath.Dir(spec.cleanupLock.Name())
+		spec.cleanup(t.Context(), logger)
+		if _, statErr := os.Stat(cleanupPath); !os.IsNotExist(statErr) {
+			t.Fatalf("expected cleanup to remove staged read-only copy dir %s, stat err=%v", cleanupPath, statErr)
+		}
+		if !slices.ContainsFunc(logger.snapshot(), func(line string) bool {
+			return strings.Contains(line, "staging wanted files via copy fallback")
+		}) {
+			t.Fatalf("expected copy fallback warning log, got %v", logger.snapshot())
+		}
+
+		releaseRoot, err := TempTorrentPath(tmpRoot, roSourceDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		releaseDir := filepath.Dir(releaseRoot)
+		staleDir := filepath.Join(releaseDir, "wanted-files-stale")
+		unmarkedDir := filepath.Join(releaseDir, "wanted-files-archive")
+		activeDir := filepath.Join(releaseDir, "wanted-files-active")
+		writeTestFile(t, filepath.Join(staleDir, "leftover.mkv"), "stale")
+		writeTestFile(t, filepath.Join(staleDir, ".staging.lock"), "")
+		writeTestFile(t, filepath.Join(unmarkedDir, "user.mkv"), "keep")
+		if err := os.MkdirAll(activeDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		activeLock, err := filelock.Acquire(filepath.Join(activeDir, ".staging.lock"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer activeLock.Close()
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		var progressMessages []string
+		ctx = api.WithUploadProgressReporter(ctx, func(update api.UploadProgressUpdate) {
+			progressMessages = append(progressMessages, update.Message)
+			if update.Message == "Staging torrent files (2/2)" {
+				cancel()
+			}
+		})
+
+		canceledSpec, err := stageByCopy(ctx, api.NopLogger{})
+		if !errors.Is(err, context.Canceled) {
+			canceledSpec.cleanup(t.Context(), api.NopLogger{})
+			t.Fatalf("expected context.Canceled on canceled copy fallback, got %v", err)
+		}
+		if _, statErr := os.Stat(staleDir); !os.IsNotExist(statErr) {
+			t.Fatalf("expected marked stale staging dir to be removed, stat err = %v", statErr)
+		}
+		if _, statErr := os.Stat(unmarkedDir); statErr != nil {
+			t.Fatalf("expected unmarked wanted-files-* dir to survive cleanup, stat err = %v", statErr)
+		}
+		if _, statErr := os.Stat(filepath.Join(unmarkedDir, ".staging.lock")); !os.IsNotExist(statErr) {
+			t.Fatalf("stale cleanup must not create .staging.lock inside unmarked dir, stat err = %v", statErr)
+		}
+		if _, statErr := os.Stat(activeDir); statErr != nil {
+			t.Fatalf("expected locked active staging dir to survive cleanup, stat err = %v", statErr)
+		}
+		if !slices.Contains(progressMessages, "Staging torrent files (1/2)") || !slices.Contains(progressMessages, "Staging torrent files (2/2)") {
+			t.Fatalf("expected per-file staging progress messages, got %v", progressMessages)
+		}
+		remaining, globErr := filepath.Glob(filepath.Join(releaseDir, "wanted-files-*"))
+		slices.Sort(remaining)
+		wantRemaining := []string{activeDir, unmarkedDir}
+		slices.Sort(wantRemaining)
+		if globErr != nil || !slices.Equal(remaining, wantRemaining) {
+			t.Fatalf("expected canceled staging dir to be removed leaving activeDir and unmarkedDir, got %v (err=%v)", remaining, globErr)
+		}
+	})
+
+	t.Run("preserves unmarked and marked wanted-files-* folders when source overlaps release root", func(t *testing.T) {
+		t.Parallel()
+		tmpRoot := t.TempDir()
+		overlappingSource := filepath.Join(tmpRoot, "Release.Overlap.1080p-GRP")
+		ep1 := filepath.Join(overlappingSource, "Show, Ep 1.mkv")
+		ep2 := filepath.Join(overlappingSource, "Show, Ep 2.mkv")
+		userArchive := filepath.Join(overlappingSource, "wanted-files-archive", "extras.mkv")
+		markedSubtree := filepath.Join(overlappingSource, "wanted-files-marked", "bonus.mkv")
+		writeTestFile(t, ep1, "ep1")
+		writeTestFile(t, ep2, "ep2")
+		writeTestFile(t, userArchive, "user extras")
+		writeTestFile(t, markedSubtree, "marked bonus")
+		writeTestFile(t, filepath.Join(filepath.Dir(markedSubtree), wantedStagingLockName), "")
+
+		spec, err := stageWantedFiles(
+			t.Context(),
+			api.TorrentSubject{SourcePath: overlappingSource},
+			tmpRoot,
+			[]string{ep1, ep2},
+			api.NopLogger{},
+		)
+		if err != nil {
+			t.Fatalf("stageWantedFiles failed: %v", err)
+		}
+		defer spec.cleanup(t.Context(), api.NopLogger{})
+		if _, statErr := os.Stat(userArchive); statErr != nil {
+			t.Fatalf("expected pre-existing user folder inside overlapping source to survive, stat err = %v", statErr)
+		}
+		if _, statErr := os.Stat(filepath.Join(filepath.Dir(userArchive), wantedStagingLockName)); !os.IsNotExist(statErr) {
+			t.Fatalf("must not create .staging.lock inside user folder, stat err = %v", statErr)
+		}
+		if _, statErr := os.Stat(markedSubtree); statErr != nil {
+			t.Fatalf("expected marked wanted-files-* folder inside overlapping source to survive, stat err = %v", statErr)
+		}
+	})
+
+	t.Run("collision with existing symlink fails without modifying symlink target", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		src := filepath.Join(dir, "second.mkv")
+		target := filepath.Join(dir, "original.mkv")
+		writeTestFile(t, src, "new-data")
+		writeTestFile(t, target, "keep-original")
+
+		dst := filepath.Join(dir, "collision.mkv")
+		if err := os.Symlink(target, dst); err != nil {
+			// Fall back to regular file collision when host disallows symlinks,
+			// while still verifying O_EXCL and os.ErrExist fail-fast behavior.
+			writeTestFile(t, dst, "keep-original")
+		}
+		if err := copyFileContext(t.Context(), src, dst); !errors.Is(err, os.ErrExist) {
+			t.Fatalf("expected copyFileContext to fail with os.ErrExist on collision, got %v", err)
+		}
+		got, err := os.ReadFile(target)
+		if err != nil || string(got) != "keep-original" {
+			t.Fatalf("collision target was modified: data=%q err=%v", string(got), err)
+		}
+
+		// stageWantedFilesWithOps must fail immediately on os.ErrExist without calling symlink/copy.
+		symlinkCalled := false
+		_, err = stageWantedFilesWithOps(
+			t.Context(),
+			api.TorrentSubject{SourcePath: sourceDir},
+			t.TempDir(),
+			[]string{episode1},
+			api.NopLogger{},
+			wantedStageOps{
+				link: func(string, string) error { return os.ErrExist },
+				symlink: func(string, string) error {
+					symlinkCalled = true
+					return nil
+				},
+			},
+		)
+		if !errors.Is(err, os.ErrExist) {
+			t.Fatalf("expected stageWantedFilesWithOps to fail on link os.ErrExist, got %v", err)
+		}
+		if symlinkCalled {
+			t.Fatal("symlink fallback must not run after link os.ErrExist collision")
+		}
+	})
+
+	t.Run("read-only source retains read-only mode after default staging and cleanup", func(t *testing.T) {
+		t.Parallel()
+		roDir := filepath.Join(t.TempDir(), "Show.RODefault.1080p-GRP")
+		roFile := filepath.Join(roDir, "Show, Ep 1.mkv")
+		writeTestFile(t, roFile, "read-only media")
+		if err := os.Chmod(roFile, 0o444); err != nil {
+			t.Fatalf("chmod read-only source: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(roFile, 0o600) })
+
+		defaults := defaultWantedStageOps()
+		linkCalls := 0
+		spec, err := stageWantedFilesWithOps(
+			t.Context(),
+			api.TorrentSubject{SourcePath: roDir},
+			t.TempDir(),
+			[]string{roFile},
+			api.NopLogger{},
+			wantedStageOps{
+				link: func(oldname, newname string) error {
+					linkCalls++
+					return defaults.link(oldname, newname)
+				},
+				symlink: defaults.symlink,
+			},
+		)
+		if err != nil {
+			t.Fatalf("staging read-only source failed: %v", err)
+		}
+		cleanupPath := filepath.Dir(spec.cleanupLock.Name())
+		spec.cleanup(t.Context(), api.NopLogger{})
+		if _, statErr := os.Stat(cleanupPath); !os.IsNotExist(statErr) {
+			t.Fatalf("expected staging dir to be removed, stat err = %v", statErr)
+		}
+		info, statErr := os.Stat(roFile)
+		if statErr != nil {
+			t.Fatalf("stat read-only source: %v", statErr)
+		}
+		if info.Mode()&0o200 != 0 {
+			t.Fatalf("read-only source became writable after staging cleanup: mode=%v", info.Mode())
+		}
+		if runtime.GOOS == "windows" && linkCalls != 0 {
+			t.Fatalf("expected Windows staging to skip hardlink for read-only source, linkCalls=%d", linkCalls)
+		}
+	})
+
+	t.Run("removeWantedStagingDir preserves lock marker when payload removal fails", func(t *testing.T) {
+		t.Parallel()
+		if runtime.GOOS != "windows" && os.Geteuid() == 0 {
+			t.Skip("root can remove files inside read-only directories on Unix")
+		}
+		stageDir := filepath.Join(t.TempDir(), "wanted-files-partial")
+		payloadDir := filepath.Join(stageDir, "Show")
+		payloadFile := filepath.Join(payloadDir, "ep1.mkv")
+		lockPath := filepath.Join(stageDir, wantedStagingLockName)
+		writeTestFile(t, payloadFile, "locked payload")
+		writeTestFile(t, lockPath, "")
+
+		var unlock func()
+		if runtime.GOOS == "windows" {
+			handle, openErr := os.Open(payloadFile)
+			if openErr != nil {
+				t.Fatalf("open payload file: %v", openErr)
+			}
+			unlock = func() { _ = handle.Close() }
+		} else {
+			if chmodErr := os.Chmod(payloadDir, 0o500); chmodErr != nil {
+				t.Fatalf("chmod payload dir: %v", chmodErr)
+			}
+			unlock = func() { _ = os.Chmod(payloadDir, 0o700) }
+		}
+		t.Cleanup(unlock)
+
+		if err := removeWantedStagingDir(t.Context(), stageDir); err == nil {
+			t.Fatal("expected removeWantedStagingDir to fail while payload cannot be removed")
+		}
+		if _, statErr := os.Stat(lockPath); statErr != nil {
+			t.Fatalf("expected .staging.lock to remain after partial cleanup failure, stat err = %v", statErr)
+		}
+
+		unlock()
+		if err := removeWantedStagingDir(t.Context(), stageDir); err != nil {
+			t.Fatalf("expected second removeWantedStagingDir to succeed after unlock: %v", err)
+		}
+		if _, statErr := os.Stat(stageDir); !os.IsNotExist(statErr) {
+			t.Fatalf("expected staging dir to be removed after retry, stat err = %v", statErr)
+		}
+	})
+
+	t.Run("removeWantedStagingDir restores lock marker when directory removal fails", func(t *testing.T) {
+		t.Parallel()
+		if runtime.GOOS != "windows" && os.Geteuid() == 0 {
+			t.Skip("root can remove entries inside read-only directories on Unix")
+		}
+		releaseRoot := t.TempDir()
+		sourceDir := filepath.Join(t.TempDir(), "source")
+		sourceFile := filepath.Join(sourceDir, "ep1.mkv")
+		writeTestFile(t, sourceFile, "source bytes")
+
+		stageDir := filepath.Join(releaseRoot, "wanted-files-dirfail")
+		payloadFile := filepath.Join(stageDir, "ep1.mkv")
+		lockPath := filepath.Join(stageDir, wantedStagingLockName)
+		writeTestFile(t, payloadFile, "staged bytes")
+		writeTestFile(t, lockPath, "")
+
+		var unlock func()
+		if runtime.GOOS == "windows" {
+			handle, openErr := os.Open(stageDir)
+			if openErr != nil {
+				t.Fatalf("open staging dir: %v", openErr)
+			}
+			unlock = func() { _ = handle.Close() }
+		} else {
+			if chmodErr := os.Chmod(releaseRoot, 0o500); chmodErr != nil {
+				t.Fatalf("chmod release root: %v", chmodErr)
+			}
+			unlock = func() { _ = os.Chmod(releaseRoot, 0o700) }
+		}
+		t.Cleanup(unlock)
+
+		if err := removeWantedStagingDir(t.Context(), stageDir); err == nil {
+			t.Fatal("expected removeWantedStagingDir to fail while staging dir cannot be removed")
+		}
+		if _, statErr := os.Lstat(payloadFile); !os.IsNotExist(statErr) {
+			t.Fatalf("expected payload file to be removed before final dir unlink, stat err = %v", statErr)
+		}
+		lockInfo, statErr := os.Lstat(lockPath)
+		if statErr != nil || !lockInfo.Mode().IsRegular() {
+			t.Fatalf("expected .staging.lock to be restored after dir removal failure, info=%v err=%v", lockInfo, statErr)
+		}
+
+		unlock()
+		cleanupStaleWantedStagingDirs(t.Context(), releaseRoot, sourceDir, []string{sourceFile}, api.NopLogger{})
+		if _, statErr := os.Stat(stageDir); !os.IsNotExist(statErr) {
+			t.Fatalf("expected stale sweep to remove staging dir after marker restore, stat err = %v", statErr)
+		}
+	})
+
+	t.Run("stale cleanup protects directory reached through symlinked source", func(t *testing.T) {
+		t.Parallel()
+		base := t.TempDir()
+		releaseRoot := filepath.Join(base, "release-tmp")
+		staleDir := filepath.Join(releaseRoot, "wanted-files-aliased")
+		realMedia := filepath.Join(staleDir, "real-source", "ep1.mkv")
+		writeTestFile(t, realMedia, "important media")
+		writeTestFile(t, filepath.Join(staleDir, wantedStagingLockName), "")
+
+		aliasSource := filepath.Join(base, "source-alias")
+		if err := os.Symlink(filepath.Dir(realMedia), aliasSource); err != nil {
+			if runtime.GOOS != "windows" {
+				t.Skipf("symlink unavailable on this host: %v", err)
+			}
+			output, mkErr := exec.CommandContext(t.Context(), "cmd.exe", "/d", "/c", "mklink", "/J", aliasSource, filepath.Dir(realMedia)).CombinedOutput()
+			if mkErr != nil {
+				t.Skipf("junction unavailable on this host: %v: %s", mkErr, output)
+			}
+			t.Cleanup(func() { _ = os.Remove(aliasSource) })
+		}
+		cleanupStaleWantedStagingDirs(t.Context(), releaseRoot, aliasSource, []string{filepath.Join(aliasSource, "ep1.mkv")}, api.NopLogger{})
+		if _, statErr := os.Stat(realMedia); statErr != nil {
+			t.Fatalf("stale cleanup deleted media reachable through symlinked source: %v", statErr)
+		}
+	})
+}
+
+func TestStagingPreservesReadOnlyAttributeChangedAfterHardlink(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows hardlink attributes")
+	}
+	for _, cleanup := range []string{"normal cleanup", "stale sweep"} {
+		t.Run(cleanup, func(t *testing.T) {
+			source := filepath.Join(t.TempDir(), "Show")
+			wanted := filepath.Join(source, "Show, Ep 1.mkv")
+			const content = "synthetic media"
+			writeTestFile(t, wanted, content)
+			spec, err := stageWantedFiles(t.Context(), api.TorrentSubject{SourcePath: source}, t.TempDir(), []string{wanted}, api.NopLogger{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer spec.cleanup(t.Context(), api.NopLogger{})
+			stageDir := filepath.Dir(spec.cleanupLock.Name())
+			sourceInfo, err := os.Stat(wanted)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stagedInfo, err := os.Lstat(filepath.Join(spec.path, filepath.Base(wanted)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !os.SameFile(sourceInfo, stagedInfo) {
+				t.Fatal("expected writable source to be staged as a hardlink")
+			}
+			if err := os.Chmod(wanted, 0o444); err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = os.Chmod(wanted, 0o600) }()
+
+			if cleanup == "stale sweep" {
+				if err := spec.cleanupLock.Close(); err != nil {
+					t.Fatal(err)
+				}
+				spec.cleanupLock = nil
+				cleanupStaleWantedStagingDirs(t.Context(), filepath.Dir(stageDir), source, []string{wanted}, api.NopLogger{})
+			} else {
+				spec.cleanup(t.Context(), api.NopLogger{})
+			}
+			info, err := os.Stat(wanted)
+			if err != nil || info.Mode()&0o200 != 0 {
+				t.Fatalf("source lost read-only attribute: info=%v err=%v", info, err)
+			}
+			if data, err := os.ReadFile(wanted); err != nil || string(data) != content {
+				t.Fatalf("source changed: data=%q err=%v", data, err)
+			}
+			if _, err := os.Stat(stageDir); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("staging dir was not removed: %v", err)
+			}
+		})
+	}
+}
+
+func withLockWaitSignal(ctx context.Context, waiting chan struct{}) context.Context {
+	return &lockWaitSignalContext{Context: ctx, waiting: waiting}
+}
+
+type lockWaitSignalContext struct {
+	context.Context
+	once    sync.Once
+	waiting chan struct{}
+}
+
+func (c *lockWaitSignalContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.waiting) })
+	return c.Context.Done()
+}
+
+func TestWantedStagingCoordinationIsReleaseScopedAndCancelable(t *testing.T) {
+	t.Parallel()
+	tmpRoot := t.TempDir()
+	sourceA := filepath.Join(t.TempDir(), "Release-A")
+	sourceB := filepath.Join(t.TempDir(), "Release-B")
+	fileA := filepath.Join(sourceA, "Show, Ep 1.mkv")
+	fileB := filepath.Join(sourceB, "Show, Ep 1.mkv")
+	writeTestFile(t, fileA, "release A")
+	writeTestFile(t, fileB, "release B")
+	stage := func(ctx context.Context, source, file string) (createSpec, error) {
+		return stageWantedFiles(ctx, api.TorrentSubject{SourcePath: source}, tmpRoot, []string{file}, api.NopLogger{})
+	}
+	specA, err := stage(t.Context(), sourceA, fileA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer specA.cleanup(t.Context(), api.NopLogger{})
+	dirA := filepath.Dir(specA.cleanupLock.Name())
+	lock, err := filelock.Acquire(filepath.Join(filepath.Dir(dirA), wantedStagingCoordLockName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+
+	ctxA, cancelA := context.WithCancel(t.Context())
+	defer cancelA()
+	waiting := make(chan struct{})
+	waitCtxA := withLockWaitSignal(ctxA, waiting)
+	done := make(chan error, 1)
+	go func() {
+		spec, err := stage(waitCtxA, sourceA, fileA)
+		spec.cleanup(ctxA, api.NopLogger{})
+		done <- err
+	}()
+	ctxB, cancelB := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancelB()
+	select {
+	case <-waiting:
+	case err := <-done:
+		t.Fatalf("release A returned before waiting on its own lock: %v", err)
+	case <-ctxB.Done():
+		t.Fatal("release A did not reach lock contention")
+	}
+	otherDone := make(chan error, 1)
+	go func() {
+		spec, err := stage(ctxB, sourceB, fileB)
+		if err == nil {
+			spec.cleanup(ctxB, api.NopLogger{})
+			if _, statErr := os.Stat(spec.path); !errors.Is(statErr, os.ErrNotExist) {
+				err = errors.Join(errors.New("release B staging dir still present"), statErr)
+			}
+		}
+		otherDone <- err
+	}()
+	select {
+	case err := <-otherDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctxB.Done():
+		t.Fatal("release B staging or cleanup was blocked by release A's lock")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("release A did not wait for its own lock: %v", err)
+	default:
+	}
+	cancelA()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("release A did not return cancellation: %v", err)
+		}
+	case <-ctxB.Done():
+		t.Fatal("release A did not stop waiting while its lock was held")
+	}
+
+	specA.cleanup(ctxA, api.NopLogger{})
+	if _, err := os.Stat(filepath.Join(dirA, wantedStagingLockName)); err != nil {
+		t.Fatalf("canceled cleanup must leave a marker while coordination is held: %v", err)
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	again, err := stage(t.Context(), sourceA, fileA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer again.cleanup(t.Context(), api.NopLogger{})
+	if _, err := os.Stat(dirA); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale staging dir was not recovered after cancellation: %v", err)
+	}
 }
 
 func TestCreateDiscImagePreservesSingleFileLayout(t *testing.T) {

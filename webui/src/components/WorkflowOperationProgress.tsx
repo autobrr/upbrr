@@ -43,14 +43,44 @@ export function WorkflowOperationProgress({
       .filter((event) => metadataItemIDs.has(event.scopeId || ""))
       .map((event) => [event.scopeId, event.message]),
   );
-  const scopedEvents = events.filter(
+  const isQueuedOrRunning = (status?: string) => status === "queued" || status === "running";
+  const rawScopedEvents = events.filter(
     (event) =>
       event.scopeId !== operation.workflowId &&
       !(metadataPreparation && metadataItemIDs.has(event.scopeId || "")) &&
-      ((!comparisonItemIDs.has(event.scopeId || "") &&
-        ["queued", "running"].includes(event.lifecycle)) ||
+      ((!comparisonItemIDs.has(event.scopeId || "") && isQueuedOrRunning(event.lifecycle)) ||
         event.severity === "warn" ||
         event.severity === "error"),
+  );
+  const rawActiveItems = (operation.items || []).filter(
+    (item) =>
+      (isQueuedOrRunning(item.status) && !comparisonItemIDs.has(item.id)) ||
+      item.status === "failed" ||
+      item.status === "partial" ||
+      (metadataPreparation && item.status === "canceled"),
+  );
+  // Suppress a queued tracker placeholder only while a per-tracker sub-task (e.g. "TL:torrent") is queued or running.
+  const activeSubtaskParents = new Set<string>();
+  const recordSubtaskParent = (status?: string, scopeId?: string) => {
+    if (!isQueuedOrRunning(status)) return;
+    const colon = scopeId?.indexOf(":") ?? -1;
+    if (colon > 0 && scopeId) activeSubtaskParents.add(scopeId.slice(0, colon));
+  };
+  for (const event of rawScopedEvents) {
+    recordSubtaskParent(event.lifecycle, event.scopeId);
+  }
+  for (const item of rawActiveItems) {
+    recordSubtaskParent(item.status, item.id);
+  }
+  const scopedEvents = rawScopedEvents.filter(
+    (event) =>
+      !(
+        event.lifecycle === "queued" &&
+        event.severity !== "warn" &&
+        event.severity !== "error" &&
+        event.scopeId &&
+        activeSubtaskParents.has(event.scopeId)
+      ),
   );
   if (
     !visibleStatuses.has(operation.status) &&
@@ -81,13 +111,10 @@ export function WorkflowOperationProgress({
         ? `Recovery: ${failure.Recovery.replaceAll("_", " ")}.`
         : "";
   const eventScopeIds = new Set(scopedEvents.map((event) => event.scopeId));
-  const activeItems = (operation.items || []).filter(
+  const activeItems = rawActiveItems.filter(
     (item) =>
-      ((["queued", "running"].includes(item.status) && !comparisonItemIDs.has(item.id)) ||
-        item.status === "failed" ||
-        item.status === "partial" ||
-        (metadataPreparation && item.status === "canceled")) &&
-      !eventScopeIds.has(item.id),
+      !eventScopeIds.has(item.id) &&
+      !(item.status === "queued" && activeSubtaskParents.has(item.id)),
   );
 
   return (

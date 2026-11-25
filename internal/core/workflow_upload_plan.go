@@ -17,6 +17,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/clientdiscovery"
@@ -348,23 +349,25 @@ func (b workflowUploadPlanBuilder) Build(
 		subject.SubmissionContentIdentity = identity
 	}
 	var pendingTorrent api.TorrentPublication
+	var pendingTorrentScopes []string
 	if len(eligible) > 0 && b.torrents != nil {
-		torrent, err := b.prepareWorkflowTorrent(ctx, subject, torrentSubject)
+		torrentResult, err := b.prepareWorkflowTorrent(ctx, subject, torrentSubject)
 		if err != nil {
 			return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: prepare torrent: %w", err)
 		}
-		subject.TorrentPath = torrent.Path
-		subject.TrackerTorrentArtifacts = torrent.TrackerArtifacts
-		pendingTorrent = torrent.PendingPublication
+		subject.TorrentPath = torrentResult.Path
+		subject.TrackerTorrentArtifacts = torrentResult.TrackerArtifacts
+		pendingTorrent = torrentResult.PendingPublication
 		if pendingTorrent != nil {
+			pendingTorrentScopes = torrent.PendingPreparationScopes(torrentSubject, torrentResult)
 			defer func() {
 				if err := pendingTorrent.Discard(); err != nil {
 					logging.FromContext(ctx, api.NopLogger{}).Warnf("workflow: discard pending torrent failed err=%s", redaction.RedactValue(err.Error(), nil))
 				}
 			}()
 		}
-		skipped := make(map[api.TrackerID]struct{}, len(torrent.SkippedTrackers))
-		for _, tracker := range torrent.SkippedTrackers {
+		skipped := make(map[api.TrackerID]struct{}, len(torrentResult.SkippedTrackers))
+		for _, tracker := range torrentResult.SkippedTrackers {
 			trackerID := api.TrackerID(strings.ToUpper(strings.TrimSpace(tracker)))
 			if trackerID != "" {
 				skipped[trackerID] = struct{}{}
@@ -383,24 +386,39 @@ func (b workflowUploadPlanBuilder) Build(
 			eligible = remaining
 		}
 		subject.Trackers = workflowProjectionTrackerNames(eligible)
-		subject.RehashedTrackers = append([]string(nil), torrent.RehashedTrackers...)
+		subject.RehashedTrackers = append([]string(nil), torrentResult.RehashedTrackers...)
 	}
 	if sourceManifest != nil {
-		if err := preparedrelease.VerifySourceManifestStability(ctx, *sourceManifest); err != nil {
+		err := preparedrelease.VerifySourceManifestStability(ctx, *sourceManifest)
+		if cancelErr := ctx.Err(); cancelErr != nil {
 			if pendingTorrent != nil {
-				emitWorkflowTorrentOutcome(ctx, torrentSubject, "failed", "Source changed during torrent generation")
+				emitWorkflowTorrentScopes(ctx, torrentSubject.SourcePath, pendingTorrentScopes, "canceled", "Torrent preparation canceled")
+			}
+			return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: torrent preparation canceled during source stability check: %w", cancelErr)
+		}
+		if err != nil {
+			if pendingTorrent != nil {
+				emitWorkflowTorrentScopes(ctx, torrentSubject.SourcePath, pendingTorrentScopes, "failed", "Source changed during torrent generation")
 			}
 			return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: source changed during torrent preparation: %w", err)
 		}
 	}
 	if pendingTorrent != nil {
-		path, err := pendingTorrent.Publish()
+		var path string
+		err := ctx.Err()
+		if err == nil {
+			path, err = pendingTorrent.Publish()
+		}
 		if err != nil {
-			emitWorkflowTorrentOutcome(ctx, torrentSubject, "failed", "Torrent publication failed")
+			if cancelErr := ctx.Err(); cancelErr != nil {
+				emitWorkflowTorrentScopes(ctx, torrentSubject.SourcePath, pendingTorrentScopes, "canceled", "Torrent preparation canceled")
+				return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: torrent preparation canceled during publication: %w", cancelErr)
+			}
+			emitWorkflowTorrentScopes(ctx, torrentSubject.SourcePath, pendingTorrentScopes, "failed", "Torrent publication failed")
 			return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: publish generated torrent: %w", err)
 		}
 		subject.TorrentPath = path
-		emitWorkflowTorrentOutcome(ctx, torrentSubject, "completed", "Torrent ready")
+		emitWorkflowTorrentScopes(ctx, torrentSubject.SourcePath, pendingTorrentScopes, "completed", "Torrent ready")
 	}
 	var retained workflowRetainedUploadPlan
 	if len(eligible) > 0 {
@@ -572,19 +590,18 @@ func (b workflowUploadPlanBuilder) Build(
 	return plan, execution, nil
 }
 
-func emitWorkflowTorrentOutcome(ctx context.Context, subject api.TorrentSubject, status, message string) {
-	tracker := ""
-	if len(subject.Trackers) == 1 {
-		tracker = subject.Trackers[0]
+func emitWorkflowTorrentScopes(ctx context.Context, sourcePath string, scopes []string, status, message string) {
+	timestamp := time.Now().UTC().Format(time.RFC3339)
+	for _, tracker := range scopes {
+		api.EmitUploadProgress(ctx, api.UploadProgressUpdate{
+			SourcePath: sourcePath,
+			Tracker:    tracker,
+			Task:       "torrent",
+			Status:     status,
+			Message:    message,
+			Timestamp:  timestamp,
+		})
 	}
-	api.EmitUploadProgress(ctx, api.UploadProgressUpdate{
-		SourcePath: subject.SourcePath,
-		Tracker:    tracker,
-		Task:       "torrent",
-		Status:     status,
-		Message:    message,
-		Timestamp:  time.Now().UTC().Format(time.RFC3339),
-	})
 }
 
 // prepareWorkflowTorrent searches further only after current artifacts fail the
@@ -594,22 +611,74 @@ func (b workflowUploadPlanBuilder) prepareWorkflowTorrent(
 	ctx context.Context,
 	subject api.UploadSubject,
 	input api.TorrentSubject,
-) (api.TorrentResult, error) {
+) (result api.TorrentResult, err error) {
+	var mu sync.Mutex
+	openScopes := make(map[string]struct{})
+	createCtx := api.WithUploadProgressReporter(ctx, func(update api.UploadProgressUpdate) {
+		if update.Task == "torrent" {
+			scope := strings.ToUpper(strings.TrimSpace(update.Tracker))
+			mu.Lock()
+			switch update.Status {
+			case "running":
+				openScopes[scope] = struct{}{}
+			case "completed", "failed", "canceled", "skipped":
+				delete(openScopes, scope)
+			}
+			mu.Unlock()
+		}
+		api.EmitUploadProgress(ctx, update)
+	})
+	failMessage := "Torrent preparation failed"
+	defer func() {
+		pendingScopes := torrent.PendingPreparationScopes(input, result)
+		mu.Lock()
+		scopes := slices.Sorted(maps.Keys(openScopes))
+		mu.Unlock()
+		scopes = slices.DeleteFunc(scopes, func(scope string) bool { return slices.Contains(pendingScopes, scope) })
+		if len(scopes) == 0 {
+			return
+		}
+		switch {
+		case ctx.Err() != nil:
+			emitWorkflowTorrentScopes(ctx, input.SourcePath, scopes, "canceled", "Torrent preparation canceled")
+		case err != nil:
+			emitWorkflowTorrentScopes(ctx, input.SourcePath, scopes, "failed", failMessage)
+		default:
+			for _, scope := range scopes {
+				status, message := torrent.PreparationProgressOutcome(result, scope)
+				emitWorkflowTorrentScopes(ctx, input.SourcePath, []string{scope}, status, message)
+			}
+		}
+	}()
+
 	forcedRehash := input.TorrentOverrides.Rehash != nil && *input.TorrentOverrides.Rehash
 	if b.clients != nil && !forcedRehash {
 		probe := input
 		probe.TorrentOverrides.NoHash = new(true)
 		probe.SkipIfRehashTrackers = nil
 		probe.DeferWrapperConversion = true
-		result, err := b.torrents.Create(ctx, probe)
+		result, err := b.torrents.Create(createCtx, probe)
 		if err == nil {
 			return result, nil
+		}
+		if cancelErr := ctx.Err(); cancelErr != nil {
+			err = cancelErr
 		}
 		if !errors.Is(err, internalerrors.ErrNotFound) {
 			return api.TorrentResult{}, fmt.Errorf("probe reusable torrent: %w", err)
 		}
 		policy := subject.ClientSearchPolicy
 		policy.Skip = false
+		mu.Lock()
+		needsDiscoveryScope := len(openScopes) == 0
+		mu.Unlock()
+		if needsDiscoveryScope {
+			scope := ""
+			if len(input.Trackers) == 1 {
+				scope = strings.ToUpper(strings.TrimSpace(input.Trackers[0]))
+			}
+			emitWorkflowTorrentScopes(createCtx, input.SourcePath, []string{scope}, "running", "Searching for reusable torrents")
+		}
 		found, searchErr := clientdiscovery.New(b.clients, api.NopLogger{}).Discover(ctx, clientdiscovery.SearchInput{
 			SourcePath:        input.SourcePath,
 			FileList:          append([]string(nil), input.FileList...),
@@ -619,10 +688,11 @@ func (b workflowUploadPlanBuilder) prepareWorkflowTorrent(
 			ForceRecheck:      new(input.ForceRecheck),
 			FindAllCandidates: true,
 		})
-		if ctx.Err() != nil {
-			return api.TorrentResult{}, fmt.Errorf("workflow torrent search canceled: %w", ctx.Err())
+		if cancelErr := ctx.Err(); cancelErr != nil {
+			return api.TorrentResult{}, fmt.Errorf("workflow torrent search canceled: %w", cancelErr)
 		}
 		if errors.Is(searchErr, internalerrors.ErrClientRecheckFailed) {
+			failMessage = "Torrent search failed"
 			return api.TorrentResult{}, fmt.Errorf("workflow torrent search: %w", searchErr)
 		}
 		if searchErr == nil {
@@ -632,8 +702,11 @@ func (b workflowUploadPlanBuilder) prepareWorkflowTorrent(
 	if input.TorrentOverrides.NoHash != nil && *input.TorrentOverrides.NoHash && !forcedRehash {
 		input.SkipIfRehashTrackers = append([]string(nil), input.Trackers...)
 	}
-	result, err := b.torrents.Create(ctx, input)
+	result, err = b.torrents.Create(createCtx, input)
 	if err != nil {
+		if cancelErr := ctx.Err(); cancelErr != nil {
+			err = cancelErr
+		}
 		return api.TorrentResult{}, fmt.Errorf("prepare torrent: %w", err)
 	}
 	return result, nil

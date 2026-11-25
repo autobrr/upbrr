@@ -194,3 +194,131 @@ it("updates metadata detail in place, keeps stage-order percentages out of fetch
   rerender(<WorkflowOperationProgress operation={operation} />);
   expect(screen.getByText("Stage canceled.")).toBeInTheDocument();
 });
+
+it("suppresses queued tracker placeholders only while a per-tracker subtask is queued or running", () => {
+  type OperationItem = NonNullable<Operation["items"]>[number];
+  type OperationEvent = NonNullable<Operation["events"]>[number];
+  const trackerIDs = ["TL", "BLU"] as const;
+  const queuedTrackerItem = (id: string) =>
+    ({
+      id,
+      kind: "tracker",
+      label: id,
+      phase: "upload_plan",
+      status: "queued",
+      completed: 0,
+      total: trackerIDs.length,
+      message: "Tracker upload-plan preparation queued.",
+    }) as unknown as OperationItem;
+  const queuedTrackerEvent = (sequence: number, id: string) =>
+    ({
+      sequence,
+      scope: "tracker",
+      scopeId: id,
+      lifecycle: "queued",
+      message: "Tracker upload-plan preparation queued.",
+    }) as unknown as OperationEvent;
+  const rootEvent = {
+    sequence: 1,
+    scope: "workflow",
+    scopeId: "workflow-1",
+    lifecycle: "running",
+    message: "Preparing torrent",
+  } as unknown as OperationEvent;
+  const torrentItem = {
+    id: "TL:torrent",
+    kind: "upload",
+    label: "TL",
+    phase: "torrent",
+    status: "running",
+    completed: 0,
+    total: 0,
+    message: "Preparing torrent",
+  } as unknown as OperationItem;
+  const torrentEvent = {
+    sequence: 4,
+    scope: "tracker",
+    scopeId: "TL:torrent",
+    lifecycle: "running",
+    message: "Preparing torrent",
+  } as unknown as OperationEvent;
+  const queuedItems = trackerIDs.map(queuedTrackerItem);
+  const queuedEvents = trackerIDs.map((id, index) => queuedTrackerEvent(index + 2, id));
+  const baseOperation = {
+    id: "upload-plan-1",
+    workflowId: "workflow-1",
+    operation: "upload_plan",
+    status: "running",
+    phase: "torrent",
+    completed: 0,
+    total: trackerIDs.length,
+    progress: 0,
+    message: "Preparing torrent",
+    items: [...queuedItems, torrentItem],
+    events: [rootEvent, ...queuedEvents, torrentEvent],
+  } as unknown as Operation;
+
+  const { rerender } = render(<WorkflowOperationProgress operation={baseOperation} />);
+  expect(screen.getAllByText("TL")).toHaveLength(1);
+  expect(screen.getAllByText("BLU")).toHaveLength(1);
+  expect(screen.getAllByText("Tracker upload-plan preparation queued.")).toHaveLength(1);
+  expect(screen.getAllByText("Preparing torrent")).toHaveLength(2); // header + TL row
+
+  // Item-only fallback (no events) also avoids duplicate TL rows.
+  rerender(<WorkflowOperationProgress operation={{ ...baseOperation, events: [] }} />);
+  expect(screen.getAllByText("TL")).toHaveLength(1);
+  expect(screen.getAllByText("BLU")).toHaveLength(1);
+  expect(screen.getAllByText("Tracker upload-plan preparation queued.")).toHaveLength(1);
+
+  // Once the torrent subtask completes, TL's queued row reappears until upload-plan preparation completes.
+  rerender(
+    <WorkflowOperationProgress
+      operation={{
+        ...baseOperation,
+        items: [
+          ...queuedItems,
+          { ...torrentItem, status: "completed", message: "Torrent ready" } as OperationItem,
+        ],
+        events: [
+          rootEvent,
+          ...queuedEvents,
+          {
+            ...torrentEvent,
+            lifecycle: "terminal",
+            state: "completed",
+            disposition: "succeeded",
+            message: "Torrent ready",
+          } as OperationEvent,
+        ],
+      }}
+    />,
+  );
+  expect(screen.getAllByText("TL")).toHaveLength(1);
+  expect(screen.getAllByText("Tracker upload-plan preparation queued.")).toHaveLength(2);
+
+  // A failed torrent leaves the queued tracker visible in both progress views.
+  const failureMessage = "Torrent creation failed";
+  const failedItems = [
+    ...queuedItems,
+    { ...torrentItem, status: "failed", message: failureMessage } as OperationItem,
+  ];
+  const failedEvents = [
+    rootEvent,
+    ...queuedEvents,
+    {
+      ...torrentEvent,
+      lifecycle: "terminal",
+      state: "failed",
+      disposition: "failed",
+      severity: "error",
+      message: failureMessage,
+    } as OperationEvent,
+  ];
+  for (const events of [failedEvents, []]) {
+    rerender(
+      <WorkflowOperationProgress operation={{ ...baseOperation, items: failedItems, events }} />,
+    );
+    expect(screen.getAllByText("Tracker upload-plan preparation queued.")).toHaveLength(2);
+    expect(screen.getByText(failureMessage)).toBeVisible();
+  }
+});

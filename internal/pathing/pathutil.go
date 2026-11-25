@@ -82,6 +82,71 @@ func SamePath(left string, right string) bool {
 	return leftRealOK && rightRealOK && sameCleanPath(leftReal, rightReal)
 }
 
+// PathsOverlap reports whether left and right refer to the same path or one is
+// a descendant of the other, checking path spellings and existing filesystem
+// identities. It fails closed (returns true) when either path cannot be checked.
+func PathsOverlap(left string, right string) bool {
+	leftAbs, leftOK := cleanAbs(left)
+	rightAbs, rightOK := cleanAbs(right)
+	if !leftOK || !rightOK {
+		return true
+	}
+	if isWithinCleanRoot(leftAbs, rightAbs) || isWithinCleanRoot(rightAbs, leftAbs) {
+		return true
+	}
+	leftReal, leftRealOK := evalExistingPrefix(leftAbs)
+	rightReal, rightRealOK := evalExistingPrefix(rightAbs)
+	if !leftRealOK || !rightRealOK {
+		return true
+	}
+	if isWithinCleanRoot(leftReal, rightReal) || isWithinCleanRoot(rightReal, leftReal) {
+		return true
+	}
+	leftAncestors, leftOK := existingPathAncestors(leftReal)
+	rightAncestors, rightOK := existingPathAncestors(rightReal)
+	if !leftOK || !rightOK {
+		return true
+	}
+	for _, l := range leftAncestors {
+		for _, r := range rightAncestors {
+			if os.SameFile(l.info, r.info) && (isWithinCleanRoot(l.suffix, r.suffix) || isWithinCleanRoot(r.suffix, l.suffix)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+type pathAncestor struct {
+	info   os.FileInfo
+	suffix string
+}
+
+func existingPathAncestors(value string) ([]pathAncestor, bool) {
+	var ancestors []pathAncestor
+	suffix := "."
+	for {
+		info, err := os.Stat(value)
+		switch {
+		case err == nil:
+			// On Windows SameFile obtains the identity lazily and returns false
+			// if it cannot. Check that it can compare this entry before use.
+			if !os.SameFile(info, info) {
+				return nil, false
+			}
+			ancestors = append(ancestors, pathAncestor{info: info, suffix: suffix})
+		case !errors.Is(err, os.ErrNotExist):
+			return nil, false
+		}
+		parent := filepath.Dir(value)
+		if parent == value {
+			return ancestors, len(ancestors) > 0
+		}
+		suffix = filepath.Join(filepath.Base(value), suffix)
+		value = parent
+	}
+}
+
 // LexicalPathKey compares path spellings using the host OS rules, without
 // resolving symlinks that can change after a stored association was made.
 func LexicalPathKey(value string) string {

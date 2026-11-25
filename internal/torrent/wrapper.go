@@ -125,7 +125,12 @@ type preparedSingleFileExtraction struct {
 	encoded    []byte
 }
 
-func prepareSingleFileExtraction(path string, subject api.TorrentSubject, policy *trackerTorrentPolicy) (*preparedSingleFileExtraction, error) {
+func prepareSingleFileExtraction(
+	path string,
+	subject api.TorrentSubject,
+	policy *trackerTorrentPolicy,
+	logger api.Logger,
+) (*preparedSingleFileExtraction, error) {
 	data, err := os.ReadFile(path)
 	if err != nil || validateClientCandidateBytes(path, data, subject) != nil {
 		return nil, nil
@@ -143,10 +148,17 @@ func prepareSingleFileExtraction(path string, subject api.TorrentSubject, policy
 		return nil, fmt.Errorf("torrent: encode extracted file: %w", err)
 	}
 	info, err := mi.UnmarshalInfo()
-	if err != nil || policy != nil && policy.validateTorrentInfo(&info, subject) != nil {
+	if err != nil {
 		return nil, nil
 	}
-	if validateReusablePieceCount(&info, policy, subject) != nil {
+	if policy != nil {
+		if policyErr := policy.validateTorrentInfo(&info, subject); policyErr != nil {
+			logReusableCandidateRejection(logger, path, "tracker_policy", policyErr)
+			return nil, nil
+		}
+	}
+	if err := validateReusablePieceCount(&info, policy, subject); err != nil {
+		logReusableCandidateRejection(logger, path, "piece_count", err)
 		return nil, nil
 	}
 	var output bytes.Buffer
@@ -154,6 +166,8 @@ func prepareSingleFileExtraction(path string, subject api.TorrentSubject, policy
 		return nil, fmt.Errorf("torrent: encode converted metainfo: %w", err)
 	}
 	if policy != nil && policy.maxTorrentBytes > 0 && int64(output.Len()) > policy.maxTorrentBytes {
+		logReusableCandidateRejection(logger, path, "tracker_policy",
+			fmt.Errorf("%s torrent file size %d exceeds max %d", policy.name, output.Len(), policy.maxTorrentBytes))
 		return nil, nil
 	}
 	return &preparedSingleFileExtraction{
@@ -224,7 +238,10 @@ func (p *preparedSingleFileExtraction) publish(ctx context.Context, tmpRoot stri
 	}
 	if plan.tailBytes > 0 {
 		owned = false
-		return extractedTorrent{path: fileHandle.Name(), publication: &generatedTorrentPublication{stage: fileHandle.Name()}}, nil
+		return extractedTorrent{
+			path:        fileHandle.Name(),
+			publication: &generatedTorrentPublication{stage: fileHandle.Name(), cancelErr: ctx.Err},
+		}, nil
 	}
 	if err := os.Rename(fileHandle.Name(), path); err != nil {
 		if existing, readErr := os.ReadFile(path); readErr == nil && bytes.Equal(existing, output.Bytes()) {
