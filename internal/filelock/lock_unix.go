@@ -12,6 +12,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const errLockBusy = unix.EWOULDBLOCK
+
 func lockFile(file *os.File, wait bool) error {
 	flags := unix.LOCK_EX
 	if !wait {

@@ -5,12 +5,18 @@ package torrent
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/autobrr/go-torrent/bencode"
 	"github.com/autobrr/go-torrent/metainfo"
+	mkbrr "github.com/autobrr/mkbrr/torrent"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/ant"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/hdb"
@@ -171,7 +177,11 @@ func TestNoHashSkipsOnlyMissingPolicyVariant(t *testing.T) {
 		{selected: []string{"PTP"}, nohash: true},
 		{selected: []string{"PTP"}, skip: []string{"PTP"}},
 	} {
-		result, err := NewService(nil, t.TempDir()).Create(t.Context(), api.TorrentSubject{
+		var updates []api.UploadProgressUpdate
+		ctx := api.WithUploadProgressReporter(t.Context(), func(update api.UploadProgressUpdate) {
+			updates = append(updates, update)
+		})
+		result, err := NewService(nil, t.TempDir()).Create(ctx, api.TorrentSubject{
 			SourcePath:           source,
 			Trackers:             tc.selected,
 			ClientTorrentPath:    candidate,
@@ -192,6 +202,14 @@ func TestNoHashSkipsOnlyMissingPolicyVariant(t *testing.T) {
 		}
 		if _, err := os.Stat(result.BaseArtifacts[0].Path); err != nil {
 			t.Fatal(err)
+		}
+		if len(tc.selected) == 1 {
+			if len(updates) == 0 || updates[len(updates)-1].Status != "skipped" || updates[len(updates)-1].Tracker != "PTP" {
+				t.Fatalf("expected sole skipped tracker with retained general base to close as skipped, got %+v", updates)
+			}
+			if slices.ContainsFunc(updates, func(u api.UploadProgressUpdate) bool { return u.Status == "completed" }) {
+				t.Fatalf("sole skipped tracker must not emit completed status, got %+v", updates)
+			}
 		}
 	}
 }
@@ -249,6 +267,139 @@ func TestGeneratedBasesRemainStagedUntilPublication(t *testing.T) {
 	}
 }
 
+func TestVariantPublicationCanceledWhileRetentionLockHeld(t *testing.T) {
+	dir := t.TempDir()
+	stage := filepath.Join(dir, "staged.torrent")
+	destination := filepath.Join(dir, "retained.torrent")
+	writeTestFile(t, stage, "synthetic torrent")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	file := &generatedTorrentPublication{
+		stage:       stage,
+		destination: destination,
+		cancelErr:   ctx.Err,
+	}
+	publication := &variantPublication{files: []*generatedTorrentPublication{file}, path: destination}
+
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	retainedVariantMu.Lock()
+	go func() {
+		close(started)
+		_, err := publication.Publish()
+		done <- err
+	}()
+	<-started
+	cancel()
+	retainedVariantMu.Unlock()
+
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Publish error = %v, want context.Canceled", err)
+	}
+	if _, err := os.Lstat(destination); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected destination to remain absent after cancellation, stat err = %v", err)
+	}
+	if _, err := os.Stat(stage); err != nil {
+		t.Fatalf("expected staging file to remain until Discard: %v", err)
+	}
+	if err := publication.Discard(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(stage); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected staging file to be removed by Discard, stat err = %v", err)
+	}
+}
+
+func TestMixedTrackerRecheckReportsSkippedAndReady(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "video.mkv")
+	const size = 1 << 20
+	writeSizedTorrentSource(t, source, size)
+	exact := filepath.Join(t.TempDir(), "exact.torrent")
+	if _, err := mkbrr.Create(mkbrr.CreateOptions{
+		Path:           source,
+		OutputPath:     exact,
+		PieceLengthExp: new(uint(25)),
+		MaxPieceLength: new(uint(25)),
+		Quiet:          true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stale := writeExtractionTorrent(t, filepath.Join(t.TempDir(), "stale.torrent"), metainfo.Info{
+		Name:        "wrapped",
+		PieceLength: 32 << 10,
+		Pieces:      make([]byte, (size/(32<<10))*metainfo.HashSize),
+		Files:       []metainfo.FileInfo{{Length: size, Path: []string{filepath.Base(source)}}},
+	})
+	wrapper, err := mkbrr.Create(mkbrr.CreateOptions{
+		Path:           dir,
+		OutputPath:     filepath.Join(t.TempDir(), "good-wrapper.torrent"),
+		PieceLengthExp: new(uint(19)),
+		Quiet:          true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, mode := range []string{"nohash reuse", "deferred generation"} {
+		t.Run(mode, func(t *testing.T) {
+			registry := trackers.NewRegistry()
+			if err := registry.Register(hdb.New()); err != nil {
+				t.Fatal(err)
+			}
+			subject := api.TorrentSubject{
+				SourcePath:              source,
+				ClientTorrentPath:       exact,
+				ClientTorrentCandidates: []api.ClientTorrentCandidate{stale},
+				Trackers:                []string{" ptp ", "tl"},
+				ForceRecheck:            true,
+			}
+			switch mode {
+			case "nohash reuse":
+				subject.TorrentOverrides.NoHash = new(true)
+				subject.ClientTorrentCandidates = append(subject.ClientTorrentCandidates, api.ClientTorrentCandidate{Path: wrapper.Path, InfoHash: wrapper.InfoHash})
+			case "deferred generation":
+				subject.Trackers = append(subject.Trackers, "HDB")
+				subject.SkipIfRehashTrackers = []string{"PTP"}
+				subject.DeferGenerationPublication = true
+			}
+			var mu sync.Mutex
+			var updates []api.UploadProgressUpdate
+			ctx := api.WithUploadProgressReporter(t.Context(), func(update api.UploadProgressUpdate) {
+				mu.Lock()
+				defer mu.Unlock()
+				updates = append(updates, update)
+			})
+			result, err := NewServiceWithRegistry(nil, t.TempDir(), registry).Create(ctx, subject)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.PendingPublication != nil {
+				defer func() { _ = result.PendingPublication.Discard() }()
+			}
+			if !slices.Equal(result.SkippedTrackers, []string{"PTP"}) || result.TrackerArtifacts["TL"].Path == "" {
+				t.Fatalf("expected a skipped PTP lane and a usable TL torrent: %+v", result)
+			}
+			last := make(map[string]api.UploadProgressUpdate)
+			recheckedPTP := false
+			for _, update := range updates {
+				last[update.Tracker] = update
+				recheckedPTP = recheckedPTP || update.Tracker == "PTP" && update.Message == "Verifying torrent pieces"
+			}
+			if !recheckedPTP || last["PTP"].Status != "skipped" || last["PTP"].Message != "Torrent skipped: rehash required" {
+				t.Fatalf("expected skipped terminal progress after stale PTP wrapper recheck: %+v", updates)
+			}
+			if mode == "nohash reuse" && last["TL"].Status != "completed" {
+				t.Fatalf("expected the verified TL scope to complete: %+v", last)
+			}
+			if mode == "deferred generation" && (result.PendingPublication == nil || last["HDB"].Status != "running") {
+				t.Fatalf("expected HDB scope to stay open for deferred publication: %+v", last)
+			}
+		})
+	}
+}
+
 func TestExistingTorrentSelectionAvoidsOptionalGeneration(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -280,17 +431,7 @@ func TestExistingTorrentSelectionAvoidsOptionalGeneration(t *testing.T) {
 			const size int64 = 125 << 20
 			dir := t.TempDir()
 			source := filepath.Join(dir, "synthetic.mkv")
-			file, err := os.OpenFile(source, os.O_CREATE|os.O_WRONLY, 0o600)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := file.Truncate(size); err != nil {
-				_ = file.Close()
-				t.Fatal(err)
-			}
-			if err := file.Close(); err != nil {
-				t.Fatal(err)
-			}
+			writeSizedTorrentSource(t, source, size)
 			candidates := make([]api.ClientTorrentCandidate, 0, len(tc.pieces))
 			for i, piece := range tc.pieces {
 				candidates = append(candidates, writeExtractionTorrent(t, filepath.Join(dir, []string{"first.torrent", "second.torrent"}[i]), metainfo.Info{
@@ -480,7 +621,11 @@ func TestExplicitRecheckRejectsStaleAlternativesWithoutLosingValidBase(t *testin
 		if err != nil {
 			t.Fatal(err)
 		}
-		result, err := NewService(nil, t.TempDir()).Create(t.Context(), api.TorrentSubject{
+		var updates []api.UploadProgressUpdate
+		ctx := api.WithUploadProgressReporter(t.Context(), func(update api.UploadProgressUpdate) {
+			updates = append(updates, update)
+		})
+		result, err := NewService(nil, t.TempDir()).Create(ctx, api.TorrentSubject{
 			SourcePath:              source,
 			ClientTorrentPath:       first,
 			ClientTorrentCandidates: []api.ClientTorrentCandidate{{Path: second, InfoHash: hash}},
@@ -492,6 +637,12 @@ func TestExplicitRecheckRejectsStaleAlternativesWithoutLosingValidBase(t *testin
 		}
 		if result.Path != good || len(result.BaseArtifacts) != 1 {
 			t.Fatalf("unexpected reuse: %+v", result)
+		}
+		if slices.ContainsFunc(updates, func(u api.UploadProgressUpdate) bool { return u.Status == "failed" }) {
+			t.Fatalf("candidate recheck failure emitted premature failed status before valid candidate succeeded: %+v", updates)
+		}
+		if len(updates) == 0 || updates[len(updates)-1].Status != "completed" {
+			t.Fatalf("expected final completed status after valid candidate succeeded, got %+v", updates)
 		}
 	}
 }
@@ -558,5 +709,388 @@ func TestEffectivePolicySharesGenerationAndValidationMaximum(t *testing.T) {
 				t.Fatal("oversized generated pieces accepted")
 			}
 		})
+	}
+}
+
+type recordingDebugLogger struct {
+	api.NopLogger
+	mu    sync.Mutex
+	lines []string
+}
+
+func (l *recordingDebugLogger) Debugf(format string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.lines = append(l.lines, fmt.Sprintf(format, args...))
+}
+
+func (l *recordingDebugLogger) Warnf(format string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.lines = append(l.lines, fmt.Sprintf(format, args...))
+}
+
+func (l *recordingDebugLogger) snapshot() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.lines)
+}
+
+func TestMultiTrackerAlignedWrapperRecheckClosesTorrentScopes(t *testing.T) {
+	t.Parallel()
+	folder := filepath.Join(t.TempDir(), "Example")
+	source := filepath.Join(folder, "Example.2026.mkv")
+	const pieceExp = 15
+	writeTestFile(t, source, strings.Repeat("x", 1<<pieceExp))
+	path := filepath.Join(t.TempDir(), "wrapper.torrent")
+	if _, err := mkbrr.Create(mkbrr.CreateOptions{
+		Path:           folder,
+		OutputPath:     path,
+		PieceLengthExp: new(uint(pieceExp)),
+		IsPrivate:      true,
+		Quiet:          true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name       string
+		wantStatus string
+		wantErr    error
+	}{
+		{name: "completed", wantStatus: "completed"},
+		{
+			name:       "canceled during verification",
+			wantStatus: "canceled",
+			wantErr:    context.Canceled,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var mu sync.Mutex
+			var verified bool
+			open := make(map[string]bool)
+			terminals := make(map[string][]string)
+			ctx = api.WithUploadProgressReporter(ctx, func(update api.UploadProgressUpdate) {
+				if update.Task != "torrent" {
+					return
+				}
+				mu.Lock()
+				defer mu.Unlock()
+				if update.Status == "running" {
+					open[update.Tracker] = true
+					if update.Tracker == "TL" && update.Message == "Verifying torrent pieces" {
+						verified = true
+						if tc.wantErr != nil {
+							cancel()
+						}
+					}
+					return
+				}
+				terminals[update.Tracker] = append(terminals[update.Tracker], update.Status)
+				delete(open, update.Tracker)
+			})
+			out, err := NewService(nil, t.TempDir()).Create(ctx, api.TorrentSubject{
+				SourcePath:        source,
+				ClientTorrentPath: path,
+				Trackers:          []string{"TL", "BHD"},
+				ForceRecheck:      true,
+				TorrentOverrides:  api.TorrentOverrides{NoHash: new(true)},
+			})
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Create error = %v, want %v", err, tc.wantErr)
+			}
+			if !verified || len(open) != 0 || !slices.Equal(terminals["TL"], []string{tc.wantStatus}) || !slices.Equal(terminals[""], []string{tc.wantStatus}) {
+				t.Fatalf("aligned wrapper progress not closed: verified=%t open=%v terminals=%v", verified, open, terminals)
+			}
+			if tc.wantErr == nil && len(out.TrackerArtifacts) != 2 {
+				t.Fatalf("expected both trackers to reuse the wrapper conversion: %+v", out)
+			}
+		})
+	}
+}
+
+func TestCreateProgressAndCandidateRejectionDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	t.Run("generation without candidates skips reuse check progress and nonexistent candidate noise", func(t *testing.T) {
+		t.Parallel()
+		source := filepath.Join(t.TempDir(), "Example.2026.mkv")
+		writeTestFile(t, source, "synthetic media bytes")
+
+		logger := &recordingDebugLogger{}
+		var messages []string
+		ctx := api.WithUploadProgressReporter(t.Context(), func(update api.UploadProgressUpdate) {
+			messages = append(messages, update.Message)
+		})
+		_, err := NewService(logger, t.TempDir()).Create(ctx, api.TorrentSubject{
+			SourcePath: source,
+			Trackers:   []string{"TL"},
+		})
+		if err != nil {
+			t.Fatalf("Create failed: %v", err)
+		}
+		if slices.Contains(messages, "Checking reusable torrent") {
+			t.Fatalf("unexpected reuse-check progress when no candidates exist: %v", messages)
+		}
+		if !slices.Contains(messages, "Preparing torrent") {
+			t.Fatalf("expected Preparing torrent progress, got %v", messages)
+		}
+		if !slices.Contains(messages, "Hashing torrent: no compatible reusable artifact") {
+			t.Fatalf("expected non-rehash generation reason, got %v", messages)
+		}
+		for _, line := range logger.snapshot() {
+			if strings.Contains(line, "reusable candidate rejected") && strings.Contains(line, "stage=content_layout") {
+				t.Fatalf("unexpected nonexistent candidate rejection log: %s", line)
+			}
+		}
+	})
+
+	t.Run("piece-count rejection logs debug reason and terminates skipped nohash scope", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		source := filepath.Join(dir, "Pack.2026.mkv")
+		const (
+			piece int64 = 16 << 10
+			count int64 = 10001
+			size        = piece * count
+		)
+		writeSizedTorrentSource(t, source, size)
+		candidate := writeExtractionTorrent(t, filepath.Join(dir, "existing.torrent"), metainfo.Info{
+			Name:        filepath.Base(source),
+			Length:      size,
+			PieceLength: piece,
+			Pieces:      make([]byte, count*metainfo.HashSize),
+		})
+
+		logger := &recordingDebugLogger{}
+		var updates []api.UploadProgressUpdate
+		ctx := api.WithUploadProgressReporter(t.Context(), func(update api.UploadProgressUpdate) {
+			updates = append(updates, update)
+		})
+		result, err := NewService(logger, t.TempDir()).Create(ctx, api.TorrentSubject{
+			SourcePath:              source,
+			SourceSize:              size,
+			Trackers:                []string{"TL"},
+			ClientTorrentCandidates: []api.ClientTorrentCandidate{candidate},
+			TorrentOverrides:        api.TorrentOverrides{NoHash: new(true)},
+		})
+		if err != nil {
+			t.Fatalf("expected skipped nohash result, got err=%v", err)
+		}
+		if !slices.Equal(result.SkippedTrackers, []string{"TL"}) {
+			t.Fatalf("expected TL skipped under nohash, got %+v", result)
+		}
+		if !slices.ContainsFunc(updates, func(u api.UploadProgressUpdate) bool {
+			return u.Tracker == "TL" && u.Status == "running" && u.Message == "Checking reusable torrent"
+		}) {
+			t.Fatalf("expected Checking reusable torrent progress when candidates exist, got %+v", updates)
+		}
+		last := updates[len(updates)-1]
+		if last.Tracker != "TL" || last.Status != "skipped" {
+			t.Fatalf("expected terminal skipped progress for TL, got %+v", last)
+		}
+		loggedPieceCount := slices.ContainsFunc(logger.snapshot(), func(line string) bool {
+			return strings.Contains(line, "reusable candidate rejected") && strings.Contains(line, "stage=piece_count")
+		})
+		if !loggedPieceCount {
+			t.Fatalf("expected stage=piece_count rejection debug log, got %v", logger.snapshot())
+		}
+	})
+
+	t.Run("defer wrapper conversion reuse hit emits terminal completed progress", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		source := filepath.Join(dir, "Reusable.2026.mkv")
+		writeTestFile(t, source, "reusable bytes")
+		candidate := filepath.Join(dir, "reusable.torrent")
+		createTestTorrentFromExisting(t, source, candidate)
+
+		var updates []api.UploadProgressUpdate
+		ctx := api.WithUploadProgressReporter(t.Context(), func(update api.UploadProgressUpdate) {
+			updates = append(updates, update)
+		})
+		result, err := NewService(api.NopLogger{}, t.TempDir()).Create(ctx, api.TorrentSubject{
+			SourcePath:             source,
+			Trackers:               []string{"TL"},
+			ClientTorrentPath:      candidate,
+			DeferWrapperConversion: true,
+			TorrentOverrides:       api.TorrentOverrides{NoHash: new(true)},
+		})
+		if err != nil {
+			t.Fatalf("Create failed: %v", err)
+		}
+		if result.PendingPublication != nil {
+			t.Fatalf("expected no pending publication for reuse hit")
+		}
+		if len(updates) < 2 || updates[len(updates)-1].Status != "completed" || updates[len(updates)-1].Tracker != "TL" {
+			t.Fatalf("expected completed terminal progress for DeferWrapperConversion reuse hit, got %+v", updates)
+		}
+	})
+
+	t.Run("two-tracker generation closes shared check and per-tracker scopes", func(t *testing.T) {
+		t.Parallel()
+		for _, deferred := range []bool{false, true} {
+			t.Run(fmt.Sprintf("deferred=%t", deferred), func(t *testing.T) {
+				t.Parallel()
+				dir := t.TempDir()
+				source := filepath.Join(dir, "Multi.2026.mkv")
+				writeTestFile(t, source, "synthetic media bytes")
+				other := filepath.Join(dir, "Other.2026.mkv")
+				writeTestFile(t, other, "other bytes")
+				incompatible := filepath.Join(dir, "incompatible.torrent")
+				createTestTorrentFromExisting(t, other, incompatible)
+
+				lastStatus := make(map[string]string)
+				ctx := api.WithUploadProgressReporter(t.Context(), func(update api.UploadProgressUpdate) {
+					lastStatus[update.Tracker] = update.Status
+				})
+				result, err := NewService(api.NopLogger{}, t.TempDir()).Create(ctx, api.TorrentSubject{
+					SourcePath:                 source,
+					Trackers:                   []string{"TL", "BHD"},
+					ClientTorrentPath:          incompatible,
+					DeferGenerationPublication: deferred,
+				})
+				if err != nil {
+					t.Fatalf("Create failed: %v", err)
+				}
+				if result.PendingPublication != nil {
+					defer func() { _ = result.PendingPublication.Discard() }()
+				}
+				if lastStatus[""] != "completed" {
+					t.Fatalf("expected shared torrent check scope to complete before/after generation, got %+v", lastStatus)
+				}
+				if deferred {
+					if result.PendingPublication == nil {
+						t.Fatalf("expected pending publication when deferred=true")
+					}
+					if lastStatus["TL"] != "running" {
+						t.Fatalf("expected deferred TL scope to remain running until caller publishes, got %+v", lastStatus)
+					}
+					if !slices.Contains(result.RehashedTrackers, "TL") {
+						t.Fatalf("expected TL in RehashedTrackers for caller handoff, got %v", result.RehashedTrackers)
+					}
+				} else {
+					for tracker, status := range lastStatus {
+						if status != "completed" {
+							t.Fatalf("scope %q stuck in %q after immediate publication: %+v", tracker, status, lastStatus)
+						}
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("direct provided torrent failure and cancellation emit terminal status", func(t *testing.T) {
+		t.Parallel()
+		t.Run("validation failure", func(t *testing.T) {
+			t.Parallel()
+			missingTorrent := filepath.Join(t.TempDir(), "missing.torrent")
+			var updates []api.UploadProgressUpdate
+			ctx := api.WithUploadProgressReporter(t.Context(), func(update api.UploadProgressUpdate) {
+				updates = append(updates, update)
+			})
+			if _, err := NewService(api.NopLogger{}, t.TempDir()).Create(ctx, api.TorrentSubject{
+				SourcePath: missingTorrent,
+				Trackers:   []string{"TL"},
+			}); err == nil {
+				t.Fatal("expected missing .torrent to fail")
+			}
+			if len(updates) < 2 || updates[0].Status != "running" || updates[len(updates)-1].Status != "failed" || updates[len(updates)-1].Tracker != "TL" {
+				t.Fatalf("expected running then failed progress for missing .torrent, got %+v", updates)
+			}
+		})
+
+		t.Run("cancellation during validation", func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			content := filepath.Join(dir, "video.mkv")
+			provided := filepath.Join(dir, "provided.torrent")
+			createTestTorrent(t, content, provided)
+
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var updates []api.UploadProgressUpdate
+			ctx = api.WithUploadProgressReporter(ctx, func(update api.UploadProgressUpdate) {
+				updates = append(updates, update)
+				if update.Status == "running" {
+					cancel()
+				}
+			})
+			if _, err := NewService(api.NopLogger{}, t.TempDir()).Create(ctx, api.TorrentSubject{
+				SourcePath: provided,
+				Trackers:   []string{"TL"},
+			}); err == nil {
+				t.Fatal("expected canceled .torrent validation to fail")
+			}
+			if len(updates) < 2 || updates[len(updates)-1].Status != "canceled" || updates[len(updates)-1].Tracker != "TL" {
+				t.Fatalf("expected terminal canceled status for direct .torrent, got %+v", updates)
+			}
+		})
+	})
+
+	for _, tc := range []struct {
+		tracker      string
+		piece, count int64
+		stage        string
+	}{
+		{
+			tracker: "TL",
+			piece:   16 << 10,
+			count:   10001,
+			stage:   "piece_count",
+		},
+		{
+			tracker: "HDB",
+			piece:   2 << 20,
+			count:   4001,
+			stage:   "tracker_policy",
+		},
+	} {
+		t.Run("wrapper extraction logs rejection at "+tc.stage, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			source := filepath.Join(dir, "Wrapper.2026.mkv")
+			size := tc.piece * tc.count
+			writeSizedTorrentSource(t, source, size)
+			wrapper := writeExtractionTorrent(t, filepath.Join(dir, "wrapper.torrent"), metainfo.Info{
+				Name:        "Wrapper.2026.Folder",
+				PieceLength: tc.piece,
+				Pieces:      make([]byte, tc.count*metainfo.HashSize),
+				Files:       []metainfo.FileInfo{{Length: size, Path: []string{filepath.Base(source)}}},
+			})
+			registry := trackers.NewRegistry()
+			if err := registry.Register(hdb.New()); err != nil {
+				t.Fatal(err)
+			}
+			logger := &recordingDebugLogger{}
+			_, err := NewServiceWithRegistry(logger, t.TempDir(), registry).Create(t.Context(), api.TorrentSubject{
+				SourcePath:              source,
+				SourceSize:              size,
+				Trackers:                []string{tc.tracker},
+				ClientTorrentCandidates: []api.ClientTorrentCandidate{wrapper},
+				TorrentOverrides:        api.TorrentOverrides{NoHash: new(true)},
+			})
+			if err != nil {
+				t.Fatalf("expected skipped nohash result, got err=%v", err)
+			}
+			if !slices.ContainsFunc(logger.snapshot(), func(line string) bool {
+				return strings.Contains(line, "reusable candidate rejected") && strings.Contains(line, "stage="+tc.stage)
+			}) {
+				t.Fatalf("expected wrapper rejection at stage %s, got %v", tc.stage, logger.snapshot())
+			}
+		})
+	}
+}
+
+func writeSizedTorrentSource(t *testing.T, path string, size int64) {
+	t.Helper()
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	truncateErr := file.Truncate(size)
+	if err := errors.Join(truncateErr, file.Close()); err != nil {
+		t.Fatal(err)
 	}
 }
