@@ -69,7 +69,7 @@ Notes:
 - Line endings are normalised via `.gitattributes` and `.editorconfig`.
 
 Pull-request Go checks use seven shards on Linux, Windows, and macOS: general
-core, native HDR core, decoded core, workflow, media, metadata/config/database, and
+core, comparison core, HDR/native/decoded core, workflow, media, metadata/config/database, and
 the remaining packages. Core tests are partitioned by their top-level names; all
 other packages enter exactly one shard. New packages default to the remaining
 packages shard unless they match an existing owner. List the packages for a shard with
@@ -388,15 +388,14 @@ Use `make test-go-fast` for rapid full-suite iteration. It omits the race
 detector; run focused race tests while developing and `make test-go` before
 handoff when broad Go regressions are plausible.
 
-`make test-go` bounds each race-enabled test binary to four logical CPUs and
-four concurrent `t.Parallel` tests. Package test binaries retain Go's default
-`-p` concurrency. These per-binary limits prevent each concurrently running
-package from independently using the host's full CPU count. Override
-`GO_TEST_SCHEDULER_FLAGS` when benchmarking another per-binary limit, or set it
-empty to use Go defaults:
+`make test-go` bounds package concurrency (`-p=4`) and each race-enabled test
+binary (`-cpu=4 -parallel=4`) so concurrently running packages do not
+oversubscribe the host with `GOMAXPROCS * 4` race-instrumented workers. Override
+`GO_TEST_SCHEDULER_FLAGS` when benchmarking another limit, or set it empty to
+use Go defaults:
 
 ```sh
-make test-go GO_TEST_SCHEDULER_FLAGS="-cpu=2 -parallel=2"
+make test-go GO_TEST_SCHEDULER_FLAGS="-p=2 -cpu=2 -parallel=2"
 make test-go GO_TEST_SCHEDULER_FLAGS=
 ```
 

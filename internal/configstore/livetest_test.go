@@ -21,6 +21,7 @@ import (
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/livetest"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
 )
 
@@ -38,6 +39,7 @@ func liveTestFixture(t *testing.T, legacy ...bool) (string, string) {
 		t.Fatal(err)
 	}
 	authfixture.Write(t, source)
+	dbfixture.WriteMigrated(t, source)
 	if len(legacy) != 0 && legacy[0] {
 		record, err := authmaterial.LoadRecordFromDBPath(source)
 		if err != nil {

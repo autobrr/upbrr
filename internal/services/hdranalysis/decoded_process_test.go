@@ -118,8 +118,10 @@ func TestHDRDecoderChild(_ *testing.T) {
 }
 
 func TestDecodedProcessFramingAndCancellation(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"normal", "flood", "paired-ahead", "duplicate", "wrong-pts", "truncated", "oversized", "extra", "exit-failure", "tail-failure", "blocked"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			request := decodedProcessFixture()
 			if mode == "paired-ahead" {
 				request.inputs = append(request.inputs, request.inputs[0])

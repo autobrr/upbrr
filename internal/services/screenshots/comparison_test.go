@@ -751,6 +751,7 @@ func TestComparisonSamplingNormalizesHDRWithoutLosingIdentity(t *testing.T) {
 
 // Synthetic native media verifies decoded identity and time origin, not HDR fidelity.
 func TestComparisonNativeSourceClockAndSampling(t *testing.T) {
+	t.Parallel()
 	executable, err := exec.LookPath("ffmpeg")
 	if err != nil {
 		t.Skip("native comparison check requires FFmpeg")
@@ -1036,6 +1037,7 @@ func TestComparisonNativeFileClockReset(t *testing.T) {
 }
 
 func TestComparisonNativeFractionalFrameRoundTrip(t *testing.T) {
+	t.Parallel()
 	executable, err := exec.LookPath("ffmpeg")
 	if err != nil {
 		t.Skip("native comparison check requires FFmpeg")

@@ -15,10 +15,11 @@ import (
 )
 
 func TestDubCompanionCorrectionsProgressThroughRepreparation(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, dubLanguage, companionLanguage string
-		companionKnownLanguage              string
-		companionOrigin                     api.TrackAudioOrigin
+		companionKnownLanguage               string
+		companionOrigin                      api.TrackAudioOrigin
 	}{
 		{
 			name:            "original companion",
@@ -40,6 +41,7 @@ func TestDubCompanionCorrectionsProgressThroughRepreparation(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			fixture := newCorrectionEvidenceFixtureForSource(t, "Example.Movie.2026.1080p.WEB-DL.H264-GRP.mkv")
 			fixture.input.Instructions.Category = new(api.CanonicalCategoryMovie)
 			fixture.input.Instructions.Metadata.OriginalLanguage = new("")
@@ -134,8 +136,8 @@ func TestDubCompanionCorrectionsProgressThroughRepreparation(t *testing.T) {
 			check(subject, companion.ID, api.CorrectionFieldMetadataTrackAudioOrigins)
 			if tc.companionKnownLanguage != "" {
 				subject = prepare(api.MetadataOverrides{TrackLanguages: []api.TrackLanguageCorrection{{
-					TrackID: companion.ID,
-					Languages: []string{tc.companionKnownLanguage},
+					TrackID:             companion.ID,
+					Languages:           []string{tc.companionKnownLanguage},
 					ManifestFingerprint: companion.ManifestFingerprint,
 				}}})
 				check(subject, companion.ID, api.CorrectionFieldMetadataTrackAudioOrigins)

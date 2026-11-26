@@ -8,6 +8,7 @@ import (
 	"github.com/autobrr/upbrr/internal/imageevidence"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/pkg/api"
 	"image/color"
 	"os"
@@ -58,8 +59,10 @@ func TestTonemappingLinkedURLKeepsItsOwnEvidence(t *testing.T) {
 }
 
 func TestPlanPreservesTrackerURLTonemapping(t *testing.T) {
+	t.Parallel()
 	for _, multiDisc := range []bool{false, true} {
 		t.Run(map[bool]string{false: "single media", true: "multi-disc"}[multiDisc], func(t *testing.T) {
+			t.Parallel()
 			subject, _, _ := multiDiscScreenshotSubject(t)
 			if !multiDisc {
 				subject.SourcePath = subject.Discs[0].VideoPath
@@ -179,11 +182,9 @@ func TestTonemappingCaptureSurvivesRepositoryRestartAndPreferenceChange(t *testi
 			}
 			t.Chdir(ffmpegRoot)
 			database := filepath.Join(t.TempDir(), "test.sqlite")
+			dbfixture.WriteMigrated(t, database)
 			repo, err := db.Open(database)
 			if err != nil {
-				t.Fatal(err)
-			}
-			if err := repo.Migrate(); err != nil {
 				t.Fatal(err)
 			}
 			tmp := t.TempDir()

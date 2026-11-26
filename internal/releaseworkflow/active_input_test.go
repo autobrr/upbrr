@@ -18,6 +18,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -47,14 +48,9 @@ func persistActiveInputTestRelease(ctx context.Context, repo *db.SQLiteRepositor
 }
 
 func TestInputSourcePathPreservesVerifiedCasingAndRejectsDetachedAuthority(t *testing.T) {
-	repo, err := db.Open(filepath.Join(t.TempDir(), "source-path.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "source-path.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	source := filepath.Join(t.TempDir(), "Synthetic.HDR.2026.mkv")
 	canonical := source
 	if runtime.GOOS == "windows" {
@@ -101,14 +97,8 @@ func TestInputSourcePathPreservesVerifiedCasingAndRejectsDetachedAuthority(t *te
 
 func TestActiveInputReviewRemainsBoundToVerifiedSourceVersion(t *testing.T) {
 	t.Parallel()
-	repo, err := db.Open(filepath.Join(t.TempDir(), "review.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	dbPath := filepath.Join(t.TempDir(), "review.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	persistent, err := NewPersistentRepository(repo)
 	if err != nil {
 		t.Fatal(err)
@@ -170,14 +160,8 @@ func TestActiveInputReviewRemainsBoundToVerifiedSourceVersion(t *testing.T) {
 
 func TestActiveInputOpenRefreshRollbackAndOwnerIsolation(t *testing.T) {
 	t.Parallel()
-	repo, err := db.Open(filepath.Join(t.TempDir(), "input.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	dbPath := filepath.Join(t.TempDir(), "input.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	persistent, err := NewPersistentRepository(repo)
 	if err != nil {
 		t.Fatal(err)
@@ -258,14 +242,8 @@ func TestActiveInputOpenRefreshRollbackAndOwnerIsolation(t *testing.T) {
 
 func TestMetadataCorrectionsReuseOnlyMatchingActiveSourceInventory(t *testing.T) {
 	t.Parallel()
-	repo, err := db.Open(filepath.Join(t.TempDir(), "input.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	dbPath := filepath.Join(t.TempDir(), "input.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	persistent, err := NewPersistentRepository(repo)
 	if err != nil {
 		t.Fatal(err)
@@ -450,14 +428,8 @@ func TestRetainActiveInputRequiresUnchangedCurrentAuthority(t *testing.T) {
 
 func TestReopenVerifiedInputRestoresAudioAnalysis(t *testing.T) {
 	t.Parallel()
-	repo, err := db.Open(filepath.Join(t.TempDir(), "input.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	dbPath := filepath.Join(t.TempDir(), "input.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	persistent, err := NewPersistentRepository(repo)
 	if err != nil {
 		t.Fatal(err)
@@ -699,14 +671,8 @@ func TestReopenVerifiedInputRestoresAudioAnalysis(t *testing.T) {
 
 func TestContinueInitialOpenLoadsAndSameInputApplies(t *testing.T) {
 	t.Parallel()
-	repo, err := db.Open(filepath.Join(t.TempDir(), "input.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	dbPath := filepath.Join(t.TempDir(), "input.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	persistent, err := NewPersistentRepository(repo)
 	if err != nil {
 		t.Fatal(err)
@@ -1066,14 +1032,8 @@ func TestClosedInputWorkflowSourceAssociatesTerminalHistoryPurge(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			repo, err := db.Open(filepath.Join(t.TempDir(), "history.sqlite"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = repo.Close() })
-			if err := repo.Migrate(); err != nil {
-				t.Fatal(err)
-			}
+			dbPath := filepath.Join(t.TempDir(), "history.sqlite")
+			repo := dbfixture.OpenMigrated(t, dbPath)
 			persistent, err := NewPersistentRepository(repo)
 			if err != nil {
 				t.Fatal(err)
@@ -1162,14 +1122,8 @@ func TestRefreshCompletedInputPreservesRetryAuthorityAndConfirmedExclusions(t *t
 	for _, name := range []string{"successful upload", "all excluded", "failed upload", "partial client injection", "blocked", "failed workflow"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			repo, err := db.OpenContext(t.Context(), filepath.Join(t.TempDir(), "terminal-refresh.sqlite"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = repo.Close() })
-			if err := repo.MigrateContext(t.Context()); err != nil {
-				t.Fatal(err)
-			}
+			dbPath := filepath.Join(t.TempDir(), "terminal-refresh.sqlite")
+			repo := dbfixture.OpenMigrated(t, dbPath)
 			persistent, err := NewPersistentRepository(repo)
 			if err != nil {
 				t.Fatal(err)

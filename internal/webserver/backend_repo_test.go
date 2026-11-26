@@ -25,6 +25,7 @@ import (
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -92,14 +93,7 @@ func TestNewBackendInitializesConfigActivationFingerprint(t *testing.T) {
 func TestStartupReconcilesNewDefaultsBeforeConfigIsSaved(t *testing.T) {
 	ctx := t.Context()
 	repoPath := filepath.Join(t.TempDir(), "activation.db")
-	repo, err := db.OpenContext(ctx, repoPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.MigrateContext(ctx); err != nil {
-		t.Fatal(err)
-	}
+	repo := dbfixture.OpenMigrated(t, repoPath)
 	previous := backendConfigTestConfig(repoPath)
 	initial, err := InitializeRuntimeConfigActivation(ctx, repo, previous, nil)
 	if err != nil {
@@ -167,14 +161,7 @@ func TestStartupPreservesEvidenceOnlyForProvenFingerprintFormatChange(t *testing
 func TestNewBackendReconcilesExpiredOpeningInput(t *testing.T) {
 	ctx := t.Context()
 	repoPath := filepath.Join(t.TempDir(), "activation.db")
-	repo, err := db.OpenContext(ctx, repoPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.MigrateContext(ctx); err != nil {
-		t.Fatal(err)
-	}
+	repo := dbfixture.OpenMigrated(t, repoPath)
 	previous := backendConfigTestConfig(repoPath)
 	if _, err := InitializeRuntimeConfigActivation(ctx, repo, previous, nil); err != nil {
 		t.Fatal(err)
@@ -222,14 +209,12 @@ func TestNewBackendReconcilesRetiredA4KActivationFingerprint(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 	repoPath := filepath.Join(t.TempDir(), "activation.db")
+	dbfixture.WriteMigrated(t, repoPath)
 	repo, err := db.OpenContext(ctx, repoPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer repo.Close()
-	if err := repo.MigrateContext(ctx); err != nil {
-		t.Fatal(err)
-	}
 	cfg := backendConfigTestConfig(repoPath)
 	cfg.Trackers.Trackers = map[string]config.TrackerConfig{"A4K": {APIKey: "synthetic-key", Anon: true}}
 	if err := config.SaveToDatabase(ctx, &cfg, repo); err != nil {
@@ -323,14 +308,7 @@ func TestStartupReconcilesStoredConfigChanges(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := t.Context()
 			repoPath := filepath.Join(t.TempDir(), "activation.db")
-			repo, err := db.OpenContext(ctx, repoPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = repo.Close() })
-			if err := repo.MigrateContext(ctx); err != nil {
-				t.Fatal(err)
-			}
+			repo := dbfixture.OpenMigrated(t, repoPath)
 			cfg := backendConfigTestConfig(repoPath)
 			if err := config.SaveToDatabase(ctx, &cfg, repo); err != nil {
 				t.Fatal(err)
@@ -391,14 +369,7 @@ func TestStartupRecoversMultipleEffectsInOneWorkflowBeforeActivation(t *testing.
 		t.Run(test.name, func(t *testing.T) {
 			ctx := t.Context()
 			repoPath := filepath.Join(t.TempDir(), "activation.db")
-			repo, err := db.OpenContext(ctx, repoPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = repo.Close() })
-			if err := repo.MigrateContext(ctx); err != nil {
-				t.Fatal(err)
-			}
+			repo := dbfixture.OpenMigrated(t, repoPath)
 			previous := backendConfigTestConfig(repoPath)
 			initial, err := InitializeRuntimeConfigActivation(ctx, repo, previous, nil)
 			if err != nil {
@@ -480,14 +451,7 @@ func TestStartupRecoversMultipleEffectsInOneWorkflowBeforeActivation(t *testing.
 func TestStartupWaitsForLiveInputWithoutDiscardingUnresolvedEffect(t *testing.T) {
 	ctx := t.Context()
 	repoPath := filepath.Join(t.TempDir(), "activation.db")
-	repo, err := db.OpenContext(ctx, repoPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.MigrateContext(ctx); err != nil {
-		t.Fatal(err)
-	}
+	repo := dbfixture.OpenMigrated(t, repoPath)
 	previous := backendConfigTestConfig(repoPath)
 	initial, err := InitializeRuntimeConfigActivation(ctx, repo, previous, nil)
 	if err != nil {
@@ -549,14 +513,12 @@ func TestNewBackendRejectsChangedConfigActivationFingerprint(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 	repoPath := filepath.Join(t.TempDir(), "activation.db")
+	dbfixture.WriteMigrated(t, repoPath)
 	repo, err := db.OpenContext(ctx, repoPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer repo.Close()
-	if err := repo.MigrateContext(ctx); err != nil {
-		t.Fatal(err)
-	}
 	cfg := backendConfigTestConfig(repoPath)
 	if err := config.SaveToDatabase(ctx, &cfg, repo); err != nil {
 		t.Fatal(err)

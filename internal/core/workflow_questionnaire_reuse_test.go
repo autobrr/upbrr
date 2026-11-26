@@ -47,6 +47,7 @@ func TestContinueCandidateQuestionsRefreshAfterCompatibleRebind(t *testing.T) {
 
 func testContinueQuestionnaireReuse(t *testing.T, trackerID, submittedTracker api.TrackerID, staffToken, candidateReview bool) {
 	t.Helper()
+	t.Parallel()
 	registry := trackerimpl.MustNewRegistry()
 	reviewKey := func(answers map[string]string) string {
 		fingerprint, _ := api.CanonicalWorkflowFingerprint([]string{answers["source"], answers["internal_status"]})

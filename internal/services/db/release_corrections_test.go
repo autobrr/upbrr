@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"testing"
@@ -62,14 +61,9 @@ func TestMigrateReleaseCorrectionsBackfillsLegacyPresence(t *testing.T) {
 }
 
 func TestHistoryLoadsCorrectionOnlyRecordAfterRestart(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "corrections.db")
-	repo, err := OpenWithLogger(path, nopLogger{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	t.Parallel()
+	repo := openMigratedTestRepo(t)
+	path := repo.DBPath()
 	stored, err := repo.UpdateReleaseCorrections(t.Context(), "release-source", api.ReleaseCorrectionUpdate{
 		Mode:  api.ReleaseCorrectionUpdatePatch,
 		Patch: &api.ReleaseCorrectionPatch{Values: api.ReleaseCorrectionValues{Metadata: api.MetadataOverrides{Title: new("Manual title")}}},
@@ -100,14 +94,8 @@ func TestHistoryLoadsCorrectionOnlyRecordAfterRestart(t *testing.T) {
 func TestReleaseCorrectionsUpdateResetAndRestart(t *testing.T) {
 	t.Parallel()
 
-	path := filepath.Join(t.TempDir(), "corrections.db")
-	repo, err := OpenWithLogger(path, nopLogger{})
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate repository: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
+	path := repo.DBPath()
 	ctx := context.Background()
 	sourcePath := "release-source"
 
@@ -230,15 +218,8 @@ func TestReleaseCorrectionsPreserveUnknownVersionBytes(t *testing.T) {
 func TestReleaseCorrectionsRejectUnsupportedRepackBeforePersistence(t *testing.T) {
 	t.Parallel()
 
-	path := filepath.Join(t.TempDir(), "repack-corrections.db")
-	repo, err := OpenWithLogger(path, nopLogger{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	repo := openMigratedTestRepo(t)
+	path := repo.DBPath()
 	ctx := t.Context()
 	const sourcePath = "release-version-source"
 	stored, err := repo.UpdateReleaseCorrections(ctx, sourcePath, api.ReleaseCorrectionUpdate{
@@ -290,6 +271,7 @@ func TestReleaseCorrectionsRejectUnsupportedRepackBeforePersistence(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = repo.Close() })
 	restarted, err := repo.LoadReleaseCorrections(ctx, sourcePath)
 	if err != nil || !reflect.DeepEqual(restarted, stored) {
 		t.Fatalf("rejected updates changed corrections after restart: %#v, %v; want %#v", restarted, err, stored)
@@ -346,14 +328,8 @@ func TestReleaseCorrectionsRecoverLegacyUnsupportedRepack(t *testing.T) {
 
 func TestIdentityResetMarkersSurviveRestartAndRejectInvalidRows(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join(t.TempDir(), "identity-resets.db")
-	repo, err := OpenWithLogger(path, nopLogger{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	repo := openMigratedTestRepo(t)
+	path := repo.DBPath()
 	stored, err := repo.UpdateReleaseCorrections(t.Context(), "source", api.ReleaseCorrectionUpdate{
 		Mode: api.ReleaseCorrectionUpdatePatch,
 		Patch: &api.ReleaseCorrectionPatch{
@@ -576,6 +552,7 @@ func TestCommitPreparedReleaseWithCorrectionsRollsBackCompatibilityFailure(t *te
 }
 
 func TestCommitPreparedReleaseWithCorrectionsFencesPredecessor(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name      string
 		stored    api.PreparedGeneration
@@ -590,6 +567,7 @@ func TestCommitPreparedReleaseWithCorrectionsFencesPredecessor(t *testing.T) {
 		{name: "missing", wantError: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			repo := openPreparedReleaseTestRepo(t)
 			ctx := t.Context()
 			source := "guarded-predecessor"

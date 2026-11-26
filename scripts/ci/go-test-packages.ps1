@@ -1,12 +1,12 @@
 param(
-    [ValidateSet('all', 'core', 'core-hdr', 'core-decoded', 'workflow', 'media', 'metadata', 'other')]
+    [ValidateSet('all', 'core', 'core-comparisons', 'core-hdr', 'workflow', 'media', 'metadata', 'other')]
     [string]$Shard = 'all'
 )
 
 $ErrorActionPreference = 'Stop'
 $packages = @(go list ./...)
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-$packageShard = if ($Shard -in @('core-hdr', 'core-decoded')) { 'core' } else { $Shard }
+$packageShard = if ($Shard -in @('core-comparisons', 'core-hdr')) { 'core' } else { $Shard }
 
 $selected = @($packages | Where-Object {
     $owner = switch -Regex ($_) {
