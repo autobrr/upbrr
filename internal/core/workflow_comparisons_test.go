@@ -2292,45 +2292,27 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 	renderer := &comparisonWindowRecorder{comparisonFrameRenderer: screenshots.NewService(cfg, api.NopLogger{}, root, nil)}
 	private := workflowMediaPrivateArtifacts{ComparisonSources: map[string]workflowComparisonSource{}, ArtifactImages: map[api.PublicResourceID]api.ScreenshotImage{}}
 	plan := api.ComparisonPlan{MainSourceID: "main", Preferences: api.ComparisonPreferences{Count: 2}}
-	type inspectedFixture struct {
-		source      screenshots.ComparisonSource
-		fingerprint string
-		err         error
-	}
-	inspected := make([]inspectedFixture, len(paths))
-	var inspectWG sync.WaitGroup
 	for i, path := range paths {
-		inspectWG.Go(func() {
-			source, err := renderer.InspectComparisonSource(t.Context(), path)
-			if err != nil {
-				inspected[i].err = err
-				return
-			}
-			fingerprint, err := comparisonVideoFingerprint(t.Context(), path)
-			if err != nil {
-				inspected[i].err = err
-				return
-			}
-			source.InputFingerprint = fingerprint
-			inspected[i] = inspectedFixture{source: source, fingerprint: fingerprint}
-		})
-	}
-	inspectWG.Wait()
-	for i, item := range inspected {
-		if item.err != nil {
-			t.Fatal(item.err)
+		source, err := renderer.InspectComparisonSource(t.Context(), path)
+		if err != nil {
+			t.Fatal(err)
 		}
+		fingerprint, err := comparisonVideoFingerprint(t.Context(), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		source.InputFingerprint = fingerprint
 		id := []string{"main", "positive", "negative", "hdr", "cropped"}[i]
-		if id == "hdr" && (len(item.source.HDRFacts.Formats) == 0 || item.source.HDRFacts.Formats[0] == api.HDRFormatSDR) {
-			t.Fatalf("native HDR fixture was not inspected as HDR: %+v", item.source.HDRFacts)
+		if id == "hdr" && (len(source.HDRFacts.Formats) == 0 || source.HDRFacts.Formats[0] == api.HDRFormatSDR) {
+			t.Fatalf("native HDR fixture was not inspected as HDR: %+v", source.HDRFacts)
 		}
-		private.ComparisonSources[id] = workflowComparisonSource{Source: item.source, Fingerprint: item.fingerprint}
+		private.ComparisonSources[id] = workflowComparisonSource{Source: source, Fingerprint: fingerprint}
 		plan.Sources = append(plan.Sources, api.ComparisonSource{
 			ID:                id,
 			Label:             id,
 			PreferBFrames:     true,
 			AllowedFrameTypes: []string{"B"},
-			Fingerprint:       item.fingerprint,
+			Fingerprint:       fingerprint,
 			Overlay:           true,
 		})
 	}
@@ -2413,8 +2395,12 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 		t.Fatal("independent offset validation did not report progress")
 	}
 	matchedPrivate := cloneWorkflowMediaPrivateArtifacts(private)
+	capturePlan, err := matched.Clone()
+	if err != nil {
+		t.Fatal(err)
+	}
 	media := api.MediaArtifactSet{}
-	captured, err := b.captureWorkflowComparisons(ctx, api.ReleaseRef{SourcePath: paths[0], Generation: 1}, &media, &private, matched, progress, false)
+	captured, err := b.captureWorkflowComparisons(ctx, api.ReleaseRef{SourcePath: paths[0], Generation: 1}, &media, &private, capturePlan, progress, false)
 	if err != nil || len(media.Artifacts) != 10 {
 		t.Fatalf("bounded captures=%d err=%v", len(media.Artifacts), err)
 	}
@@ -2790,7 +2776,7 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
 			prior := api.MediaArtifactSet{Comparisons: &matched}
-			updated, resource, err := b.EditComparisons(ctx, api.ReleaseRef{SourcePath: paths[0], Generation: 1}, api.TrackerReleaseProjectionSet{}, &prior, cloneWorkflowMediaPrivateArtifacts(capturedPrivate),
+			updated, resource, err := b.EditComparisons(ctx, api.ReleaseRef{SourcePath: paths[0], Generation: 1}, api.TrackerReleaseProjectionSet{}, &prior, cloneWorkflowMediaPrivateArtifacts(matchedPrivate),
 				api.ComparisonInstructions{Action: "capture", Plan: matched}, nil, time.Now())
 			incomplete, ok := errors.AsType[*releaseworkflow.ComparisonIncompleteError](err)
 			if !ok || incomplete.Reason != "capture_cancelled" || updated.Comparisons == nil || len(updated.Comparisons.Rows) != len(matched.Rows) || updated.Comparisons.ApprovedFingerprint != "" {
@@ -2800,8 +2786,14 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 			if !ok || len(updated.Failures) != 1 || updated.Failures[0].Failure.ComparisonReason != "capture_cancelled" {
 				t.Fatalf("capture entry lost its publishable incomplete outcome: %+v", updated.Failures)
 			}
+			if len(updated.Artifacts) != 0 || len(retained.ArtifactImages) != 0 {
+				t.Fatal("capture cancelled before rendering published images")
+			}
 			for r, row := range updated.Comparisons.Rows {
 				for c, cell := range row.Cells {
+					if cell.ArtifactID != "" || cell.ContentSHA256 != "" {
+						t.Fatal("capture cancelled before rendering retained a captured image")
+					}
 					original := matched.Rows[r].Cells[c]
 					if cell.ObservedIdentity == nil || original.ObservedIdentity == nil || *cell.ObservedIdentity != *original.ObservedIdentity {
 						t.Fatal("capture entry changed a matched native picture")
