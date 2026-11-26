@@ -17,6 +17,7 @@ import (
 )
 
 func TestDolbyVisionRenderAcceptsAccountedInputAboveLibraryDefault(t *testing.T) {
+	t.Parallel()
 	err := New(NewAdmission(), nil).WithSession(t.Context(), func(session *Session) error {
 		native, err := session.ExtractNativeFile(t.Context(), filepath.Join("testdata", "single-hybrid.mkv"), api.HDRAnalysisFormatsBoth)
 		if err != nil {
@@ -61,6 +62,7 @@ func TestDolbyVisionRenderAcceptsAccountedInputAboveLibraryDefault(t *testing.T)
 }
 
 func TestNativeRenderBudgetAllowsLargePlotWithinTotalBudget(t *testing.T) {
+	t.Parallel()
 	data, err := os.ReadFile(filepath.Join("testdata", "single-hybrid.mkv"))
 	if err != nil {
 		t.Fatal(err)
@@ -104,6 +106,7 @@ func TestNativeRenderBudgetAllowsLargePlotWithinTotalBudget(t *testing.T) {
 }
 
 func TestNativeRenderBudgetCoversBothFormatsAndOtherResults(t *testing.T) {
+	t.Parallel()
 	err := New(NewAdmission(), nil).WithSession(t.Context(), func(session *Session) error {
 		native, err := session.ExtractNativeFile(t.Context(), filepath.Join("testdata", "single-hybrid.mkv"), api.HDRAnalysisFormatsBoth)
 		if err != nil {
@@ -144,6 +147,7 @@ func TestNativeRenderBudgetCoversBothFormatsAndOtherResults(t *testing.T) {
 }
 
 func TestNativeAndDecodedRenderingChargeOutstandingDiscResults(t *testing.T) {
+	t.Parallel()
 	err := New(NewAdmission(), nil).WithSession(t.Context(), func(session *Session) error {
 		native, err := session.ExtractNativeFile(t.Context(), filepath.Join("testdata", "single-hybrid.mkv"), api.HDRAnalysisFormatsBoth)
 		if err != nil {

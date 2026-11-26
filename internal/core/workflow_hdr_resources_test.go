@@ -20,6 +20,7 @@ import (
 )
 
 func TestHDRLargeReportsReplayAndKeepTypedArtifactBounds(t *testing.T) {
+	t.Parallel()
 	builder, resolver, _ := hdrFixture(t)
 	release := resolver.subject.Release
 	const count = 120000
@@ -138,7 +139,7 @@ func TestHDRLargeReportsReplayAndKeepTypedArtifactBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	width, height := api.HDRArtifactPicturePlot.ImageDimensions()
-	encodeErr := png.Encode(imageFile, image.NewRGBA(image.Rect(0, 0, width, height)))
+	encodeErr := (&png.Encoder{CompressionLevel: png.NoCompression}).Encode(imageFile, image.NewRGBA(image.Rect(0, 0, width, height)))
 	truncateErr := imageFile.Truncate(32<<20 + 1)
 	closeErr = imageFile.Close()
 	if err := errors.Join(encodeErr, truncateErr, closeErr); err != nil {
@@ -164,6 +165,7 @@ func TestHDRLargeReportsReplayAndKeepTypedArtifactBounds(t *testing.T) {
 }
 
 func TestHDRPrivateResourceIndexSupportsAllTrackArtifacts(t *testing.T) {
+	t.Parallel()
 	builder, resolver, _ := hdrFixture(t)
 	directory, err := hdrAttemptRoot(builder.root, resolver.subject.Release, "hdr-analysis", "all-track-index")
 	if err != nil {

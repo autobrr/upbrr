@@ -66,6 +66,9 @@ var (
 // source order. Brackets inside quoted strings are ignored, and unterminated
 // candidates are omitted.
 func ExtractJSONBlocks(text string) []Block {
+	if strings.IndexByte(text, '{') < 0 && strings.IndexByte(text, '[') < 0 {
+		return []Block{}
+	}
 	blocks := make([]Block, 0)
 	stack := make([]rune, 0)
 	start := -1
@@ -179,17 +182,65 @@ func RedactValue(value string, sensitiveKeys map[string]struct{}, secrets ...str
 }
 
 func redactText(value string, keys map[string]struct{}, secrets []string) string {
-	value = cookieHeaderRe.ReplaceAllString(value, "${1}${2}[REDACTED]")
-	value = redactURLs(value, keys, secrets...)
-	value = redactURLPath(value)
-	value = urlUserinfoRe.ReplaceAllString(value, `${1}[REDACTED]@`)
-	value = queryParamRe.ReplaceAllString(value, `${1}[REDACTED]`)
-	value = keyValueQuotedRe.ReplaceAllStringFunc(value, redactQuotedKeyValue)
-	value = keyValuePlainRe.ReplaceAllStringFunc(value, redactPlainKeyValue)
-	value = cookieTailRe.ReplaceAllString(value, `${1}`)
-	value = authTailRe.ReplaceAllString(value, `${1}`)
-	value = longHexTokenRe.ReplaceAllString(value, `[REDACTED]`)
+	if strings.IndexByte(value, ':') >= 0 || strings.IndexByte(value, '=') >= 0 {
+		value = cookieHeaderRe.ReplaceAllString(value, "${1}${2}[REDACTED]")
+	}
+	if strings.Contains(value, "//") {
+		value = redactURLs(value, keys, secrets...)
+	}
+	if strings.IndexByte(value, '/') >= 0 {
+		value = redactURLPath(value)
+	}
+	if strings.IndexByte(value, '@') >= 0 && strings.Contains(value, "//") {
+		value = urlUserinfoRe.ReplaceAllString(value, `${1}[REDACTED]@`)
+	}
+	if strings.IndexByte(value, '=') >= 0 && (strings.IndexByte(value, '?') >= 0 || strings.IndexByte(value, '&') >= 0) {
+		value = queryParamRe.ReplaceAllString(value, `${1}[REDACTED]`)
+	}
+	if strings.IndexByte(value, ':') >= 0 || strings.IndexByte(value, '=') >= 0 {
+		if strings.IndexByte(value, '"') >= 0 || strings.IndexByte(value, '\'') >= 0 {
+			value = keyValueQuotedRe.ReplaceAllStringFunc(value, redactQuotedKeyValue)
+		}
+		value = keyValuePlainRe.ReplaceAllStringFunc(value, redactPlainKeyValue)
+		if strings.IndexByte(value, ';') >= 0 {
+			value = cookieTailRe.ReplaceAllString(value, `${1}`)
+		}
+		if strings.IndexByte(value, ',') >= 0 {
+			value = authTailRe.ReplaceAllString(value, `${1}`)
+		}
+	}
+	if hasLongHexRun(value) {
+		value = longHexTokenRe.ReplaceAllString(value, `[REDACTED]`)
+	}
 	return redactKnownSecrets(value, secrets)
+}
+
+func isASCIIHex(b byte) bool {
+	return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
+}
+
+// hasLongHexRun checks whether s contains at least 32 contiguous ASCII hex digits.
+func hasLongHexRun(s string) bool {
+	const minLen = 32
+	for i := minLen - 1; i < len(s); {
+		if !isASCIIHex(s[i]) {
+			i += minLen
+			continue
+		}
+		start := i
+		for start > 0 && isASCIIHex(s[start-1]) {
+			start--
+		}
+		end := i + 1
+		for end < len(s) && isASCIIHex(s[end]) {
+			end++
+		}
+		if end-start >= minLen {
+			return true
+		}
+		i = end + minLen
+	}
+	return false
 }
 
 func redactURLs(value string, keys map[string]struct{}, secrets ...string) string {

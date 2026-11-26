@@ -30,6 +30,7 @@ import (
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -245,14 +246,8 @@ func TestWorkflowMediaRestoreCompatibleWithoutReuseCapabilityReturnsNoMedia(t *t
 func TestWorkflowMediaModuleKeepsReusableMediaCapabilityOutsideRepositoryView(t *testing.T) {
 	t.Parallel()
 
-	repository, err := db.Open(filepath.Join(t.TempDir(), "workflow-media.sqlite"))
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	t.Cleanup(func() { _ = repository.Close() })
-	if err := repository.Migrate(); err != nil {
-		t.Fatalf("migrate repository: %v", err)
-	}
+	dbPath := filepath.Join(t.TempDir(), "workflow-media.sqlite")
+	repository := dbfixture.OpenMigrated(t, dbPath)
 	capabilities := api.RepositoryCapabilitiesFrom(repository)
 	module := newMediaModule(
 		config.Config{},
@@ -428,14 +423,8 @@ func TestWorkflowMediaRestoreCompatibleRebindsRetainedSnapshotWithoutCacheLookup
 	if err := os.WriteFile(sourcePath, []byte("verified source bytes"), 0o600); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
-	repository, err := db.Open(filepath.Join(t.TempDir(), "workflow-media.sqlite"))
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	t.Cleanup(func() { _ = repository.Close() })
-	if err := repository.Migrate(); err != nil {
-		t.Fatalf("migrate repository: %v", err)
-	}
+	dbPath := filepath.Join(t.TempDir(), "workflow-media.sqlite")
+	repository := dbfixture.OpenMigrated(t, dbPath)
 	prepared, err := preparedrelease.New(repository, workflowMediaIdentityResolver{}, workflowMediaCollector{})
 	if err != nil {
 		t.Fatalf("create prepared release module: %v", err)
@@ -1072,14 +1061,7 @@ func TestWorkflowMediaRestoreCompatiblePersistsDistinctPathsForEqualBytes(t *tes
 	ctx := t.Context()
 	baseDir := t.TempDir()
 	dbPath := filepath.Join(baseDir, "workflow.db")
-	repository, err := db.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	t.Cleanup(func() { _ = repository.Close() })
-	if err := repository.Migrate(); err != nil {
-		t.Fatalf("migrate repository: %v", err)
-	}
+	repository := dbfixture.OpenMigrated(t, dbPath)
 	firstSource := filepath.Join(baseDir, "first", "Example.Release.mkv")
 	secondSource := filepath.Join(baseDir, "second", "Example.Release.mkv")
 	for _, sourcePath := range []string{firstSource, secondSource} {
@@ -1345,14 +1327,7 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 		t.Fatalf("write source: %v", err)
 	}
 	dbPath := filepath.Join(t.TempDir(), "workflow.db")
-	repository, err := db.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	t.Cleanup(func() { _ = repository.Close() })
-	if err := repository.Migrate(); err != nil {
-		t.Fatalf("migrate repository: %v", err)
-	}
+	repository := dbfixture.OpenMigrated(t, dbPath)
 	prepared, err := preparedrelease.New(repository, workflowMediaIdentityResolver{}, workflowMediaCollector{})
 	if err != nil {
 		t.Fatalf("create prepared release module: %v", err)
@@ -1916,14 +1891,7 @@ func TestWorkflowMediaAttachDefersReusableMediaPersistenceAndPreservesDuplicateA
 		t.Fatalf("write source: %v", err)
 	}
 	dbPath := filepath.Join(baseDir, "workflow.db")
-	repository, err := db.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	t.Cleanup(func() { _ = repository.Close() })
-	if err := repository.Migrate(); err != nil {
-		t.Fatalf("migrate repository: %v", err)
-	}
+	repository := dbfixture.OpenMigrated(t, dbPath)
 	prepared, err := preparedrelease.New(repository, workflowMediaIdentityResolver{}, workflowMediaCollector{})
 	if err != nil {
 		t.Fatalf("create prepared release module: %v", err)
@@ -3953,14 +3921,12 @@ func TestWorkflowMediaRecordsImportedHostedImagesInReusableRepository(t *testing
 	t.Parallel()
 	root := t.TempDir()
 	dbPath := filepath.Join(root, "workflow.sqlite")
+	dbfixture.WriteMigrated(t, dbPath)
 	repository, err := db.Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = repository.Close() })
-	if err := repository.Migrate(); err != nil {
-		t.Fatal(err)
-	}
 	imagePath := filepath.Join(root, "imported.png")
 	if err := os.WriteFile(imagePath, []byte("saved screenshot"), 0o600); err != nil {
 		t.Fatal(err)
@@ -4132,14 +4098,8 @@ func TestWorkflowMediaRecordsImportedHostedImagesInReusableRepository(t *testing
 func TestWorkflowMediaRestoreKeepsEqualContentImageURLsDistinct(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	repository, err := db.Open(filepath.Join(root, "workflow.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repository.Close() })
-	if err := repository.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	dbPath := filepath.Join(root, "workflow.sqlite")
+	repository := dbfixture.OpenMigrated(t, dbPath)
 	paths := []string{filepath.Join(root, "first.png"), filepath.Join(root, "second.png")}
 	for _, pathValue := range paths {
 		if err := os.WriteFile(pathValue, []byte("same screenshot"), 0o600); err != nil {
@@ -4883,14 +4843,8 @@ func TestWorkflowImageCancellationPreservesKnownEffects(t *testing.T) {
 			if err := os.WriteFile(source, []byte("source"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			repository, err := db.Open(filepath.Join(t.TempDir(), "workflow.db"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = repository.Close() })
-			if err := repository.Migrate(); err != nil {
-				t.Fatal(err)
-			}
+			dbPath := filepath.Join(t.TempDir(), "workflow.db")
+			repository := dbfixture.OpenMigrated(t, dbPath)
 			prepared, err := preparedrelease.New(repository, workflowMediaIdentityResolver{}, workflowMediaCollector{})
 			if err != nil {
 				t.Fatal(err)

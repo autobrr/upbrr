@@ -17,6 +17,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/configstore"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 )
 
 func writeConfigStoreTestAuthFile(t *testing.T, dbPath string, seed string) {
@@ -31,13 +32,10 @@ func TestLoadFromDBPathPreservesTrackerImageRehostForRuntimePolicyValidation(t *
 	t.Parallel()
 
 	dbPath := filepath.Join(t.TempDir(), "webui.db")
+	dbfixture.WriteMigrated(t, dbPath)
 	repo, err := db.Open(dbPath)
 	if err != nil {
 		t.Fatalf("open repo: %v", err)
-	}
-	if err := repo.Migrate(); err != nil {
-		_ = repo.Close()
-		t.Fatalf("migrate repo: %v", err)
 	}
 
 	cfg, err := config.LoadEmbeddedDefaultConfig()
@@ -69,13 +67,10 @@ func TestLoadFromDBPathBackfillsMissingTrackerDefaults(t *testing.T) {
 	t.Parallel()
 
 	dbPath := filepath.Join(t.TempDir(), "webui.db")
+	dbfixture.WriteMigrated(t, dbPath)
 	repo, err := db.Open(dbPath)
 	if err != nil {
 		t.Fatalf("open repo: %v", err)
-	}
-	if err := repo.Migrate(); err != nil {
-		_ = repo.Close()
-		t.Fatalf("migrate repo: %v", err)
 	}
 
 	cfg, err := config.LoadEmbeddedDefaultConfig()
@@ -106,6 +101,7 @@ func TestLoadFromDBPathRepairPersistsSecretsWithRuntimeDBPath(t *testing.T) {
 
 	ctx := context.Background()
 	runtimeDBPath := filepath.Join(t.TempDir(), "runtime", "webui.db")
+	dbfixture.WriteMigrated(t, runtimeDBPath)
 	writeConfigStoreTestAuthFile(t, runtimeDBPath, "runtime-seed-for-tests")
 	staleDBPath := filepath.Join(t.TempDir(), "old", "webui.db")
 	writeConfigStoreTestAuthFile(t, staleDBPath, "stale-seed-for-tests")
@@ -183,13 +179,10 @@ func TestLoadFromDBPathPersistsMergedTrackerDefaults(t *testing.T) {
 
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "webui.db")
+	dbfixture.WriteMigrated(t, dbPath)
 	repo, err := db.Open(dbPath)
 	if err != nil {
 		t.Fatalf("open repo: %v", err)
-	}
-	if err := repo.Migrate(); err != nil {
-		_ = repo.Close()
-		t.Fatalf("migrate repo: %v", err)
 	}
 
 	cfg, err := config.LoadEmbeddedDefaultConfig()
@@ -264,13 +257,10 @@ func TestLoadFromDBPathRollsBackMultiSectionRepairOnLaterFailure(t *testing.T) {
 
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "webui.db")
+	dbfixture.WriteMigrated(t, dbPath)
 	repo, err := db.Open(dbPath)
 	if err != nil {
 		t.Fatalf("open repo: %v", err)
-	}
-	if err := repo.Migrate(); err != nil {
-		_ = repo.Close()
-		t.Fatalf("migrate repo: %v", err)
 	}
 
 	cfg, err := config.LoadEmbeddedDefaultConfig()
@@ -343,13 +333,10 @@ func TestLoadFromDBPathBackfillsMissingStoredOptions(t *testing.T) {
 
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "webui.db")
+	dbfixture.WriteMigrated(t, dbPath)
 	repo, err := db.Open(dbPath)
 	if err != nil {
 		t.Fatalf("open repo: %v", err)
-	}
-	if err := repo.Migrate(); err != nil {
-		_ = repo.Close()
-		t.Fatalf("migrate repo: %v", err)
 	}
 	if _, err := repo.RawDB().ExecContext(ctx, `
 		INSERT INTO config_settings (section, data, updated_at)
@@ -405,6 +392,7 @@ func TestSaveToDBPathSyncsCookieEncryptionStateWhenWebAuthExists(t *testing.T) {
 
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "webui.db")
+	dbfixture.WriteMigrated(t, dbPath)
 	writeConfigStoreTestAuthFile(t, dbPath, "stable-seed-for-tests")
 
 	cfg, err := config.LoadEmbeddedDefaultConfig()
@@ -517,15 +505,12 @@ func TestSaveToDBPathRollsBackCookieSyncWhenConfigSaveFails(t *testing.T) {
 
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "webui.db")
+	dbfixture.WriteMigrated(t, dbPath)
 	writeConfigStoreTestAuthFile(t, dbPath, "stable-seed-for-tests")
 
 	repo, err := db.Open(dbPath)
 	if err != nil {
 		t.Fatalf("open repo: %v", err)
-	}
-	if err := repo.Migrate(); err != nil {
-		_ = repo.Close()
-		t.Fatalf("migrate repo: %v", err)
 	}
 	for _, statement := range []string{
 		`CREATE TRIGGER fail_main_settings_insert BEFORE INSERT ON config_settings WHEN NEW.section = 'MainSettings' BEGIN SELECT RAISE(ABORT, 'forced main settings failure'); END`,
@@ -606,6 +591,7 @@ func TestSaveToDBPathIncompleteWebAuthStillSavesConfig(t *testing.T) {
 
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "webui.db")
+	dbfixture.WriteMigrated(t, dbPath)
 	if err := os.WriteFile(authmaterial.AuthFilePath(dbPath), []byte(`{"username":"tester"}`), 0o600); err != nil {
 		t.Fatalf("write incomplete auth file: %v", err)
 	}
@@ -640,14 +626,12 @@ func TestSaveToDBPathIncompleteWebAuthStillSavesConfig(t *testing.T) {
 func installFailMainSettingsTrigger(ctx context.Context, t *testing.T, dbPath string) {
 	t.Helper()
 
+	dbfixture.WriteMigrated(t, dbPath)
 	repo, err := db.OpenContext(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("open repo: %v", err)
 	}
 	defer repo.Close()
-	if err := repo.MigrateContext(ctx); err != nil {
-		t.Fatalf("migrate repo: %v", err)
-	}
 	if _, err := repo.RawDB().ExecContext(ctx, `
 		CREATE TRIGGER fail_main_settings_save
 		BEFORE INSERT ON config_settings

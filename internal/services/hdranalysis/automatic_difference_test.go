@@ -16,6 +16,7 @@ import (
 )
 
 func TestSampledDifferenceDisclosesCoverageAndEmptySamples(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		kind       api.HDRArtifactKind
 		definition string
@@ -25,6 +26,7 @@ func TestSampledDifferenceDisclosesCoverageAndEmptySamples(t *testing.T) {
 		{api.HDRArtifactAutomaticGrade, "Primary picture minus HDR10 reference"},
 	} {
 		t.Run(string(test.kind), func(t *testing.T) {
+			t.Parallel()
 			report := sampledReportFixture()
 			for i := range report.Automatic.Frames {
 				frame := &report.Automatic.Frames[i]

@@ -277,6 +277,7 @@ func TestBoundaryFiniteDecoderCalibration(t *testing.T) {
 }
 
 func TestBoundarySheetRendersColourAndGrayscaleFallback(t *testing.T) {
+	t.Parallel()
 	before := MeasurementThumbnail{
 		Index:     49,
 		Candidate: 50,

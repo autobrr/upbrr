@@ -138,12 +138,37 @@ func TestNativeTerminalChild(t *testing.T) {
 	fmt.Fprintln(os.Stdout, "TERMINAL_RESTORED")
 }
 
+func terminalChildEnvBlock(scenario string) ([]uint16, error) {
+	entries := []string{"UPBRR_TERMINAL_TEST_CHILD=" + scenario}
+	for _, entry := range os.Environ() {
+		key, _, ok := strings.Cut(entry, "=")
+		if !ok || strings.EqualFold(key, "UPBRR_TERMINAL_TEST_CHILD") ||
+			strings.EqualFold(key, "NO_COLOR") || strings.EqualFold(key, "TERM") {
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	var block []uint16
+	for _, entry := range entries {
+		utf16, err := windows.UTF16FromString(entry)
+		if err != nil {
+			return nil, fmt.Errorf("encode terminal child environment: %w", err)
+		}
+		block = append(block, utf16...)
+	}
+	block = append(block, 0)
+	return block, nil
+}
+
 func TestWindowsConPTYLifecycle(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"normal", "cancel", "plain", "watchdog", "dashboard", "dashboard-cancel", "keep-open"} {
 		t.Run(scenario, func(t *testing.T) {
-			t.Setenv("UPBRR_TERMINAL_TEST_CHILD", scenario)
-			t.Setenv("NO_COLOR", "")
-			t.Setenv("TERM", "")
+			t.Parallel()
+			envBlock, err := terminalChildEnvBlock(scenario)
+			if err != nil {
+				t.Fatal(err)
+			}
 			inputRead, inputWrite, err := os.Pipe()
 			if err != nil {
 				t.Fatal(err)
@@ -181,7 +206,7 @@ func TestWindowsConPTYLifecycle(t *testing.T) {
 			}
 			startup := windows.StartupInfoEx{Cb: uint32(unsafe.Sizeof(windows.StartupInfoEx{})), ProcThreadAttributeList: attributes.List()}
 			var process windows.ProcessInformation
-			if err := windows.CreateProcess(nil, command, nil, nil, false, windows.EXTENDED_STARTUPINFO_PRESENT, nil, nil, &startup.StartupInfo, &process); err != nil {
+			if err := windows.CreateProcess(nil, command, nil, nil, false, windows.EXTENDED_STARTUPINFO_PRESENT|windows.CREATE_UNICODE_ENVIRONMENT, &envBlock[0], nil, &startup.StartupInfo, &process); err != nil {
 				t.Fatal(err)
 			}
 			defer func() { _ = windows.CloseHandle(process.Process); _ = windows.CloseHandle(process.Thread) }()
