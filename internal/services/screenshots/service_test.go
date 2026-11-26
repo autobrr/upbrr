@@ -26,6 +26,7 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -64,6 +65,7 @@ func TestMergeTrackerImagesIntoFinalSelectionsReindexesSparseIndices(t *testing.
 }
 
 func TestPlanFindsHashedTrackerArtifactsAndDeletesOnlyMatchingURL(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	sourcePath := filepath.Join(root, "Example.Release.2026.mkv")
 	if err := os.WriteFile(sourcePath, []byte("synthetic video"), 0o600); err != nil {
@@ -717,7 +719,7 @@ func TestPlanKeepsConfiguredCountOnFirstDiscAndTwoOnExtras(t *testing.T) {
 	subject.AdditionalDiscCount = 2
 	service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), nil)
 	for _, tc := range []struct {
-		name string
+		name   string
 		manual []int
 	}{
 		{name: "automatic"},
@@ -1703,14 +1705,8 @@ func TestDeleteReportsIncompleteCleanupAndConvergesOnRetry(t *testing.T) {
 func openScreenshotTestRepository(t *testing.T) *db.SQLiteRepository {
 	t.Helper()
 
-	repo, err := db.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate repository: %v", err)
-	}
+	dbPath := filepath.Join(t.TempDir(), "screenshots.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	return repo
 }
 
@@ -1730,11 +1726,11 @@ func TestPackMemberCaptureIsBoundToFileAndSourceVersion(t *testing.T) {
 	}
 	t.Chdir(root)
 	runner := &writingScreenshotRunner{payload: testPNGBytes(t, color.RGBA{
-R: 16,
- G: 16,
- B: 16,
- A: 255,
-})}
+		R: 16,
+		G: 16,
+		B: 16,
+		A: 255,
+	})}
 	service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), runner)
 	ordinary := release
 	ordinary.Discs = nil
@@ -1775,11 +1771,11 @@ func TestAdditionalDiscCaptureDoesNotFillOrdinaryScreenshotSlot(t *testing.T) {
 	}
 	t.Chdir(root)
 	runner := &writingScreenshotRunner{payload: testPNGBytes(t, color.RGBA{
-R: 16,
- G: 16,
- B: 16,
- A: 255,
-})}
+		R: 16,
+		G: 16,
+		B: 16,
+		A: 255,
+	})}
 	service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), runner)
 	extra := release
 	extra.AdditionalDiscCount = 1

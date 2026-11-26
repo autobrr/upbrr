@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -35,35 +36,238 @@ type MemoryRepository struct {
 	work          map[string]api.ReleaseWorkflowWorkRecord
 }
 
-// memoryState caches JSON only after a complete normalization round trip.
+// memoryState caches an already JSON-normalized State after Create/Save so Load
+// can deep-copy it directly without repeated JSON marshaling/unmarshaling.
 // Cached State must not be mutated; writers replace entries. Checkpoint-only
-// entries retain their existing cloning behavior until Save.
+// entries retain their existing JSON cloning behavior until Save.
 type memoryState struct {
 	State
 	cacheJSON bool
-	once      sync.Once
-	payload   []byte
-	err       error
 }
 
 func (s *memoryState) clone() (State, error) {
 	if !s.cacheJSON {
 		return cloneState(s.State)
 	}
-	s.once.Do(func() {
-		s.payload, s.err = json.Marshal(s.State)
-		if s.err != nil {
-			s.err = fmt.Errorf("clone workflow state: marshal: %w", s.err)
+	if cloned, ok := cloneNormalizedState(s.State); ok {
+		return cloned, nil
+	}
+	return cloneState(s.State)
+}
+
+var (
+	timeType           = reflect.TypeFor[time.Time]()
+	cloneTypeInfoCache sync.Map // map[reflect.Type]*cloneTypeInfo
+)
+
+type cloneTypeInfo struct {
+	hasRef    bool
+	fallback  bool
+	refFields []int
+}
+
+func getCloneTypeInfo(t reflect.Type) *cloneTypeInfo {
+	if cached, ok := cloneTypeInfoCache.Load(t); ok {
+		if info, valid := cached.(*cloneTypeInfo); valid {
+			return info
 		}
-	})
-	if s.err != nil {
-		return State{}, s.err
 	}
-	var cloned State
-	if err := json.Unmarshal(s.payload, &cloned); err != nil {
-		return State{}, fmt.Errorf("clone workflow state: unmarshal: %w", err)
+	info := computeCloneTypeInfo(t)
+	actual, _ := cloneTypeInfoCache.LoadOrStore(t, info)
+	if stored, valid := actual.(*cloneTypeInfo); valid {
+		return stored
 	}
-	return cloned, nil
+	return info
+}
+
+func computeCloneTypeInfo(t reflect.Type) *cloneTypeInfo {
+	if cached, ok := cloneTypeInfoCache.Load(t); ok {
+		if info, valid := cached.(*cloneTypeInfo); valid {
+			return info
+		}
+	}
+	info := &cloneTypeInfo{}
+	if t == timeType {
+		return info
+	}
+	switch t.Kind() {
+	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128, reflect.String:
+		return info
+	case reflect.Pointer, reflect.Slice, reflect.Map, reflect.Interface:
+		info.hasRef = true
+		return info
+	case reflect.Array:
+		elem := computeCloneTypeInfo(t.Elem())
+		info.hasRef = elem.hasRef
+		info.fallback = elem.fallback
+		return info
+	case reflect.Struct:
+		for i := range t.NumField() {
+			field := t.Field(i)
+			fInfo := computeCloneTypeInfo(field.Type)
+			if !field.IsExported() {
+				if fInfo.hasRef || fInfo.fallback {
+					info.fallback = true
+				}
+				continue
+			}
+			if fInfo.fallback {
+				info.fallback = true
+			}
+			if fInfo.hasRef {
+				info.hasRef = true
+				info.refFields = append(info.refFields, i)
+			}
+		}
+		return info
+	case reflect.Invalid, reflect.Chan, reflect.Func, reflect.UnsafePointer:
+		info.fallback = true
+		return info
+	default:
+		info.fallback = true
+		return info
+	}
+}
+
+func cloneNormalizedState(state State) (State, bool) {
+	// State itself has unexported transient fields (descriptionReuse, effectResolution)
+	// that are always nil after Create/Save JSON normalization; clone exported fields directly.
+	dst := state
+	dst.descriptionReuse = nil
+	dst.effectResolution = nil
+	srcVal := reflect.ValueOf(&state).Elem()
+	dstVal := reflect.ValueOf(&dst).Elem()
+	for i := range srcVal.NumField() {
+		field := srcVal.Type().Field(i)
+		if !field.IsExported() {
+			continue
+		}
+		fInfo := getCloneTypeInfo(field.Type)
+		if fInfo.fallback {
+			return State{}, false
+		}
+		if !fInfo.hasRef {
+			continue
+		}
+		cloned, ok := deepCloneReflect(srcVal.Field(i))
+		if !ok {
+			return State{}, false
+		}
+		dstVal.Field(i).Set(cloned)
+	}
+	return dst, true
+}
+
+func deepCloneReflect(v reflect.Value) (reflect.Value, bool) {
+	t := v.Type()
+	info := getCloneTypeInfo(t)
+	if info.fallback {
+		return reflect.Value{}, false
+	}
+	if !info.hasRef {
+		return v, true
+	}
+	//nolint:exhaustive // Type classification already handled scalar and unsupported kinds.
+	switch v.Kind() {
+	case reflect.Pointer:
+		if v.IsNil() {
+			return v, true
+		}
+		clonedElem, ok := deepCloneReflect(v.Elem())
+		if !ok {
+			return reflect.Value{}, false
+		}
+		ptr := reflect.New(t.Elem())
+		ptr.Elem().Set(clonedElem)
+		return ptr, true
+	case reflect.Slice:
+		if v.IsNil() {
+			return v, true
+		}
+		n := v.Len()
+		out := reflect.MakeSlice(t, n, n)
+		elemInfo := getCloneTypeInfo(t.Elem())
+		if elemInfo.fallback {
+			return reflect.Value{}, false
+		}
+		if !elemInfo.hasRef {
+			reflect.Copy(out, v)
+			return out, true
+		}
+		for i := range n {
+			elem, ok := deepCloneReflect(v.Index(i))
+			if !ok {
+				return reflect.Value{}, false
+			}
+			out.Index(i).Set(elem)
+		}
+		return out, true
+	case reflect.Map:
+		if v.IsNil() {
+			return v, true
+		}
+		out := reflect.MakeMapWithSize(t, v.Len())
+		keyInfo := getCloneTypeInfo(t.Key())
+		valInfo := getCloneTypeInfo(t.Elem())
+		if keyInfo.fallback || valInfo.fallback {
+			return reflect.Value{}, false
+		}
+		iter := v.MapRange()
+		for iter.Next() {
+			k := iter.Key()
+			if keyInfo.hasRef {
+				var ok bool
+				if k, ok = deepCloneReflect(k); !ok {
+					return reflect.Value{}, false
+				}
+			}
+			val := iter.Value()
+			if valInfo.hasRef {
+				var ok bool
+				if val, ok = deepCloneReflect(val); !ok {
+					return reflect.Value{}, false
+				}
+			}
+			out.SetMapIndex(k, val)
+		}
+		return out, true
+	case reflect.Interface:
+		if v.IsNil() {
+			return v, true
+		}
+		clonedElem, ok := deepCloneReflect(v.Elem())
+		if !ok {
+			return reflect.Value{}, false
+		}
+		out := reflect.New(t).Elem()
+		out.Set(clonedElem)
+		return out, true
+	case reflect.Array:
+		out := reflect.New(t).Elem()
+		for i := range v.Len() {
+			elem, ok := deepCloneReflect(v.Index(i))
+			if !ok {
+				return reflect.Value{}, false
+			}
+			out.Index(i).Set(elem)
+		}
+		return out, true
+	case reflect.Struct:
+		out := reflect.New(t).Elem()
+		out.Set(v)
+		for _, idx := range info.refFields {
+			elem, ok := deepCloneReflect(v.Field(idx))
+			if !ok {
+				return reflect.Value{}, false
+			}
+			out.Field(idx).Set(elem)
+		}
+		return out, true
+	default:
+		return reflect.Value{}, false
+	}
 }
 
 // NewMemoryRepository returns an empty in-memory workflow repository.

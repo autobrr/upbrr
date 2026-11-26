@@ -49,14 +49,60 @@ type coreEvidenceFixture struct {
 	requests func() map[string]int
 }
 
+type coreEvidenceMux struct {
+	mu       sync.Mutex
+	routes   map[string]func(*http.Request) (*http.Response, error)
+	fallback http.RoundTripper
+}
+
+func newCoreEvidenceMux(t *testing.T) *coreEvidenceMux {
+	t.Helper()
+	mux := &coreEvidenceMux{
+		routes:   make(map[string]func(*http.Request) (*http.Response, error)),
+		fallback: http.DefaultTransport,
+	}
+	original := http.DefaultTransport
+	http.DefaultTransport = metadataEvidenceTransport(func(req *http.Request) (*http.Response, error) {
+		key := req.URL.Host + req.URL.Path
+		mux.mu.Lock()
+		handler := mux.routes[key]
+		mux.mu.Unlock()
+		if handler != nil {
+			return handler(req)
+		}
+		t.Errorf("unexpected metadata HTTP request: %s", req.URL.Host+req.URL.RequestURI())
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{}`)),
+			Request:    req,
+		}, nil
+	})
+	t.Cleanup(func() { http.DefaultTransport = original })
+	return mux
+}
+
+func (m *coreEvidenceMux) register(paths []string, handler func(*http.Request) (*http.Response, error)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, p := range paths {
+		m.routes[p] = handler
+	}
+}
+
 // Both production repository ownership paths must retain provider evidence.
 func newCoreEvidenceFixture(t *testing.T, borrowed bool, sourceNames ...string) coreEvidenceFixture {
 	t.Helper()
-	root := t.TempDir()
 	sourceName := "Example.Series.S01E04.1080p.WEB-DL.H264-GRP.mkv"
 	if len(sourceNames) > 0 {
 		sourceName = sourceNames[0]
 	}
+	return newCoreEvidenceFixtureWithMux(t, nil, borrowed, 0, sourceName)
+}
+
+func newCoreEvidenceFixtureWithMux(t *testing.T, mux *coreEvidenceMux, borrowed bool, id int, sourceName string) coreEvidenceFixture {
+	t.Helper()
+	root := t.TempDir()
 	source := filepath.Join(root, sourceName)
 	if err := os.WriteFile(source, []byte("synthetic video"), 0o600); err != nil {
 		t.Fatal(err)
@@ -78,10 +124,24 @@ func newCoreEvidenceFixture(t *testing.T, borrowed bool, sourceNames ...string) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	torrentID := 42 + id
+	tvmazeID := 555001 + id
+	failedImagePath := "/failed.png"
+	seriesTitle := "Example Series"
+	srrdbQuery := "/v1/search/word:Example%20Series%20S01E04"
+	if id > 0 {
+		suffix := fmt.Sprintf("Case%c%c", 'A'+id/26, 'A'+id%26)
+		failedImagePath = fmt.Sprintf("/failed-%d.png", id)
+		seriesTitle = "Example Series " + suffix
+		srrdbQuery = fmt.Sprintf("/v1/search/word:Example%%20Series%%20%s%%20S01E04", suffix)
+	}
+	torrentAPIPath := fmt.Sprintf("/api/torrents/%d", torrentID)
+	tvmazeShowPath := fmt.Sprintf("/shows/%d", tvmazeID)
+	tvmazeImagesPath := fmt.Sprintf("/shows/%d/images", tvmazeID)
+	tvmazeEpisodePath := fmt.Sprintf("/shows/%d/episodebynumber", tvmazeID)
 	var mu sync.Mutex
 	calls := make(map[string]int)
-	originalTransport := http.DefaultTransport
-	http.DefaultTransport = metadataEvidenceTransport(func(request *http.Request) (*http.Response, error) {
+	handleRequest := func(request *http.Request) (*http.Response, error) {
 		key := request.URL.Host + request.URL.RequestURI()
 		mu.Lock()
 		calls[key]++
@@ -89,17 +149,17 @@ func newCoreEvidenceFixture(t *testing.T, borrowed bool, sourceNames ...string) 
 		var body string
 		status := http.StatusOK
 		switch {
-		case request.URL.Host == "aither.cc" && request.URL.Path == "/api/torrents/42":
-			body = `{"data":[{"id":42,"attributes":{"category":"TV","description":"Release notes [img]https://93.184.216.34/failed.png[/img]"}}]}`
-		case request.URL.Host == "93.184.216.34" && request.URL.Path == "/failed.png":
+		case request.URL.Host == "aither.cc" && request.URL.Path == torrentAPIPath:
+			body = fmt.Sprintf(`{"data":[{"id":%d,"attributes":{"category":"TV","description":"Release notes [img]https://93.184.216.34%s[/img]"}}]}`, torrentID, failedImagePath)
+		case request.URL.Host == "93.184.216.34" && request.URL.Path == failedImagePath:
 			status, body = http.StatusNotFound, "missing"
 		case request.URL.Host == "api.srrdb.com":
 			body = `{"resultsCount":0,"results":[]}`
-		case request.URL.Host == "api.tvmaze.com" && request.URL.Path == "/shows/555001":
-			body = `{"id":555001,"name":"Example Series","premiered":"2026-01-01","language":"English","type":"Scripted","externals":{}}`
-		case request.URL.Host == "api.tvmaze.com" && request.URL.Path == "/shows/555001/images":
+		case request.URL.Host == "api.tvmaze.com" && request.URL.Path == tvmazeShowPath:
+			body = fmt.Sprintf(`{"id":%d,"name":%q,"premiered":"2026-01-01","language":"English","type":"Scripted","externals":{}}`, tvmazeID, seriesTitle)
+		case request.URL.Host == "api.tvmaze.com" && request.URL.Path == tvmazeImagesPath:
 			body = `[]`
-		case request.URL.Host == "api.tvmaze.com" && request.URL.Path == "/shows/555001/episodebynumber":
+		case request.URL.Host == "api.tvmaze.com" && request.URL.Path == tvmazeEpisodePath:
 			body = `{"id":555104,"name":"The Fourth Signal","season":1,"number":4,"airdate":"2026-01-04"}`
 		default:
 			t.Errorf("unexpected metadata HTTP request: %s", key)
@@ -111,8 +171,24 @@ func newCoreEvidenceFixture(t *testing.T, borrowed bool, sourceNames ...string) 
 			Body:       io.NopCloser(strings.NewReader(body)),
 			Request:    request,
 		}, nil
-	})
-	t.Cleanup(func() { http.DefaultTransport = originalTransport })
+	}
+	if mux != nil {
+		srrdbReleasePath := "/v1/search/r:" + strings.TrimSuffix(sourceName, ".mkv")
+		srrdbPath := "/v1/search/word:" + seriesTitle + " S01E04"
+		mux.register([]string{
+			"aither.cc" + torrentAPIPath,
+			"93.184.216.34" + failedImagePath,
+			"api.srrdb.com" + srrdbReleasePath,
+			"api.srrdb.com" + srrdbPath,
+			"api.tvmaze.com" + tvmazeShowPath,
+			"api.tvmaze.com" + tvmazeImagesPath,
+			"api.tvmaze.com" + tvmazeEpisodePath,
+		}, handleRequest)
+	} else {
+		originalTransport := http.DefaultTransport
+		http.DefaultTransport = metadataEvidenceTransport(handleRequest)
+		t.Cleanup(func() { http.DefaultTransport = originalTransport })
+	}
 	deps := api.CoreDependencies{Config: cfg, SkipCookieMigration: true}
 	if borrowed {
 		repo, err := db.OpenContext(t.Context(), cfg.MainSettings.DBPath)
@@ -120,9 +196,6 @@ func newCoreEvidenceFixture(t *testing.T, borrowed bool, sourceNames ...string) 
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = repo.Close() })
-		if err := repo.MigrateContext(t.Context()); err != nil {
-			t.Fatal(err)
-		}
 		deps.Repository, deps.RepositoryOwner = repo.RepositoryCapabilities(), repo
 	}
 	var c *Core
@@ -135,18 +208,19 @@ func newCoreEvidenceFixture(t *testing.T, borrowed bool, sourceNames ...string) 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = c.ShutdownWorkflowCoordinator(context.Background()); _ = c.Close() })
+	sourceLookupURL := fmt.Sprintf("https://aither.cc/torrents/%d", torrentID)
 	input := api.PrepareInput{
 		SourcePath:        source,
 		ExternalFreshness: api.ExternalFreshnessLoad,
 		Policy:            api.PreparationPolicy{KeepImages: true},
 		Instructions: api.ReleaseFactInstructions{
 			Category:     new(api.CanonicalCategoryTV),
-			SourceLookup: "https://aither.cc/torrents/42",
+			SourceLookup: sourceLookupURL,
 			Identity: api.ExternalIDOverrides{
 				TMDBID:   new(0),
 				IMDBID:   new(0),
 				TVDBID:   new(0),
-				TVmazeID: new(555001),
+				TVmazeID: new(tvmazeID),
 				MALID:    new(0),
 			},
 		},
@@ -166,7 +240,7 @@ func newCoreEvidenceFixture(t *testing.T, borrowed bool, sourceNames ...string) 
 	mu.Lock()
 	firstCalls := maps.Clone(calls)
 	mu.Unlock()
-	if firstCalls["api.srrdb.com/v1/search/word:Example%20Series%20S01E04"] != 1 || firstCalls["api.tvmaze.com/shows/555001/episodebynumber?number=4&season=1"] != 1 || firstCalls["aither.cc/api/torrents/42"] != 1 || firstCalls["93.184.216.34/failed.png"] != 1 {
+	if firstCalls["api.srrdb.com"+srrdbQuery] != 1 || firstCalls["api.tvmaze.com"+tvmazeEpisodePath+"?number=4&season=1"] != 1 || firstCalls["aither.cc"+torrentAPIPath] != 1 || firstCalls["93.184.216.34"+failedImagePath] != 1 {
 		t.Fatalf("initial provider/tracker/image lookup missing: %v", firstCalls)
 	}
 	// Expire the tracker cooldown so only retained evidence can suppress the failed image request.
@@ -180,7 +254,7 @@ func newCoreEvidenceFixture(t *testing.T, borrowed bool, sourceNames ...string) 
 		}
 	}
 	input.ExternalFreshness = api.ExternalFreshnessReuse
-	input.Instructions = api.ReleaseFactInstructions{SourceLookup: "https://aither.cc/torrents/42"}
+	input.Instructions = api.ReleaseFactInstructions{SourceLookup: sourceLookupURL}
 	return coreEvidenceFixture{
 		core:     c,
 		repo:     repo,
@@ -532,18 +606,25 @@ func TestDefaultCoreLocalCorrectionMatrix(t *testing.T) {
 	}
 	// Both ownership modes are covered by TestDefaultCoreMetadataEvidenceSurvivesServiceCorrection.
 	// Each field keeps set/clear/Auto coverage; service also exercises nonempty replacement.
-	for _, test := range cases {
-		t.Run(string(test.field), func(t *testing.T) {
-			fixture := newCoreEvidenceFixture(t, false)
-			if !reflect.DeepEqual(test.before, api.ReleaseCorrectionValues{}) {
-				fixture.initial = fixture.prepare(t, api.ReleaseCorrectionPatch{Values: test.before})
-			}
-			if test.field == api.CorrectionFieldReleaseNameNoAKA {
-				fixture.initial = fixture.prepare(t, api.ReleaseCorrectionPatch{Values: api.ReleaseCorrectionValues{Metadata: api.MetadataOverrides{AlternateTitle: new("Other Signal")}}})
-			}
-			test.run(t, fixture)
-		})
-	}
+	mux := newCoreEvidenceMux(t)
+	t.Run("fields", func(t *testing.T) {
+		for index, test := range cases {
+			t.Run(string(test.field), func(t *testing.T) {
+				t.Parallel()
+				id := index + 1
+				suffix := fmt.Sprintf("Case%c%c", 'A'+id/26, 'A'+id%26)
+				sourceName := fmt.Sprintf("Example.Series.%s.S01E04.1080p.WEB-DL.H264-GRP.mkv", suffix)
+				fixture := newCoreEvidenceFixtureWithMux(t, mux, false, id, sourceName)
+				if !reflect.DeepEqual(test.before, api.ReleaseCorrectionValues{}) {
+					fixture.initial = fixture.prepare(t, api.ReleaseCorrectionPatch{Values: test.before})
+				}
+				if test.field == api.CorrectionFieldReleaseNameNoAKA {
+					fixture.initial = fixture.prepare(t, api.ReleaseCorrectionPatch{Values: api.ReleaseCorrectionValues{Metadata: api.MetadataOverrides{AlternateTitle: new("Other Signal")}}})
+				}
+				test.run(t, fixture)
+			})
+		}
+	})
 }
 
 func TestDefaultCoreTrackLanguageCorrectionMatrix(t *testing.T) {

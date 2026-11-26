@@ -268,9 +268,17 @@ type imgboxUploadToken struct {
 }
 
 type hdbUploader struct {
-	username string
-	passkey  string
-	client   *http.Client
+	username      string
+	passkey       string
+	client        *http.Client
+	maxBatchBytes int64
+}
+
+func effectiveMaxBatchBytes(override int64) int64 {
+	if override > 0 {
+		return override
+	}
+	return maxBatchUploadBytes
 }
 
 var hdbUploadResultPattern = regexp.MustCompile(`\[url=([^\]]+)\]\[img\]([^\[]+)\[/img\]\[/url\]`)
@@ -306,9 +314,10 @@ func (u *hdbUploader) UploadBatchWithName(ctx context.Context, imagePaths []stri
 	if galleryName == "" {
 		galleryName = buildHDBGalleryName(imagePaths)
 	}
+	maxBytes := effectiveMaxBatchBytes(u.maxBatchBytes)
 	results := make([]uploadResult, 0, len(imagePaths))
 	for start := 0; start < len(imagePaths); {
-		count, err := multipartBatchCount(imagePaths[start:], hdbMaxBatchUploadImages, u.galleryFields(galleryName), hdbFileField)
+		count, err := multipartBatchCount(imagePaths[start:], hdbMaxBatchUploadImages, u.galleryFields(galleryName), hdbFileField, maxBytes)
 		if err != nil {
 			return nil, err
 		}
@@ -332,7 +341,7 @@ func (u *hdbUploader) uploadBatchWithGalleryName(ctx context.Context, imagePaths
 		fileFields[hdbFileField(idx)] = imagePath
 	}
 	body, status, err := postMultipartWithFieldsLimit(ctx, u.client, "https://img.hdbits.org/upload_api.php",
-		u.galleryFields(galleryName), fileFields, nil, maxBatchUploadBytes)
+		u.galleryFields(galleryName), fileFields, nil, effectiveMaxBatchBytes(u.maxBatchBytes))
 	if err != nil {
 		return nil, err
 	}
@@ -850,8 +859,9 @@ func (u *utppmUploader) Upload(ctx context.Context, imagePath string) (uploadRes
 }
 
 type lostimgUploader struct {
-	apiKey string
-	client *http.Client
+	apiKey        string
+	client        *http.Client
+	maxBatchBytes int64
 }
 
 const lostimgMaxBatchUploadImages = 50
@@ -871,9 +881,10 @@ func (u *lostimgUploader) UploadBatch(ctx context.Context, imagePaths []string) 
 	if len(imagePaths) == 0 {
 		return nil, errors.New("image hosting: no Lostimg images to upload")
 	}
+	maxBytes := effectiveMaxBatchBytes(u.maxBatchBytes)
 	results := make([]uploadResult, 0, len(imagePaths))
 	for start := 0; start < len(imagePaths); {
-		count, err := multipartBatchCount(imagePaths[start:], lostimgMaxBatchUploadImages, nil, func(int) string { return "file[]" })
+		count, err := multipartBatchCount(imagePaths[start:], lostimgMaxBatchUploadImages, nil, func(int) string { return "file[]" }, maxBytes)
 		if err != nil {
 			return results, err
 		}
@@ -890,7 +901,15 @@ func (u *lostimgUploader) UploadBatch(ctx context.Context, imagePaths []string) 
 
 func (u *lostimgUploader) uploadBatch(ctx context.Context, imagePaths []string) ([]uploadResult, error) {
 	headers := map[string]string{"Authorization": "Bearer " + strings.TrimSpace(u.apiKey)}
-	body, status, err := postMultipartRepeatedFileField(ctx, u.client, "https://lostimg.cc/api/v1/images", "file[]", imagePaths, headers)
+	body, status, err := postMultipartRepeatedFileField(
+		ctx,
+		u.client,
+		"https://lostimg.cc/api/v1/images",
+		"file[]",
+		imagePaths,
+		headers,
+		effectiveMaxBatchBytes(u.maxBatchBytes),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1412,7 +1431,7 @@ func (c *multipartByteCount) Write(p []byte) (int, error) {
 // multipartBatchCount measures the encoded envelope using the same encoder as
 // submission. File bytes remain on disk; submission also checks the final body
 // so files growing after this measurement cannot send an oversized request.
-func multipartBatchCount(paths []string, maxFiles int, fields map[string]string, fileField func(int) string) (int, error) {
+func multipartBatchCount(paths []string, maxFiles int, fields map[string]string, fileField func(int) string, maxBytes int64) (int, error) {
 	var size multipartByteCount
 	writer := multipart.NewWriter(&size)
 	for key, value := range fields {
@@ -1430,7 +1449,7 @@ func multipartBatchCount(paths []string, maxFiles int, fields map[string]string,
 		if _, err := writer.CreateFormFile(fileField(index), filepath.Base(imagePath)); err != nil {
 			return 0, fmt.Errorf("image hosting: measure multipart file: %w", err)
 		}
-		if info.Size() > maxBatchUploadBytes-int64(size)-closingBytes {
+		if info.Size() > maxBytes-int64(size)-closingBytes {
 			if index == 0 {
 				return 0, fmt.Errorf(
 					"image hosting: image is too large for a 100 MiB request (%d file bytes plus multipart overhead); reduce image size and retry",
@@ -1451,6 +1470,7 @@ func postMultipartRepeatedFileField(
 	fileField string,
 	filePaths []string,
 	headers map[string]string,
+	maxBytes int64,
 ) ([]byte, int, error) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -1476,7 +1496,7 @@ func postMultipartRepeatedFileField(
 		return nil, 0, fmt.Errorf("image hosting: close multipart writer: %w", err)
 	}
 
-	if int64(body.Len()) > maxBatchUploadBytes {
+	if maxBytes > 0 && int64(body.Len()) > maxBytes {
 		return nil, 0, errors.New("image hosting: encoded upload exceeds 100 MiB; reduce image size and retry")
 	}
 

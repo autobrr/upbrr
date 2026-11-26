@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
-	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -85,6 +85,7 @@ func TestVerifyWorkflowInputReportsCancellation(t *testing.T) {
 }
 
 func TestVerifyWorkflowInputUsesPreparedReleaseCanonicalSourceKeyOnWindows(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows path case normalization")
 	}
@@ -93,14 +94,8 @@ func TestVerifyWorkflowInputUsesPreparedReleaseCanonicalSourceKeyOnWindows(t *te
 	if err := os.WriteFile(sourcePath, []byte("verified-content"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	repository, err := db.Open(filepath.Join(t.TempDir(), "input.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repository.Close() })
-	if err := repository.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	dbPath := filepath.Join(t.TempDir(), "input.sqlite")
+	repository := dbfixture.OpenMigrated(t, dbPath)
 	first, err := verifyWorkflowInput(t.Context(), api.PrepareInput{SourcePath: sourcePath})
 	if err != nil {
 		t.Fatalf("verify lower-case input: %v", err)
@@ -125,14 +120,9 @@ func TestVerifyWorkflowInputUsesPreparedReleaseCanonicalSourceKeyOnWindows(t *te
 }
 
 func TestOpenActiveInputDistinguishesLoadFromCorrectionApply(t *testing.T) {
-	repo, err := db.Open(filepath.Join(t.TempDir(), "input.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "input.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	persistent, err := releaseworkflow.NewPersistentRepository(repo)
 	if err != nil {
 		t.Fatal(err)
@@ -221,14 +211,9 @@ func TestOpenActiveInputDistinguishesLoadFromCorrectionApply(t *testing.T) {
 }
 
 func TestActiveInputSnapshotRetainsSourceBeforeBlockedPreparationProducesRelease(t *testing.T) {
-	repo, err := db.Open(filepath.Join(t.TempDir(), "blocked-input.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "blocked-input.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	persistent, err := releaseworkflow.NewPersistentRepository(repo)
 	if err != nil {
 		t.Fatal(err)
@@ -289,14 +274,9 @@ func TestActiveInputSnapshotRetainsSourceBeforeBlockedPreparationProducesRelease
 }
 
 func TestLegacyActiveInputRecoveryFlowsFromDiscoveryToEmpty(t *testing.T) {
-	repo, err := db.Open(filepath.Join(t.TempDir(), "legacy-recovery.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "legacy-recovery.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	persistent, err := releaseworkflow.NewPersistentRepository(repo)
 	if err != nil {
 		t.Fatal(err)
@@ -395,14 +375,9 @@ func TestLegacyActiveInputRecoveryFlowsFromDiscoveryToEmpty(t *testing.T) {
 }
 
 func TestPreviousProcessInputDoesNotAdvertiseLegacyRecovery(t *testing.T) {
-	repo, err := db.Open(filepath.Join(t.TempDir(), "previous-input.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "previous-input.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	persistent, err := releaseworkflow.NewPersistentRepository(repo)
 	if err != nil {
 		t.Fatal(err)

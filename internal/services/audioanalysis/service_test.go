@@ -299,6 +299,7 @@ func TestServiceDoesNotPublishStatsForMalformedPCM(t *testing.T) {
 }
 
 func TestServiceRetriesSpectrogramWhenDurationChangesGeometry(t *testing.T) {
+	t.Parallel()
 	const sampleRate = 48_000
 	pcm := bytes.Repeat([]byte{0, 0, 128, 62}, sampleRate*10)
 	track := api.MediaTrackFacts{
@@ -330,65 +331,64 @@ func TestServiceRetriesSpectrogramWhenDurationChangesGeometry(t *testing.T) {
 		Variants:       []api.AudioAnalysisVariant{api.AudioAnalysisSpectrogram},
 		ProfileVersion: api.AudioAnalysisProfileVersion,
 	}
-	var exactHash [sha256.Size]byte
-	for _, test := range []struct {
-		name             string
-		estimatedSeconds float64
-		wantDecodes      int
-	}{
-		{
-			name:             "exact",
-			estimatedSeconds: 10,
-			wantDecodes:      1,
-		},
-		{name: "unknown", wantDecodes: 2},
-		{
-			name:             "overstated",
-			estimatedSeconds: 60,
-			wantDecodes:      2,
-		},
-		{
-			name:             "understated",
-			estimatedSeconds: 1,
-			wantDecodes:      2,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			decoder := &fakeDecoder{streams: []inspectedStream{{
-				codec:           "pcm",
-				sampleRate:      sampleRate,
-				layout:          "mono",
-				channels:        1,
-				durationSeconds: test.estimatedSeconds,
-			}}, pcm: pcm}
-			logger := analysisTestLogger(t)
-			results, err := newService(logger, decoder).Analyze(
-				t.Context(), subject, instructions, "attempt_"+test.name, t.TempDir(),
-			)
-			if err != nil || decoder.decodes != test.wantDecodes || len(results) != 1 ||
-				results[0].Public.Status != api.StageStatusCompleted || len(results[0].Artifacts) != 1 {
-				t.Fatalf("error = %v, decodes = %d, results = %#v", err, decoder.decodes, results)
-			}
-			if test.wantDecodes > 1 {
-				assertAnalysisLog(t, logger, "info", "reason=spectrogram_geometry", "measured duration", "track_ordinal=1")
-				for _, entry := range logger.Recent(100) {
-					if strings.Contains(entry.Message, "reason=batch_incomplete") {
-						t.Fatalf("geometry reread mislabeled as incomplete decode: %s", entry.Message)
-					}
+	runCase := func(t *testing.T, name string, estimatedSeconds float64, wantDecodes int) [sha256.Size]byte {
+		t.Helper()
+		decoder := &fakeDecoder{streams: []inspectedStream{{
+			codec:           "pcm",
+			sampleRate:      sampleRate,
+			layout:          "mono",
+			channels:        1,
+			durationSeconds: estimatedSeconds,
+		}}, pcm: pcm}
+		logger := analysisTestLogger(t)
+		results, err := newService(logger, decoder).Analyze(
+			t.Context(), subject, instructions, "attempt_"+name, t.TempDir(),
+		)
+		if err != nil || decoder.decodes != wantDecodes || len(results) != 1 ||
+			results[0].Public.Status != api.StageStatusCompleted || len(results[0].Artifacts) != 1 {
+			t.Fatalf("error = %v, decodes = %d, results = %#v", err, decoder.decodes, results)
+		}
+		if wantDecodes > 1 {
+			assertAnalysisLog(t, logger, "info", "reason=spectrogram_geometry", "measured duration", "track_ordinal=1")
+			for _, entry := range logger.Recent(100) {
+				if strings.Contains(entry.Message, "reason=batch_incomplete") {
+					t.Fatalf("geometry reread mislabeled as incomplete decode: %s", entry.Message)
 				}
 			}
-			imageBytes, err := os.ReadFile(results[0].Artifacts[0].Path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			hash := sha256.Sum256(imageBytes)
-			if test.name == "exact" {
-				exactHash = hash
-			} else if hash != exactHash {
-				t.Fatalf("%s PNG differs from exact-duration spectrogram", test.name)
-			}
-		})
+		}
+		imageBytes, err := os.ReadFile(results[0].Artifacts[0].Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sha256.Sum256(imageBytes)
 	}
+	exactHash := runCase(t, "exact", 10, 1)
+	t.Run("retries", func(t *testing.T) {
+		for _, test := range []struct {
+			name             string
+			estimatedSeconds float64
+			wantDecodes      int
+		}{
+			{name: "unknown", wantDecodes: 2},
+			{
+				name:             "overstated",
+				estimatedSeconds: 60,
+				wantDecodes:      2,
+			},
+			{
+				name:             "understated",
+				estimatedSeconds: 1,
+				wantDecodes:      2,
+			},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				t.Parallel()
+				if hash := runCase(t, test.name, test.estimatedSeconds, test.wantDecodes); hash != exactHash {
+					t.Fatalf("%s PNG differs from exact-duration spectrogram", test.name)
+				}
+			})
+		}
+	})
 
 	changedPCM := bytes.Clone(pcm)
 	changedPCM[2] = 64

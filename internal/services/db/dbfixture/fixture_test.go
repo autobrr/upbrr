@@ -50,9 +50,7 @@ func TestWriteMigratedMatchesFreshSchema(t *testing.T) {
 	if err := fresh.MigrateContext(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(t.TempDir(), "copy.db")
-	WriteMigrated(t, path)
-	copyRepo := openFixture(t, path)
+	copyRepo := OpenMigrated(t, filepath.Join(t.TempDir(), "copy.db"))
 	if got, want := schema(t, copyRepo), schema(t, fresh); !reflect.DeepEqual(got, want) {
 		t.Fatalf("copied schema differs from fresh migrations:\ngot %v\nwant %v", got, want)
 	}

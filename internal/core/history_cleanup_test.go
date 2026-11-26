@@ -17,6 +17,7 @@ import (
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -253,14 +254,8 @@ func TestHistoryDeleteInvalidatesPreparedFactsBeforeTransactionReleases(t *testi
 	if err := os.WriteFile(sourcePath, []byte("source"), 0o600); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
-	repository, err := db.Open(filepath.Join(baseDir, "history.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repository.Close() })
-	if err := repository.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	dbPath := filepath.Join(baseDir, "history.sqlite")
+	repository := dbfixture.OpenMigrated(t, dbPath)
 	prepared, err := preparedrelease.New(repository, workflowMediaIdentityResolver{}, workflowMediaCollector{})
 	if err != nil {
 		t.Fatalf("create prepared release module: %v", err)
@@ -308,14 +303,8 @@ func TestHistoryDeletionPreservesSharedArtifactsUntilLastReference(t *testing.T)
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			baseDir := t.TempDir()
-			repo, err := db.Open(filepath.Join(baseDir, "history.sqlite"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = repo.Close() })
-			if err := repo.Migrate(); err != nil {
-				t.Fatal(err)
-			}
+			dbPath := filepath.Join(baseDir, "history.sqlite")
+			repo := dbfixture.OpenMigrated(t, dbPath)
 			sourceDir := filepath.Join(baseDir, "sources")
 			if err := os.MkdirAll(sourceDir, 0o755); err != nil {
 				t.Fatal(err)
@@ -631,14 +620,8 @@ func TestHistoryDeleteProtectsActiveLegacyTempCollision(t *testing.T) {
 			t.Parallel()
 
 			baseDir := t.TempDir()
-			repo, err := db.Open(filepath.Join(baseDir, "history.sqlite"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = repo.Close() })
-			if err := repo.Migrate(); err != nil {
-				t.Fatal(err)
-			}
+			dbPath := filepath.Join(baseDir, "history.sqlite")
+			repo := dbfixture.OpenMigrated(t, dbPath)
 			ctx := t.Context()
 			now := time.Now().UTC().Truncate(time.Second)
 			historySource := filepath.Join(baseDir, "history", "Example.Release.2026.mkv")
@@ -760,14 +743,8 @@ func TestHistoryDeleteProtectsSourceUnderTmpRoot(t *testing.T) {
 		t.Run(scenario.name, func(t *testing.T) {
 			t.Parallel()
 
-			repo, err := db.Open(filepath.Join(t.TempDir(), "history.sqlite"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = repo.Close() })
-			if err := repo.Migrate(); err != nil {
-				t.Fatal(err)
-			}
+			dbPath := filepath.Join(t.TempDir(), "history.sqlite")
+			repo := dbfixture.OpenMigrated(t, dbPath)
 			tmpRoot, err := db.Subdir(repo.DBPath(), "tmp")
 			if err != nil {
 				t.Fatal(err)
@@ -796,14 +773,8 @@ func TestHistoryDeleteProtectsOtherStoredSourceUnderTmpRoot(t *testing.T) {
 	t.Parallel()
 
 	baseDir := t.TempDir()
-	repo, err := db.Open(filepath.Join(baseDir, "history.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	dbPath := filepath.Join(baseDir, "history.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	tmpRoot, err := db.Subdir(repo.DBPath(), "tmp")
 	if err != nil {
 		t.Fatal(err)
@@ -923,14 +894,8 @@ func TestHistoryDeleteRemovesExactPrivateWorkflowArtifacts(t *testing.T) {
 	if err := os.WriteFile(sourcePath, []byte("source"), 0o600); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
-	repo, err := db.Open(filepath.Join(baseDir, "history.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	dbPath := filepath.Join(baseDir, "history.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	now := time.Date(2026, time.July, 25, 12, 0, 0, 0, time.UTC)
 	workflow := historySubmissionWorkflowState(t, sourcePath, now)
 	if _, _, err := repo.CreateReleaseWorkflowState(t.Context(), workflow); err != nil {
@@ -990,14 +955,8 @@ func TestHistoryDeleteKeepsRowsWhenPrivateVaultCleanupFails(t *testing.T) {
 	if err := os.WriteFile(sourcePath, []byte("source"), 0o600); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
-	repo, err := db.Open(filepath.Join(baseDir, "history.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	dbPath := filepath.Join(baseDir, "history.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	now := time.Date(2026, time.July, 25, 12, 0, 0, 0, time.UTC)
 	workflow := historySubmissionWorkflowState(t, sourcePath, now)
 	if _, _, err := repo.CreateReleaseWorkflowState(t.Context(), workflow); err != nil {

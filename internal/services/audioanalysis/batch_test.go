@@ -13,10 +13,12 @@ import (
 )
 
 func TestSharedBatchSelectsPrimaryAndVerifiesCorrectivePCM(t *testing.T) {
+	t.Parallel()
 	const rate = 48000
 	pcm := bytes.Repeat([]byte{0, 0, 128, 62}, rate*10)
 	for _, changed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "verified", true: "changed PCM"}[changed], func(t *testing.T) {
+			t.Parallel()
 			decoder := &fakeDecoder{
 				streams: []inspectedStream{
 					{
@@ -71,6 +73,7 @@ func TestSharedBatchSelectsPrimaryAndVerifiesCorrectivePCM(t *testing.T) {
 }
 
 func TestPreparedBatchKeepsTrackAuthorityAndIsolatesDecodeFailure(t *testing.T) {
+	t.Parallel()
 	const rate = 8000
 	streams := []inspectedStream{
 		{
@@ -138,6 +141,7 @@ func TestPreparedBatchKeepsTrackAuthorityAndIsolatesDecodeFailure(t *testing.T) 
 }
 
 func TestPreparedBatchUnsupportedTrackDoesNotDiscardSupportedSibling(t *testing.T) {
+	t.Parallel()
 	streams := []inspectedStream{{
 		channels:   12,
 		sampleRate: 48000,
@@ -186,6 +190,7 @@ func TestPreparedBatchUnsupportedTrackDoesNotDiscardSupportedSibling(t *testing.
 }
 
 func TestPreparedBatchUnknownCodecPreservesSupportedSelection(t *testing.T) {
+	t.Parallel()
 	streams := []inspectedStream{{
 		channels:        1,
 		sampleRate:      8000,
