@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -30,9 +31,12 @@ const (
 	httpUploadURL = baseURL + "/torrents/upload/"
 	torrentURL    = baseURL + "/torrent/"
 	sourceFlag    = "TorrentLeech.org"
+
+	missingAnnounceMessage = "Announce URL is missing from the torrent you uploaded."
 )
 
 type uploadState struct {
+	torrent     []byte
 	torrentPath string
 	description string
 	releaseName string
@@ -57,6 +61,15 @@ func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers
 	if req.Intent != trackers.PreparationIntentUpload {
 		return trackers.NewPreparedOperation(preview, nil, nil), nil
 	}
+	state.torrent, err = os.ReadFile(state.torrentPath)
+	if err != nil {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: TL read prepared torrent: %w", err)
+	}
+	if len(state.torrent) == 0 {
+		return trackers.PreparedOperation{}, errors.New("trackers: TL prepared torrent is empty")
+	}
+	// Both TL upload routes put the torrent in the first multipart file field.
+	state.files[0].Content = state.torrent
 	body, contentType, err := commonhttp.BuildMultipartPayload(state.fields, state.files)
 	if err != nil {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %w", err)
@@ -123,7 +136,11 @@ func submitPreparedUpload(
 		if successCandidate {
 			errorResponse = responseBody
 		}
-		return api.UploadSummary{}, commonhttp.UploadHTTPError("TL", resp.StatusCode, errorResponse)
+		failure := commonhttp.UploadHTTPError("TL", resp.StatusCode, errorResponse)
+		if resp.StatusCode == http.StatusBadRequest && bytes.Equal(bytes.TrimSpace(responseBody), []byte(missingAnnounceMessage)) {
+			return api.UploadSummary{}, submission.NewError(submission.Rejected, failure)
+		}
+		return api.UploadSummary{}, failure
 	}
 
 	urlValue := torrentURL + torrentID
@@ -131,8 +148,8 @@ func submitPreparedUpload(
 	if len(announces) > 0 {
 		announceURL = announces[0]
 	}
-	registeredPath := trackers.PersistReconstructedRegisteredTorrent(
-		req.Logger, "TL", state.torrentPath, artifactPath, announceURL, sourceFlag, urlValue, announces...,
+	registeredPath := trackers.PersistUploadedRegisteredTorrent(
+		req.Logger, "TL", state.torrent, artifactPath, announceURL, urlValue, announces...,
 	)
 	return api.UploadSummary{Uploaded: 1, UploadedTorrents: []api.UploadedTorrent{{
 		Tracker:     "TL",

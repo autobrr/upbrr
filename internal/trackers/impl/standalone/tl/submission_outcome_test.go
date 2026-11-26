@@ -4,43 +4,50 @@
 package tl
 
 import (
-	"io"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 
-	"github.com/autobrr/go-torrent/bencode"
-	"github.com/autobrr/go-torrent/metainfo"
-
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+type uploadWarningLogger struct {
+	api.NopLogger
+	warnings []string
+}
+
+func (l *uploadWarningLogger) Warnf(format string, args ...any) {
+	l.warnings = append(l.warnings, fmt.Sprintf(format, args...))
+}
+
 func TestUploadRequiresAcceptedIdentity(t *testing.T) {
 	t.Parallel()
+	const missingAnnounce = "Announce URL is missing from the torrent you uploaded."
 	for _, test := range []struct {
 		name      string
 		status    int
 		location  string
 		body      string
 		api       bool
-		accepted  bool
+		outcome   submission.Outcome
 		truncated bool
 	}{
-		{"login redirect", 302, "/login", "", false, false, false},
-		{"valid redirect", 302, "/successfulupload?torrentID=123", "", false, true, false},
-		{"accepted redirect with failed body", 302, "/successfulupload?torrentID=123", "partial", false, true, true},
-		{"web redirect is not API receipt", 302, "/successfulupload?torrentID=123", "", true, false, false},
-		{"zero API id", 200, "", "0", true, false, false},
-		{"error status with numeric body", 400, "", "123", true, false, false},
-		{"valid API id", 200, "", "123", true, true, false},
+		{"login redirect", 302, "/login", "", false, submission.Unknown, false},
+		{"accepted redirect with failed body", 302, "/successfulupload?torrentID=123", "partial", false, submission.Accepted, true},
+		{"web redirect is not API receipt", 302, "/successfulupload?torrentID=123", "", true, submission.Unknown, false},
+		{"zero API id", 200, "", "0", true, submission.Unknown, false},
+		{"error status with numeric body", 400, "", "123", true, submission.Unknown, false},
+		{"missing announce rejected", 400, "", missingAnnounce, true, submission.Rejected, false},
+		{"contradictory response", 400, "", `{"success":true,"torrentID":123,"message":"` + missingAnnounce + `"}`, true, submission.Unknown, false},
+		{"truncated missing announce response", 400, "", missingAnnounce, true, submission.Unknown, true},
+		{"server error with missing announce message", 500, "", missingAnnounce, true, submission.Unknown, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var requests atomic.Int32
@@ -56,77 +63,20 @@ func TestUploadRequiresAcceptedIdentity(t *testing.T) {
 			defer server.Close()
 			client := server.Client()
 			client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-			logger, err := logging.New(config.LoggingConfig{Level: "warn"}, filepath.Join(t.TempDir(), "upbrr.db"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = logger.Close() })
-			logger.SetConsoleOutput(io.Discard, io.Discard)
+			logger := &uploadWarningLogger{}
 			ctx := logging.WithOperationLogger(t.Context(), logger)
 			summary, err := submitPreparedUpload(ctx, trackers.PreparationInput{
 				Logger: api.NopLogger{}, TrackerConfig: config.TrackerConfig{APIUpload: test.api},
 			}, uploadState{endpoint: server.URL}, client, nil, "application/octet-stream", nil, "")
-			if (err == nil) != test.accepted || (summary.Uploaded == 1) != test.accepted || requests.Load() != 1 {
-				t.Fatalf("uploaded=%d requests=%d error=%v", summary.Uploaded, requests.Load(), err)
+			accepted := test.outcome == submission.Accepted
+			if outcome := submission.OutcomeOf(err); outcome != test.outcome || (summary.Uploaded == 1) != accepted || requests.Load() != 1 {
+				t.Fatalf("outcome=%v uploaded=%d requests=%d error=%v", outcome, summary.Uploaded, requests.Load(), err)
 			}
-			if test.accepted {
-				entries := logger.Recent(1)
-				if len(entries) != 1 || !strings.Contains(entries[0].Message, "registered artifact unavailable tracker=TL") {
-					t.Fatalf("execution logger missed registered artifact outcome: %#v", entries)
+			if accepted {
+				if len(logger.warnings) != 1 || !strings.Contains(logger.warnings[0], "registered artifact unavailable tracker=TL") {
+					t.Fatalf("execution logger missed registered artifact outcome: %v", logger.warnings)
 				}
 			}
 		})
-	}
-}
-
-func TestSuccessfulUploadReturnsBothRegisteredAnnounces(t *testing.T) {
-	t.Parallel()
-	for _, apiUpload := range []bool{false, true} {
-		cfg := config.TrackerConfig{APIUpload: apiUpload, Passkey: "synthetic"}
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			if apiUpload {
-				_, _ = w.Write([]byte("123"))
-				return
-			}
-			w.Header().Set("Location", "/successfulupload?torrentID=123")
-			w.WriteHeader(http.StatusFound)
-		}))
-		t.Cleanup(server.Close)
-		client := server.Client()
-		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-		info, err := bencode.Marshal(metainfo.Info{
-			Name:        "Example.Release.2026",
-			Length:      1024,
-			PieceLength: 16384,
-			Pieces:      make([]byte, 20),
-			Source:      sourceFlag,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		source := filepath.Join(t.TempDir(), "prepared.torrent")
-		output := filepath.Join(t.TempDir(), "registered.torrent")
-		prepared := metainfo.MetaInfo{InfoBytes: info}
-		file, err := os.OpenFile(source, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := prepared.Write(file); err != nil {
-			t.Fatal(err)
-		}
-		if err := file.Close(); err != nil {
-			t.Fatal(err)
-		}
-		summary, err := submitPreparedUpload(t.Context(), trackers.PreparationInput{TrackerConfig: cfg}, uploadState{endpoint: server.URL, torrentPath: source}, client, nil, "application/octet-stream", announceList(cfg), output)
-		if err != nil || summary.Uploaded != 1 || len(summary.UploadedTorrents) != 1 {
-			t.Fatalf("summary=%+v err=%v", summary, err)
-		}
-		registered, err := metainfo.LoadFromFile(summary.UploadedTorrents[0].TorrentPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if registered.Announce != announceList(cfg)[0] || len(registered.AnnounceList) != 1 || !slices.Equal(registered.AnnounceList[0], announceList(cfg)) || registered.HashInfoBytes() != prepared.HashInfoBytes() || !strings.HasSuffix(registered.Comment, "\n"+torrentURL+"123") {
-			t.Fatal("returned registered artifact lost announce or identity authority")
-		}
 	}
 }

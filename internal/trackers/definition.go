@@ -525,6 +525,8 @@ type UploadArtifactPolicy struct {
 	UseMyAnnounce bool
 	// RequireAnnounce prevents artifact preparation without an announce URL.
 	RequireAnnounce bool
+	// OmitAnnounceList keeps only the primary announce in the upload artifact.
+	OmitAnnounceList bool `json:",omitempty"`
 }
 
 // UploadArtifactPolicyProvider declares tracker-owned personalization policy.

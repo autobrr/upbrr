@@ -156,7 +156,43 @@ func PersistReconstructedRegisteredTorrent(
 		LogRegisteredTorrentUnavailable(logger, tracker)
 		return ""
 	}
-	if err := writePersonalizedTorrent(sourcePath, outputPath, announceURL, source, torrentURL, additionalAnnounces...); err != nil {
+	if err := writePersonalizedTorrent(sourcePath, outputPath, torrentPersonalization{
+		announceURL:         announceURL,
+		source:              source,
+		torrentURL:          torrentURL,
+		additionalAnnounces: additionalAnnounces,
+	}); err != nil {
+		LogRegisteredTorrentUnavailable(logger, tracker)
+		return ""
+	}
+	return outputPath
+}
+
+// PersistUploadedRegisteredTorrent applies seeding metadata to the submitted
+// torrent while preserving its exact info dictionary. An empty result indicates
+// that registration succeeded remotely without a retained local artifact.
+func PersistUploadedRegisteredTorrent(
+	logger api.Logger,
+	tracker string,
+	uploaded []byte,
+	outputPath string,
+	announceURL string,
+	torrentURL string,
+	additionalAnnounces ...string,
+) string {
+	if strings.TrimSpace(announceURL) == "" || strings.TrimSpace(outputPath) == "" {
+		LogRegisteredTorrentUnavailable(logger, tracker)
+		return ""
+	}
+	torrentMeta, err := metainfo.Load(bytes.NewReader(uploaded))
+	if err == nil {
+		_, err = torrentMeta.UnmarshalInfo()
+	}
+	if err != nil || writePersonalizedTorrentMeta(torrentMeta, outputPath, torrentPersonalization{
+		announceURL:         announceURL,
+		torrentURL:          torrentURL,
+		additionalAnnounces: additionalAnnounces,
+	}) != nil {
 		LogRegisteredTorrentUnavailable(logger, tracker)
 		return ""
 	}

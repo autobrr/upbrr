@@ -35,7 +35,7 @@ func prepareTrackerUploadTorrentWithRegistry(
 	trackerConfig config.TrackerConfig,
 	registry *Registry,
 ) (api.UploadSubject, error) {
-	source, announce, hasPolicy, err := trackerUploadTorrentFieldsWithRegistry(tracker, trackerConfig, registry)
+	fields, hasPolicy, err := trackerUploadTorrentFieldsWithRegistry(tracker, trackerConfig, registry)
 	if err != nil {
 		return api.UploadSubject{}, err
 	}
@@ -73,30 +73,25 @@ func prepareTrackerUploadTorrentWithRegistry(
 		}
 		return api.UploadSubject{}, fmt.Errorf("trackers: prepare %s upload torrent base: %w", normalizeTrackerName(tracker), err)
 	}
-	artifactPath, err := ResolveTrackerTorrentArtifactPath(meta, dbPath, tracker)
+	registeredPath, err := ResolveTrackerTorrentArtifactPath(meta, dbPath, tracker)
 	if err != nil {
 		return api.UploadSubject{}, fmt.Errorf("trackers: prepare %s upload torrent path: %w", normalizeTrackerName(tracker), err)
 	}
-	if err := WritePersonalizedTorrent(basePath, artifactPath, announce, source); err != nil {
+	// Later preparation must leave registered torrents available to client retries.
+	preparedPath := filepath.Join(filepath.Dir(registeredPath), "upload-torrents", filepath.Base(registeredPath))
+	if err := writePersonalizedTorrent(basePath, preparedPath, fields); err != nil {
 		return api.UploadSubject{}, fmt.Errorf("trackers: prepare %s upload torrent artifact: %w", normalizeTrackerName(tracker), err)
 	}
-	meta.TorrentPath = artifactPath
+	meta.TorrentPath = preparedPath
 	return meta, nil
 }
 
-func trackerUploadTorrentFieldsWithRegistry(tracker string, trackerConfig config.TrackerConfig, registry *Registry) (string, string, bool, error) {
-	if owned, ok := registry.LookupUploadArtifactPolicy(tracker); ok {
-		source, announce, err := uploadArtifactFields(owned, trackerConfig)
-		if err != nil {
-			return "", "", true, fmt.Errorf("trackers: %s upload torrent policy: %w", normalizeTrackerName(tracker), err)
-		}
-		return source, announce, true, nil
+func trackerUploadTorrentFieldsWithRegistry(tracker string, trackerConfig config.TrackerConfig, registry *Registry) (torrentPersonalization, bool, error) {
+	policy, hasPolicy := registry.LookupUploadArtifactPolicy(tracker)
+	if !hasPolicy {
+		policy.Source = normalizeTrackerName(tracker)
+		policy.DefaultAnnounce = strings.TrimSpace(trackerConfig.MyAnnounceURL)
 	}
-	source, announce := trackerUploadTorrentFields(tracker, trackerConfig)
-	return source, announce, false, nil
-}
-
-func uploadArtifactFields(policy UploadArtifactPolicy, trackerConfig config.TrackerConfig) (string, string, error) {
 	announce := strings.TrimSpace(trackerConfig.AnnounceURL)
 	if policy.UseMyAnnounce {
 		announce = strings.TrimSpace(trackerConfig.MyAnnounceURL)
@@ -105,22 +100,16 @@ func uploadArtifactFields(policy UploadArtifactPolicy, trackerConfig config.Trac
 		announce = policy.DefaultAnnounce
 	}
 	if policy.RequireAnnounce && announce == "" {
-		return "", "", errors.New("required announce URL is missing")
+		return torrentPersonalization{}, true, fmt.Errorf("trackers: %s upload torrent policy: required announce URL is missing", normalizeTrackerName(tracker))
 	}
-	source := strings.TrimSpace(policy.Source)
-	return source, announce, nil
+	return torrentPersonalization{
+		source:           policy.Source,
+		announceURL:      announce,
+		omitAnnounceList: policy.OmitAnnounceList,
+	}, hasPolicy, nil
 }
 
-func trackerUploadTorrentFields(tracker string, trackerConfig config.TrackerConfig) (string, string) {
-	name := strings.ToUpper(strings.TrimSpace(tracker))
-	announce := strings.TrimSpace(trackerConfig.AnnounceURL)
-	if announce == "" {
-		announce = strings.TrimSpace(trackerConfig.MyAnnounceURL)
-	}
-	return name, announce
-}
-
-// ResolveTrackerTorrentArtifactPath returns the local torrent artifact path for tracker.
+// ResolveTrackerTorrentArtifactPath returns the stable registered torrent path for a tracker.
 func ResolveTrackerTorrentArtifactPath(meta api.UploadSubject, dbPath string, tracker string) (string, error) {
 	if strings.TrimSpace(dbPath) == "" || strings.TrimSpace(meta.SourcePath) == "" {
 		return "", errors.New("trackers: tracker torrent path requires db path and source path")
@@ -260,27 +249,38 @@ func WriteUploadTorrent(sourcePath string, outputPath string) error {
 // announce and source values plus canonical upload metadata, and atomically writes
 // outputPath with mode 0600.
 func WritePersonalizedTorrent(sourcePath string, outputPath string, announceURL string, source string) error {
-	return writePersonalizedTorrent(sourcePath, outputPath, announceURL, source, "")
+	return writePersonalizedTorrent(sourcePath, outputPath, torrentPersonalization{announceURL: announceURL, source: source})
 }
 
-func writePersonalizedTorrent(sourcePath string, outputPath string, announceURL string, source string, torrentURL string, additionalAnnounces ...string) error {
+type torrentPersonalization struct {
+	source              string
+	announceURL         string
+	omitAnnounceList    bool
+	torrentURL          string
+	additionalAnnounces []string
+}
+
+func writePersonalizedTorrent(sourcePath string, outputPath string, fields torrentPersonalization) error {
 	torrentMeta, err := metainfo.LoadFromFile(sourcePath)
 	if err != nil {
 		return fmt.Errorf("trackers: load torrent artifact: %w", err)
 	}
+	if err := rewriteTorrentInfoSource(torrentMeta, fields.source, "torrent artifact"); err != nil {
+		return err
+	}
+	return writePersonalizedTorrentMeta(torrentMeta, outputPath, fields)
+}
+
+func writePersonalizedTorrentMeta(torrentMeta *metainfo.MetaInfo, outputPath string, fields torrentPersonalization) error {
 	cleanTorrentMeta(torrentMeta)
-	if pageURL := redaction.TrackerPageURL(torrentURL); pageURL != "" {
+	if pageURL := redaction.TrackerPageURL(fields.torrentURL); pageURL != "" {
 		torrentMeta.Comment += "\n" + pageURL
 	}
 
-	if err := rewriteTorrentInfoSource(torrentMeta, source, "torrent artifact"); err != nil {
-		return err
-	}
-
-	if trimmedAnnounce := strings.TrimSpace(announceURL); trimmedAnnounce != "" {
-		torrentMeta.Announce = trimmedAnnounce
-		torrentMeta.AnnounceList = metainfo.AnnounceList{{trimmedAnnounce}}
-		for _, additional := range additionalAnnounces {
+	torrentMeta.Announce = strings.TrimSpace(fields.announceURL)
+	if torrentMeta.Announce != "" && !fields.omitAnnounceList {
+		torrentMeta.AnnounceList = metainfo.AnnounceList{{torrentMeta.Announce}}
+		for _, additional := range fields.additionalAnnounces {
 			if value := strings.TrimSpace(additional); value != "" && !slices.Contains(torrentMeta.AnnounceList[0], value) {
 				torrentMeta.AnnounceList[0] = append(torrentMeta.AnnounceList[0], value)
 			}

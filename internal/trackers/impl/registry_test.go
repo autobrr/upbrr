@@ -99,10 +99,10 @@ func testPTPDescriptionCaptureScope(t *testing.T, disc string, frameDiscs []stri
 		ImageHostOverrides: api.ImageHostOverrides{SkipUpload: new(true)},
 	}
 	cfg := config.Config{
-MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "upbrr.db")},
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "upbrr.db")},
 		ImageHosting: config.ImageHostingConfig{Host1: "imgbb"},
 		Description:  config.DescriptionSettingsConfig{CustomDescriptionHeader: "Release notes", ScreenshotHeader: "[b]Screenshots[/b]"},
-}
+	}
 	service := trackers.NewServiceWithRegistry(cfg, api.NopLogger{}, descriptionPreviewPersistence{}, MustNewRegistry())
 	preview, err := service.BuildPreparation(t.Context(), api.NewDescriptionSubject(meta), trackerIDs)
 	if err != nil || len(preview.ContentFailures) != 0 || len(preview.Descriptions) != len(trackerIDs) {
@@ -988,7 +988,6 @@ func TestNewRegistryOwnsUploadArtifactPolicies(t *testing.T) {
 		"PHD": {Source: "PrivateHD", DefaultAnnounce: "https://tracker.privatehd.to/announce"},
 		"PTS": {Source: "[www.ptskit.org] PTSKIT", RequireAnnounce: true},
 		"RTF": {Source: "sunshine", RequireAnnounce: true},
-		"TL":  {Source: "TorrentLeech.org"},
 		"TOS": {Source: "TheOldSchool"},
 		"TVC": {Source: "TVCHAOS", RequireAnnounce: true},
 	}

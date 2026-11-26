@@ -38,8 +38,12 @@ func Profile() standalone.Profile {
 				Disposition: api.RuleDispositionStrict,
 			}},
 		},
-		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: sourceFlag},
-		AudioPolicy:          &trackers.AudioPolicy{AllowBloat: true},
+		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{
+			Source:           sourceFlag,
+			DefaultAnnounce:  "https://fake.tracker",
+			OmitAnnounceList: true,
+		},
+		AudioPolicy: &trackers.AudioPolicy{AllowBloat: true},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{
 			TrackerURLPatterns: []string{"tracker.tleechreload", "tracker.torrentleech"},
 		},
