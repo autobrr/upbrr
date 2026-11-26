@@ -87,7 +87,8 @@ type SearchInput struct {
 	Filename          string
 	SearchYear        int
 	Category          string
-	SecondaryTitle    string
+	AlternateTitle    string
+	Subtitle          string // A discovery hint without title confidence.
 	UntouchedFilename string
 	ParsedTitle       string
 	DurationMinutes   int

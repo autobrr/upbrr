@@ -7,13 +7,14 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/languageutil"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func applyMetadataNamingOverrides(request api.ReleaseNameRequest, overrides api.MetadataOverrides) api.ReleaseNameRequest {
 	if overrides.AlternateTitle != nil {
-		request.AltTitle = strings.TrimSpace(*overrides.AlternateTitle)
+		request.AltTitle = metautil.FormatAKA(*overrides.AlternateTitle)
 	}
 	return request
 }
@@ -66,13 +67,22 @@ func effectiveMetadata(meta preparationstate.State, request api.ReleaseNameReque
 }
 
 func automaticOriginalTitle(meta preparationstate.State) string {
-	if matchingTMDBMetadataForNaming(meta) && strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalTitle) != "" {
-		return strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalTitle)
+	displayTitle := ""
+	if matchingTMDBMetadataForNaming(meta) {
+		tmdb := meta.ProviderMetadata.TMDB
+		if title := strings.TrimSpace(tmdb.OriginalTitle); title != "" {
+			return title
+		}
+		displayTitle = tmdb.Title
 	}
-	if matchingTVDBMetadataForNaming(meta) && strings.TrimSpace(meta.ProviderMetadata.TVDB.Name) != "" {
-		return strings.TrimSpace(meta.ProviderMetadata.TVDB.Name)
+	if matchingTVDBMetadataForNaming(meta) {
+		tvdb := meta.ProviderMetadata.TVDB
+		if title := strings.TrimSpace(tvdb.Name); title != "" {
+			return title
+		}
+		displayTitle = metautil.FirstNonEmptyTrimmed(displayTitle, tvdb.DisplayName())
 	}
-	return strings.TrimSpace(meta.Release.Title)
+	return metautil.FirstNonEmptyTrimmed(displayTitle, meta.Release.Title)
 }
 
 func automaticOriginalLanguage(meta preparationstate.State) string {

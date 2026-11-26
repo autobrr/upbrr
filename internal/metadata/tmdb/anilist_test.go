@@ -5,9 +5,12 @@ package tmdb
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -376,7 +379,7 @@ func TestResolveAnimeWarnsSanitizedOnSearchFailure(t *testing.T) {
 	}
 
 	result, err := client.ResolveAnime(context.Background(), "Example Anime", MetadataInput{
-		Filename: "Example.Anime.2026.S01.1080p.WEB-DL-GRP",
+		Filename: "Example.Other.Title.2026.S01.1080p.WEB-DL-GRP",
 	})
 	if err != nil {
 		t.Fatalf("expected best-effort resolve to succeed, got %v", err)
@@ -428,6 +431,117 @@ func TestResolveAnimeSearchesKnownMALIDOnce(t *testing.T) {
 	}
 	if result.MALID != 20 {
 		t.Fatalf("expected explicit MAL ID to be retained, got %d", result.MALID)
+	}
+}
+
+func TestResolveAnimeUsesNativeTitleEvidence(t *testing.T) {
+	t.Parallel()
+	client := &Client{
+		anilistURL: testAnilistURL,
+		logger:     api.NopLogger{},
+		http: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"data":{"Page":{"media":[
+				{"id":1,"idMal":100,"title":{"romaji":"Shiroi Tsuki Gaiden Season 2","native":"白い月外伝"}},
+				{"id":2,"idMal":200,"title":{"romaji":"Shiroi Tsuki","native":"白い月"}}
+			]}}}`))}, nil
+		})},
+	}
+	for _, test := range []struct {
+		name   string
+		input  MetadataInput
+		malID  int
+		romaji string
+	}{
+		{
+			name:   "白い月",
+			malID:  200,
+			romaji: "Shiroi Tsuki",
+		},
+		{name: "星夜"},
+		{
+			name:   "白い月",
+			input:  MetadataInput{ManualSeason: "S02"},
+			malID:  100,
+			romaji: "Shiroi Tsuki Gaiden Season 2",
+		},
+		{
+			input:  MetadataInput{MALManual: 200},
+			malID:  200,
+			romaji: "Shiroi Tsuki",
+		},
+	} {
+		got, err := client.ResolveAnime(t.Context(), test.name, test.input)
+		if err != nil || got.MALID != test.malID || got.Romaji != test.romaji {
+			t.Errorf("%q resolves to %+v, error %v, want MAL %d and romaji %q", test.name, got, err, test.malID, test.romaji)
+		}
+	}
+}
+
+func TestResolveAnimeRanksTheCurrentQuery(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name      string
+		tmdbTitle string
+		filename  string
+		queries   []string
+	}{
+		{
+			name:      "empty primary response",
+			tmdbTitle: "Echo",
+			filename:  "月.S01E02.1080p.WEB-DL-GRP",
+			queries:   []string{"Echo", "月"},
+		},
+		{
+			name:      "cross-script mismatch",
+			tmdbTitle: "Night",
+			filename:  "月.S01E02.1080p.WEB-DL-GRP",
+			queries:   []string{"Night", "月"},
+		},
+		{
+			name:     "blank TMDB title",
+			filename: "月.S01E02.1080p.WEB-DL-GRP",
+			queries:  []string{"月"},
+		},
+		{
+			name:      "SubsPlease filename priority",
+			tmdbTitle: "Echo",
+			filename:  "[SubsPlease] Tsuki - 02 (1080p).mkv",
+			queries:   []string{"Tsuki"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var queries []string
+			client := &Client{
+				anilistURL: testAnilistURL,
+				logger:     api.NopLogger{},
+				http: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					var payload struct {
+						Variables map[string]string
+					}
+					if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+						return nil, fmt.Errorf("decode AniList query: %w", err)
+					}
+					query := payload.Variables["search"]
+					queries = append(queries, query)
+					media := `[
+						{"idMal":100,"title":{"romaji":"Tsuki Gaiden","english":"Echo","native":"月外伝"}},
+						{"idMal":200,"title":{"romaji":"Tsuki","native":"月"}}
+					]`
+					switch query {
+					case "Echo":
+						media = "[]"
+					case "Night":
+						media = `[{"idMal":300,"title":{"native":"朝空"}}]`
+					}
+					body := `{"data":{"Page":{"media":` + media + `}}}`
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+				})},
+			}
+			got, err := client.ResolveAnime(t.Context(), test.tmdbTitle, MetadataInput{Filename: test.filename})
+			if err != nil || got.MALID != 200 || got.Romaji != "Tsuki" || !slices.Equal(queries, test.queries) {
+				t.Fatalf("result = %+v, err = %v, queries = %q, want MAL 200 (Tsuki) from %q", got, err, queries, test.queries)
+			}
+		})
 	}
 }
 

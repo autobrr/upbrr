@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/text/unicode/norm"
 
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -111,11 +112,7 @@ func authoritativeHDBOriginalTitle(meta api.UploadSubject) string {
 		!hdbProviderMetadataCurrent(meta) {
 		return ""
 	}
-	title := strings.TrimSpace(metadata.AKA)
-	if len(title) > len("AKA ") && strings.EqualFold(title[:len("AKA ")], "AKA ") {
-		title = strings.TrimSpace(title[len("AKA "):])
-	}
-	return title
+	return metautil.FirstNonEmptyTrimmed(metadata.AKA, metadata.Title)
 }
 
 func hdbProviderMetadataCurrent(meta api.UploadSubject) bool {

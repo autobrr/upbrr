@@ -78,7 +78,7 @@ func ProjectDisplay(release api.PreparedRelease) (api.PreparedReleaseDisplay, er
 	if value := metadata.TMDB; value != nil {
 		summary := api.ProviderDisplaySummary{
 			Title:            firstNonEmpty(value.Title, release.Naming.ReleaseName),
-			OriginalTitle:    value.OriginalTitle,
+			OriginalTitle:    firstNonEmpty(value.OriginalTitle, value.Title),
 			Year:             value.Year,
 			Overview:         value.Overview,
 			PosterURL:        value.Poster,
@@ -129,7 +129,7 @@ func ProjectDisplay(release api.PreparedRelease) (api.PreparedReleaseDisplay, er
 	}
 	if value := metadata.TVDB; value != nil {
 		summary := api.ProviderDisplaySummary{
-			Title:            firstNonEmpty(value.Name, release.Naming.ReleaseName),
+			Title:            firstNonEmpty(value.DisplayName(), release.Naming.ReleaseName),
 			Year:             value.Year,
 			Overview:         value.Overview,
 			PosterURL:        value.Poster,

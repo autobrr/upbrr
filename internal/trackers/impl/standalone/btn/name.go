@@ -203,7 +203,7 @@ func resolveSearchName(meta api.UploadSubject) string {
 	}
 	candidates := []string{strings.TrimSpace(meta.Release.Title)}
 	if meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) && meta.ProviderMetadata.TVDB != nil {
-		candidates = append(candidates, strings.TrimSpace(meta.ProviderMetadata.TVDB.Name), strings.TrimSpace(meta.ProviderMetadata.TVDB.NameEnglish))
+		candidates = append(candidates, meta.ProviderMetadata.TVDB.DisplayName())
 	}
 	if meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) && meta.ProviderMetadata.TVmaze != nil {
 		candidates = append(candidates, strings.TrimSpace(meta.ProviderMetadata.TVmaze.Name))

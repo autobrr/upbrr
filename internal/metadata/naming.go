@@ -197,6 +197,10 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 		} else if req.ManualYear <= 0 {
 			year = 0
 		}
+		if !req.ManualEpisodeTitle && episodeTitle != "" && !req.ManualDate &&
+			metautil.EpisodeTitleRepeatsName(episodeTitle, title, altTitle) {
+			episodeTitle = ""
+		}
 	}
 
 	logger.Tracef(
@@ -290,6 +294,11 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 			episode,
 		)
 		return api.ReleaseNameResult{MissingFields: missing}
+	}
+	if req.ManualEpisodeTitle {
+		if index := releaseNameComponentSliceIndex(document.Components, api.NameRoleEpisodeTitle); index >= 0 {
+			document.Components[index].Manual = true
+		}
 	}
 	rendered := document.Render()
 	logger.Tracef("metadata: release name built name=%q clean=%q", rendered.Name, rendered.CleanName)
@@ -1352,11 +1361,6 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 	episodeTitle := preferredGeneratedEpisodeTitle(meta)
 	if meta.TVPack || strings.TrimSpace(meta.EpisodeStr) == "" {
 		episodeTitle = ""
-	} else if titleIdentityKey(episodeTitle) != "" {
-		episodeTitleKey := titleIdentityKey(episodeTitle)
-		if episodeTitleKey == titleIdentityKey(title) || episodeTitleKey == titleIdentityKey(altTitle) {
-			episodeTitle = ""
-		}
 	}
 
 	return api.ReleaseNameRequest{
@@ -1487,7 +1491,7 @@ func resolveReleaseNameTitle(category string, meta preparationstate.State) (stri
 			title = englishTitle
 			altTitle = fillProviderAlternateTitle(altTitle, title, imdbAKA, nativeTitle)
 		} else {
-			title = nativeTitle
+			title = tvdb.DisplayName()
 			altTitle = fillProviderAlternateTitle(altTitle, title, imdbAKA)
 		}
 		year = tvdbNamingYear(tvdb)
@@ -1502,7 +1506,8 @@ func resolveReleaseNameTitle(category string, meta preparationstate.State) (stri
 		if matchingIMDBMetadataForNaming(meta) {
 			imdbAKA = meta.ProviderMetadata.IMDB.AKA
 		}
-		altTitle = fillProviderAlternateTitle(altTitle, title, tmdb.RetrievedAKA, imdbAKA, tmdb.OriginalTitle)
+		romaji := metautil.AnimeRomanizedTitle(meta.Identity, meta.ProviderMetadata)
+		altTitle = fillProviderAlternateTitle(altTitle, title, romaji, imdbAKA, tmdb.OriginalTitle)
 		if year == 0 && tmdb.Year > 0 {
 			year = tmdb.Year
 		}
@@ -1513,6 +1518,8 @@ func resolveReleaseNameTitle(category string, meta preparationstate.State) (stri
 		if year == 0 && imdb.Year > 0 {
 			year = imdb.Year
 		}
+	default:
+		altTitle = fillProviderAlternateTitle(altTitle, title)
 	}
 	if isTV {
 		year = 0
@@ -1570,16 +1577,10 @@ func namingSourceMatches(scopedPath, currentPath string) bool {
 // fillProviderAlternateTitle returns the first non-empty alternate that differs
 // from the primary, preferring the parsed value before provider candidates.
 func fillProviderAlternateTitle(current, primary string, candidates ...string) string {
-	for _, candidate := range append([]string{current}, candidates...) {
-		alternate := strings.TrimSpace(candidate)
-		if len(alternate) > len("AKA ") && strings.EqualFold(alternate[:len("AKA ")], "AKA ") {
-			alternate = strings.TrimSpace(alternate[len("AKA "):])
+	for _, alternate := range append([]string{current}, candidates...) {
+		if metautil.DistinctTitle(primary, alternate) {
+			return metautil.FormatOriginalAKA(alternate)
 		}
-		if alternate == "" || strings.EqualFold(strings.TrimSpace(primary), alternate) ||
-			metautil.SimilarityRatio(titleIdentityKey(primary), titleIdentityKey(alternate)) >= 0.7 {
-			continue
-		}
-		return "AKA " + alternate
 	}
 	return ""
 }

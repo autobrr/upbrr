@@ -170,7 +170,7 @@ func animeSearchTitle(meta api.DuplicateSubject) string {
 	tvdbName := ""
 	if meta.ProviderMetadata.TVDB != nil {
 		tvdbNameEnglish = strings.TrimSpace(meta.ProviderMetadata.TVDB.NameEnglish)
-		tvdbName = strings.TrimSpace(meta.ProviderMetadata.TVDB.Name)
+		tvdbName = meta.ProviderMetadata.TVDB.DisplayName()
 	}
 	tmdbTitle := ""
 	tmdbOriginalTitle := ""

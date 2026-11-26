@@ -36,6 +36,7 @@ const anilistRetryDelayOverBudget = anilistMaxRetryWait + time.Nanosecond
 const maxAniListMetadataResponseBytes int64 = 1024 * 1024
 
 var seasonPattern = regexp.MustCompile(`(?i)(?:season\s*(\d+)|\bS(\d{1,2})\b)`)
+var animeTitleSeparators = regexp.MustCompile(`[^\p{L}\p{M}\p{N}]+`)
 
 // ResolveAnime best-effort selects AniList metadata by explicit MAL ID or title
 // and season similarity. Lookup failures are treated as no match; an explicit
@@ -48,32 +49,6 @@ func (c *Client) ResolveAnime(ctx context.Context, tmdbName string, input Metada
 		result.MALID = input.MALManual
 	}
 
-	searchTerms := []string{tmdbName}
-	if input.Filename != "" {
-		searchTerms = append(searchTerms, input.Filename)
-	}
-
-	var media []anilistMedia
-	for _, term := range searchTerms {
-		term = strings.TrimSpace(term)
-		if term == "" {
-			continue
-		}
-		items, err := c.anilistSearch(ctx, term, result.MALID)
-		if err != nil {
-			logger.Warnf("tmdb: anilist search failed mal=%d err=%s", result.MALID, redaction.RedactValue(err.Error(), nil))
-		} else if len(items) > 0 {
-			media = items
-			break
-		}
-		if result.MALID != 0 {
-			break
-		}
-	}
-	if len(media) == 0 {
-		return result, nil
-	}
-
 	expectedSeason := extractSeason(input.ManualSeason)
 	if expectedSeason == 0 {
 		expectedSeason = extractSeason(input.Season)
@@ -82,43 +57,67 @@ func (c *Client) ResolveAnime(ctx context.Context, tmdbName string, input Metada
 		expectedSeason = extractSeason(input.Filename)
 	}
 
-	best := media[0]
-	bestScore := -1.0
-	bestSeasonScore := -1.0
-	searchName := buildSearchName(tmdbName, input.Filename)
+	searchTerms := []string{""}
+	if result.MALID == 0 {
+		primary := cleanAnilistSearch(tmdbName)
+		fallback := cleanAnilistSearch(metautil.ParseRelease(input.Filename).Title)
+		if fallback != "" && strings.Contains(strings.ToLower(input.Filename), "subsplease") {
+			primary, fallback = fallback, primary
+		}
+		searchTerms = []string{primary, fallback}
+	}
+	for i, term := range searchTerms {
+		if result.MALID == 0 && (term == "" || i > 0 && term == searchTerms[0]) {
+			continue
+		}
+		items, err := c.anilistSearch(ctx, term, result.MALID)
+		if err != nil {
+			logger.Warnf("tmdb: anilist search failed mal=%d err=%s", result.MALID, redaction.RedactValue(err.Error(), nil))
+			continue
+		}
+		best := selectAniListMedia(items, normalizeAnimeTitle(term), expectedSeason, result.MALID)
+		if best == nil {
+			continue
+		}
+		result.Romaji = metautil.FirstNonEmpty(best.Title.Romaji, best.Title.English)
+		result.English = metautil.FirstNonEmpty(best.Title.English, best.Title.Romaji)
+		result.MALID = best.IDMal
+		result.SeasonYear = best.SeasonYear
+		result.Episodes = best.Episodes
+		result.Demographic = resolveDemographic(best.Tags, result.Demographic)
+		break
+	}
+	return result, nil
+}
 
-	for _, item := range media {
+func selectAniListMedia(media []anilistMedia, searchName string, expectedSeason, manualMAL int) *anilistMedia {
+	var best *anilistMedia
+	bestScore, bestSeasonScore := 0.0, 0.0
+	for i := range media {
+		item := &media[i]
+		if manualMAL != 0 {
+			if item.IDMal == manualMAL {
+				return item
+			}
+			continue
+		}
 		seasonFromTitle := findSeasonInTitles(item.Title)
 		score := 0.0
 		for _, title := range []string{item.Title.Romaji, item.Title.English, item.Title.Native} {
-			clean := normalizeAnimeTitle(title)
-			if clean == "" {
-				continue
-			}
-			score = maxFloat(score, metautil.SimilarityRatio(clean, searchName))
+			score = max(score, metautil.SimilarityRatio(normalizeAnimeTitle(title), searchName))
 		}
 		if expectedSeason != 0 && seasonFromTitle == expectedSeason {
 			if score > bestSeasonScore {
 				bestSeasonScore = score
 				best = item
 			}
-		} else if bestSeasonScore < 0 && score > bestScore {
+		} else if bestSeasonScore == 0 && score > bestScore {
 			bestScore = score
 			best = item
 		}
 	}
 
-	result.Romaji = metautil.FirstNonEmpty(best.Title.Romaji, best.Title.English)
-	result.English = metautil.FirstNonEmpty(best.Title.English, best.Title.Romaji)
-	result.MALID = best.IDMal
-	result.SeasonYear = best.SeasonYear
-	result.Episodes = best.Episodes
-	result.Demographic = resolveDemographic(best.Tags, result.Demographic)
-	if input.MALManual != 0 {
-		result.MALID = input.MALManual
-	}
-
-	return result, nil
+	return best
 }
 
 // FetchAniListMetadata returns AniList media details for a MAL anime ID.
@@ -189,14 +188,10 @@ func (c *Client) fetchAniListMetadata(ctx context.Context, malID int) (AniListMe
 }
 
 func (c *Client) anilistSearch(ctx context.Context, term string, malID int) ([]anilistMedia, error) {
-	query := cleanAnilistSearch(term)
-	if malID != 0 {
-		query = ""
-	}
 	result, err := evidence.Lookup(
 		ctx,
 		"anilist.search.v1",
-		[]any{c.anilistURL, malID, query},
+		[]any{c.anilistURL, malID, term},
 		func() ([]anilistMedia, error) { return c.fetchAniListSearch(ctx, term, malID) },
 		func(value []anilistMedia) bool { return len(value) == 0 },
 	)
@@ -214,7 +209,7 @@ func (c *Client) fetchAniListSearch(ctx context.Context, term string, malID int)
 	if malID != 0 {
 		variables["search"] = malID
 	} else {
-		variables["search"] = cleanAnilistSearch(term)
+		variables["search"] = term
 	}
 	payload := map[string]any{"query": query, "variables": variables}
 	body, err := json.Marshal(payload)
@@ -405,19 +400,8 @@ func cleanAnilistSearch(value string) string {
 	return strings.Join(strings.Fields(value), " ")
 }
 
-func buildSearchName(tmdbName, filename string) string {
-	name := tmdbName
-	if strings.Contains(strings.ToLower(filename), "subsplease") {
-		name = filename
-	}
-	return normalizeAnimeTitle(name)
-}
-
 func normalizeAnimeTitle(value string) string {
-	value = strings.ToLower(value)
-	value = strings.ReplaceAll(value, " ", "")
-	value = regexp.MustCompile(`[^0-9a-z\[\]]+`).ReplaceAllString(value, "")
-	return value
+	return animeTitleSeparators.ReplaceAllString(strings.ToLower(value), "")
 }
 
 func extractSeason(value string) int {

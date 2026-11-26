@@ -109,7 +109,7 @@ func prepareUploadDataWithAutofill(
 	return data, releaseNameAutofill, err
 }
 
-// preferredBTNTVDBSeriesName returns the English TVDB name, falling back to the native name.
+// preferredBTNTVDBSeriesName returns the English TVDB name, falling back to the series display name.
 func preferredBTNTVDBSeriesName(meta api.UploadSubject) string {
 	if meta.ProviderMetadata.TVDB == nil {
 		return ""
@@ -117,7 +117,7 @@ func preferredBTNTVDBSeriesName(meta api.UploadSubject) string {
 	if name := strings.TrimSpace(meta.ProviderMetadata.TVDB.NameEnglish); name != "" {
 		return name
 	}
-	return strings.TrimSpace(meta.ProviderMetadata.TVDB.Name)
+	return meta.ProviderMetadata.TVDB.DisplayName()
 }
 
 // btnAutofillArtistAction requests confirmation unless BTN's artist exactly matches a TVDB name or alias.

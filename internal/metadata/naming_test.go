@@ -13,6 +13,7 @@ import (
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -984,7 +985,7 @@ func TestReleaseNameRequestFromMetaDefaultsToDailyWithoutEpisodeTitle(t *testing
 	}
 }
 
-func TestReleaseNameRequestFromMetaOmitsSeriesTitleEpisodeTitle(t *testing.T) {
+func TestRebuildReleaseNameDeduplicatesAutomaticEpisodeAgainstDisplayedTitles(t *testing.T) {
 	meta := preparationstate.State{
 		Identity: api.ExternalIdentity{Category: "TV", TVDBID: 2},
 		ProviderMetadata: api.SourceScopedMetadata{
@@ -995,15 +996,104 @@ func TestReleaseNameRequestFromMetaOmitsSeriesTitleEpisodeTitle(t *testing.T) {
 		EpisodeStr:   "E11",
 		EpisodeTitle: "Re:ZERO -Starting Life in Another World-",
 	}
-
-	req := releaseNameRequestFromMeta(meta, api.NopLogger{})
-	if req.EpisodeTitle != "" {
-		t.Fatalf("expected duplicate series episode title omitted, got %q", req.EpisodeTitle)
+	RebuildReleaseName(&meta, api.NopLogger{})
+	if strings.Contains(meta.ReleaseNameNoTag, "Re:ZERO -Starting Life in Another World-") {
+		t.Fatalf("expected release name to omit duplicate episode title, got %q", meta.ReleaseNameNoTag)
 	}
+	meta.ProviderMetadata.TVDB.NameEnglish = "Blue Sky"
+	meta.ProviderMetadata.TVDB.Name = "Sora no Ao"
+	meta.ProviderMetadata.TVDB.EpisodeNameEnglish = "Sora no Ao"
+	for _, test := range []struct {
+		name      string
+		alternate *string
+		noAKA     *bool
+		manual    *string
+		want      string
+	}{
+		{name: "visible AKA", want: "Blue Sky AKA Sora no Ao S04E11"},
+		{
+			name:  "hidden AKA",
+			noAKA: new(true),
+			want:  "Blue Sky S04E11 Sora no Ao",
+		},
+		{
+			name:      "cleared AKA",
+			alternate: new(""),
+			want:      "Blue Sky S04E11 Sora no Ao",
+		},
+		{
+			name:      "replaced AKA",
+			alternate: new("Morning Blue"),
+			want:      "Blue Sky AKA Morning Blue S04E11 Sora no Ao",
+		},
+		{
+			name:   "manual episode",
+			manual: new("Sora no Ao"),
+			want:   "Blue Sky AKA Sora no Ao S04E11 Sora no Ao",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			meta := meta
+			meta.MetadataOverrides.AlternateTitle = test.alternate
+			meta.ReleaseNameOverrides.NoAKA = test.noAKA
+			meta.ReleaseNameOverrides.EpisodeTitle = test.manual
+			captureAvailableGeneratedName(&meta, api.NopLogger{})
+			RebuildReleaseName(&meta, api.NopLogger{})
+			if meta.ReleaseName != test.want || meta.ResolvedNaming.EpisodeTitle != "Sora no Ao" {
+				t.Errorf("name=%q episode fact=%q, want %q with resolved episode preserved", meta.ReleaseName, meta.ResolvedNaming.EpisodeTitle, test.want)
+			}
+			if variant := meta.GeneratedReleaseNames.IncludeEpisodeTitle.Name; variant != meta.ReleaseName {
+				t.Errorf("include variant=%q, want %q", variant, meta.ReleaseName)
+			}
+			if variant := meta.GeneratedReleaseNames.OmitEpisodeTitle.Name; (variant != meta.ReleaseName) != strings.HasSuffix(test.want, "E11 Sora no Ao") && test.manual == nil {
+				t.Errorf("omit variant=%q, include variant=%q", variant, meta.ReleaseName)
+			}
+		})
+	}
+}
 
-	result := BuildReleaseName(req, api.NopLogger{})
-	if strings.Contains(result.NameNoTag, "Re:ZERO -Starting Life in Another World-") {
-		t.Fatalf("expected release name to omit duplicate episode title, got %q", result.NameNoTag)
+func TestRebuildReleaseNameFormatsAndOmitsParsedAKA(t *testing.T) {
+	for _, test := range []struct {
+		marker    string
+		alternate *string
+		omit      bool
+		want      string
+	}{
+		{marker: "AKA", want: "Blue Sky AKA Sora no Ao 2024 1080p"},
+		{marker: "aKa", want: "Blue Sky AKA Sora no Ao 2024 1080p"},
+		{marker: "AKA.AKA", want: "Blue Sky AKA AKA Sora no Ao 2024 1080p"},
+		{
+			marker: "aka",
+			omit:   true,
+			want:   "Blue Sky 2024 1080p",
+		},
+		{
+			marker:    "AKA",
+			alternate: new("Manual Sky"),
+			want:      "Blue Sky AKA Manual Sky 2024 1080p",
+		},
+		{
+			marker:    "AKA",
+			alternate: new(""),
+			want:      "Blue Sky 2024 1080p",
+		},
+	} {
+		parsed := metautil.ParseRelease("Blue.Sky." + test.marker + ".Sora.no.Ao.2024.1080p.BluRay.x264-GRP.mkv")
+		meta := preparationstate.State{
+			Release: api.ReleaseInfo{
+				Title:      parsed.Title,
+				Alt:        parsed.Alt,
+				Year:       parsed.Year,
+				Category:   parsed.Category,
+				Resolution: "1080p",
+			},
+			MetadataOverrides:    api.MetadataOverrides{AlternateTitle: test.alternate},
+			ReleaseNameOverrides: api.ReleaseNameOverrides{NoAKA: new(test.omit)},
+		}
+		RebuildReleaseName(&meta, api.NopLogger{})
+		if meta.ReleaseName != test.want {
+			t.Errorf("marker %s, omit=%t -> %q, want %q", test.marker, test.omit, meta.ReleaseName, test.want)
+		}
 	}
 }
 
@@ -1420,9 +1510,9 @@ func TestResolveReleaseNameTitleProviderAlternateRules(t *testing.T) {
 	}{
 		{name: "same as title", imdbAKA: "IMDb Title"},
 		{
-			name:    "normalizes prefix",
+			name:    "preserves a literal AKA in a raw IMDb title",
 			imdbAKA: "AKA Original Title",
-			wantAlt: "AKA Original Title",
+			wantAlt: "AKA AKA Original Title",
 		},
 		{
 			name:       "adds prefix to parsed alternate",
@@ -1431,10 +1521,10 @@ func TestResolveReleaseNameTitleProviderAlternateRules(t *testing.T) {
 			wantAlt:    "AKA Parsed Alternate",
 		},
 		{
-			name:       "preserves parsed alternate",
+			name:       "preserves a literal AKA in a parsed alternate",
 			releaseAlt: "AKA Parsed Alternate",
 			imdbAKA:    "Original Title",
-			wantAlt:    "AKA Parsed Alternate",
+			wantAlt:    "AKA AKA Parsed Alternate",
 		},
 		{
 			name:       "duplicate parsed alternate uses provider fallback",
@@ -1506,13 +1596,16 @@ func TestResolveReleaseNameTitlePrefersTMDBForMovie(t *testing.T) {
 			Category: "MOVIE",
 			TMDBID:   1,
 			IMDBID:   1234567,
+			MALID:    10,
 		},
 		Release: api.ReleaseInfo{Title: "Parsed Title"},
 		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{
 				TMDBID:        1,
+				Category:      "MOVIE",
 				Title:         "TMDB Title",
 				OriginalTitle: "TMDB Original",
+				MALID:         10,
 				RetrievedAKA:  "AKA Rei No Sakuhin",
 				Year:          2025,
 			},

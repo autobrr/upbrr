@@ -17,7 +17,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"github.com/autobrr/upbrr/internal/logging"
 
@@ -158,6 +157,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		meta.ExternalIdentityCandidates = nil
 	}
 	ids := api.ExternalIdentity{SourcePath: meta.SourcePath}
+	storedIdentityVersion := previousIdentity.Resolution.ContractVersion
 	if refreshProviders && sourceScopedMetadataMatches(previousIdentity.SourcePath, meta.SourcePath) {
 		copyStoredProviderPins(&ids, previousIdentity)
 	}
@@ -167,6 +167,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			ids.SourcePath = meta.SourcePath
 		}
 	} else if storedIDs, err := s.repo.GetExternalIdentity(ctx, meta.SourcePath); err == nil {
+		storedIdentityVersion = storedIDs.Resolution.ContractVersion
 		storedIDs = externalidentity.CompatibleStoredIdentity(storedIDs)
 		copyStoredProviderPins(&ids, storedIDs.WithoutResetPins(meta.IdentityResetFields).WithProviderRetention(meta.ExternalIDOverrides))
 		if ids.HasRetainedProvider() {
@@ -196,6 +197,10 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			metadata.AniList = storedMeta.AniList
 			retainedMetadata = storedMeta
 		}
+	}
+	if storedIdentityVersion != "" && storedIdentityVersion != externalidentity.ContractVersion {
+		metadata = withoutLegacyNamingEvidence(metadata)
+		retainedMetadata = withoutLegacyNamingEvidence(retainedMetadata)
 	}
 	candidates := externalIdentityCandidateEvidence{}
 	tentativeIMDb := false
@@ -545,7 +550,8 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		imdbSearchCategory = ids.Category
 		result, err := imdbClient.Search(ctx, imdb.SearchInput{
 			Filename:          filename,
-			SecondaryTitle:    secondary,
+			AlternateTitle:    normalizeSearchTitle(meta.Release.Alt),
+			Subtitle:          normalizeSearchTitle(meta.Release.Subtitle),
 			UntouchedFilename: pathutil.Base(meta.SourcePath),
 			SearchYear:        stageYear,
 			Category:          string(ids.Category),
@@ -746,7 +752,6 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	tvdbErr := initialTVDBErr
 	var tvmazeErr error
 	var anilistErr error
-	tvdbName := ""
 
 	isTVForTVmaze := func() bool {
 		return shouldUseTVDBForCategory(meta, ids)
@@ -983,7 +988,8 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 					SkipAnimeLookup: overrideMAL || clearedMAL,
 					AddLogo:         true,
 					LogoLanguages:   logoLanguages,
-					Filename:        filename,
+					Filename:        pathutil.Base(meta.SourcePath),
+					Season:          meta.SeasonStr,
 					Debug:           false,
 				})
 				if err != nil {
@@ -1277,10 +1283,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 				applyLinkedProviderID(&ids.TVDBID, &ids.Provenance.TVDB, &ids.Dependencies.TVDB, fetchedTVDBID, fetchedTVDBInputs)
 			}
 			if metadata.TVDB == nil || metadata.TVDB.TVDBID == 0 {
-				metadata.TVDB = &api.TVDBMetadata{TVDBID: fetchedTVDBID, Name: fetchedTVDBName}
-			}
-			if strings.TrimSpace(tvdbName) == "" {
-				tvdbName = fetchedTVDBName
+				metadata.TVDB = &api.TVDBMetadata{TVDBID: fetchedTVDBID}
 			}
 		}
 
@@ -1298,6 +1301,11 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			}
 			switch {
 			case err != nil:
+				if metadata.TVDB != nil && metadata.TVDB.TVDBID == fetchedTVDBID && metadata.TVDB.DisplayName() == "" {
+					if name := strings.TrimSpace(fetchedTVDBName); name != "" {
+						metadata.TVDB.Aliases = []string{name}
+					}
+				}
 				if tvdbErr == nil {
 					tvdbErr = err
 				}
@@ -1324,9 +1332,6 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 						metadata.TVDB.YearConfidence,
 						metadata.TVDB.YearFromAlias,
 					)
-				}
-				if strings.TrimSpace(tvdbName) == "" {
-					tvdbName = strings.TrimSpace(mapped.Name)
 				}
 			default:
 				appendProviderIDConflictWarning(&meta, "TVDB", "TVDB", *effectiveOverrides.TVDBID, tvdbSeries.TVDBID)
@@ -1669,6 +1674,12 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		ids.Category = api.CanonicalCategoryMovie
 	}
 	ids = ids.WithProviderRetention(meta.ExternalIDOverrides)
+	if tmdb := metadata.TMDB; tmdb != nil && tmdb.RetrievedAKA != "" &&
+		(ids.MALID <= 0 || tmdb.MALID != ids.MALID || ids.Overrides.MAL == api.OverrideStateClear) {
+		current := *tmdb
+		current.RetrievedAKA = ""
+		metadata.TMDB = &current
+	}
 	logger.Tracef(
 		"metadata: external ids resolved tmdb=%d(%s) imdb=%d(%s) tvdb=%d(%s) tvmaze=%d(%s) mal=%d(%s)",
 		ids.TMDBID,
@@ -2125,6 +2136,34 @@ func invalidateProviderMetadataForExplicitReconciliation(metadata *api.SourceSco
 	}
 }
 
+func withoutLegacyNamingEvidence(metadata api.SourceScopedMetadata) api.SourceScopedMetadata {
+	if value := metadata.TMDB; value != nil && (value.MALID != 0 || value.RetrievedAKA != "" || value.OriginalTitle == value.Title) {
+		current := *value
+		current.MALID = 0
+		current.RetrievedAKA = ""
+		if current.OriginalTitle == current.Title {
+			current.OriginalTitle = ""
+		}
+		metadata.TMDB = &current
+	}
+	if value := metadata.IMDB; value != nil && value.AKA != "" && value.AKA == value.Title {
+		current := *value
+		current.AKA = ""
+		metadata.IMDB = &current
+	}
+	if value := metadata.TVDB; value != nil && strings.TrimSpace(value.Name) != "" {
+		// Older snapshots could promote a search result or an arbitrary alias
+		// to Name. Keep it usable for display without claiming it as original.
+		current := *value
+		if len(current.Aliases) == 0 || current.Aliases[0] != current.Name {
+			current.Aliases = append([]string{current.Name}, current.Aliases...)
+		}
+		current.Name = ""
+		metadata.TVDB = &current
+	}
+	return metadata
+}
+
 func copyRetainedProviderMetadata(
 	target *api.SourceScopedMetadata,
 	previous api.SourceScopedMetadata,
@@ -2198,8 +2237,7 @@ func usableIMDBMetadata(metadata *api.IMDBMetadata, imdbID int) bool {
 }
 
 func usableTVDBMetadata(metadata *api.TVDBMetadata, tvdbID int) bool {
-	return metadata != nil && tvdbID > 0 && metadata.TVDBID == tvdbID &&
-		(strings.TrimSpace(metadata.NameEnglish) != "" || strings.TrimSpace(metadata.Name) != "")
+	return metadata != nil && tvdbID > 0 && metadata.TVDBID == tvdbID && metadata.DisplayName() != ""
 }
 
 // reusableTVDBNameDisambiguation reports whether collision evidence can support
@@ -3080,7 +3118,6 @@ func mapTVDBMetadata(tvdbID int, fallbackName string, details tvdb.SeriesMetadat
 		yearSource = strings.TrimSpace(details.SeriesYearSource)
 		yearConfidence = strings.TrimSpace(details.SeriesYearConfidence)
 	}
-	name := metautil.FirstNonEmptyTrimmed(details.Name, fallbackName)
 	aliases := make([]string, 0, len(details.Aliases))
 	for _, alias := range details.Aliases {
 		trimmed := strings.TrimSpace(alias.Name)
@@ -3091,6 +3128,9 @@ func mapTVDBMetadata(tvdbID int, fallbackName string, details tvdb.SeriesMetadat
 	}
 	if len(aliases) == 0 {
 		aliases = nil
+		if name := strings.TrimSpace(fallbackName); strings.TrimSpace(details.Name) == "" && name != "" {
+			aliases = []string{name}
+		}
 	}
 
 	return &api.TVDBMetadata{
@@ -3099,7 +3139,7 @@ func mapTVDBMetadata(tvdbID int, fallbackName string, details tvdb.SeriesMetadat
 			Links:  slices.Clone(details.RemoteLinks.Links),
 		},
 		TVDBID:                         id,
-		Name:                           name,
+		Name:                           strings.TrimSpace(details.Name),
 		Overview:                       strings.TrimSpace(details.Overview),
 		NameEnglish:                    strings.TrimSpace(details.NameEnglish),
 		OverviewEnglish:                strings.TrimSpace(details.OverviewEnglish),
@@ -3533,9 +3573,6 @@ func (s *Service) applyTVEpisodeMetadata(
 						external.TVDB = &api.TVDBMetadata{TVDBID: ids.TVDBID}
 					}
 					external.TVDB.NameEnglish = aliasName
-					if strings.TrimSpace(external.TVDB.Name) == "" {
-						external.TVDB.Name = aliasName
-					}
 					if aliasYear > 0 {
 						external.TVDB.Year = aliasYear
 						external.TVDB.YearFromAlias = true
@@ -3868,8 +3905,10 @@ func resolveSeriesTitle(meta preparationstate.State, external *api.SourceScopedM
 		if external.TMDB != nil && strings.TrimSpace(external.TMDB.Title) != "" {
 			return strings.TrimSpace(external.TMDB.Title)
 		}
-		if external.TVDB != nil && strings.TrimSpace(external.TVDB.Name) != "" {
-			return strings.TrimSpace(external.TVDB.Name)
+		if external.TVDB != nil {
+			if name := external.TVDB.DisplayName(); name != "" {
+				return name
+			}
 		}
 		if external.TVmaze != nil && strings.TrimSpace(external.TVmaze.Name) != "" {
 			return strings.TrimSpace(external.TVmaze.Name)
@@ -3913,12 +3952,12 @@ func discardSeriesEpisodeTitle(episodeTitle string, meta preparationstate.State,
 }
 
 func episodeTitleMatchesSeriesTitle(episodeTitle string, meta preparationstate.State, external *api.SourceScopedMetadata) bool {
-	episodeKey := titleIdentityKey(episodeTitle)
+	episodeKey := metautil.TitleIdentityKey(episodeTitle)
 	if len(episodeKey) < 6 {
 		return false
 	}
 	for _, title := range seriesTitleCandidates(meta, external) {
-		if episodeKey == titleIdentityKey(title) {
+		if episodeKey == metautil.TitleIdentityKey(title) {
 			return true
 		}
 	}
@@ -3940,23 +3979,12 @@ func seriesTitleCandidates(meta preparationstate.State, external *api.SourceScop
 		candidates = append(candidates, external.IMDB.Title)
 	}
 	if external.TVDB != nil {
-		candidates = append(candidates, external.TVDB.Name, external.TVDB.NameEnglish)
+		candidates = append(candidates, external.TVDB.DisplayName(), external.TVDB.NameEnglish)
 	}
 	if external.TVmaze != nil {
 		candidates = append(candidates, external.TVmaze.Name)
 	}
 	return candidates
-}
-
-// titleIdentityKey compares titles across punctuation and spacing differences.
-func titleIdentityKey(value string) string {
-	var builder strings.Builder
-	for _, r := range strings.TrimSpace(value) {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			builder.WriteRune(unicode.ToLower(r))
-		}
-	}
-	return builder.String()
 }
 
 // sanitizeEpisodeTitle returns an empty value for generic provider episode

@@ -63,6 +63,32 @@ func TestGetInfoSpokenLanguages(t *testing.T) {
 	}
 }
 
+func TestGetInfoOnlyUsesVerifiedOriginalTitle(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, primaryFlag, suffix, want string
+	}{
+		{"display only", "false", "", ""},
+		{"verified display title", "true", "", "Daybreak"},
+		{"literal AKA in original", "false", `,"originalTitleText":{"text":"AKA Echo"}`, "AKA Echo"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{"data":{"title":{"id":"tt0555001","titleText":{"text":"Daybreak","isOriginalTitle":%s}%s}}}`,
+					test.primaryFlag, test.suffix)
+			}))
+			defer server.Close()
+			client := NewClient(server.Client(), nil)
+			client.baseURL = server.URL
+			got, err := client.GetInfo(t.Context(), "tt0555001", "", false)
+			if err != nil || got.Title != "Daybreak" || got.AKA != test.want {
+				t.Fatalf("title=%q original=%q error=%v, want Daybreak and original %q", got.Title, got.AKA, err, test.want)
+			}
+		})
+	}
+}
+
 func TestGetInfoEditionEvidenceKeepsSameMinuteRowsOnlyForCompleteResults(t *testing.T) {
 	for _, hasNextPage := range []bool{false, true} {
 		t.Run(strconv.FormatBool(hasNextPage), func(t *testing.T) {
@@ -533,7 +559,7 @@ func TestRankCandidates(t *testing.T) {
 			},
 		},
 	}
-	candidates := rankCandidates(results, "Example Title", 2020)
+	candidates := rankCandidates(results, "Example Title", "", 2020)
 	if len(candidates) == 0 {
 		t.Fatalf("expected candidates")
 	}
@@ -551,7 +577,7 @@ func TestRankCandidates(t *testing.T) {
 		{0, 0, 1},
 	} {
 		getMapFromMap(getMapFromMap(results[0], "node"), "title")["releaseYear"] = map[string]any{"year": test.year}
-		got := rankCandidates(results[:1], "Example Title", test.requested)
+		got := rankCandidates(results[:1], "Example Title", "", test.requested)
 		if len(got) != 1 || math.Abs(got[0].Similarity-test.want) > 1e-10 {
 			t.Fatalf("candidate year %d requested %d: %+v, want %v", test.year, test.requested, got, test.want)
 		}
@@ -579,6 +605,74 @@ func TestSearchRetainsWeakSingleResult(t *testing.T) {
 	candidate := got.Candidates[0]
 	if candidate.IMDbID != 555001 || candidate.Confidence >= 0.85 || math.Abs(candidate.Similarity-candidate.Confidence-0.2) > 1e-10 {
 		t.Fatalf("candidate lost separate confidence and ranking: %+v", candidate)
+	}
+}
+
+func TestSearchRanksAlternateTitleWithCompatibleYear(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		year     int
+		input    SearchInput
+		selectID bool
+	}{
+		{
+			name:     "exact alternate",
+			year:     2024,
+			input:    SearchInput{UntouchedFilename: "雪.aka.Hidden.Tide.2024.1080p.WEB-DL-GRP.mkv", Category: "MOVIE"},
+			selectID: true,
+		},
+		{
+			name:  "wrong-year alternate",
+			year:  1980,
+			input: SearchInput{UntouchedFilename: "雪.aka.Hidden.Tide.2024.1080p.WEB-DL-GRP.mkv", Category: "MOVIE"},
+		},
+		{
+			name: "subtitle discovery",
+			year: 2024,
+			input: SearchInput{
+				Filename:   "雪",
+				Subtitle:   "Hidden Tide",
+				SearchYear: 2024,
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request graphQLRequest
+				var err error
+				if r.Method == http.MethodGet {
+					err = json.Unmarshal([]byte(r.URL.Query().Get("variables")), &request.Variables)
+				} else {
+					err = json.NewDecoder(r.Body).Decode(&request)
+				}
+				if err != nil {
+					t.Error(err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				edges := "[]"
+				if getStringFromMap(request.Variables, "constraints", "titleTextConstraint", "searchTerm") == "Hidden Tide" {
+					edges = fmt.Sprintf(`[{"node":{"title":{"id":"tt0555001","titleText":{"text":"Hidden Tide"},"releaseYear":{"year":%d},`+
+						`"titleType":{"text":"Movie"}}}}]`, test.year)
+				}
+				_, _ = fmt.Fprintf(w, `{"data":{"advancedTitleSearch":{"edges":%s}}}`, edges)
+			}))
+			defer server.Close()
+			client := NewClient(server.Client(), nil)
+			client.baseURL = server.URL
+			result, err := client.Search(t.Context(), test.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.selectID {
+				if result.IMDbID != 555001 || !result.AutoSelected {
+					t.Fatalf("exact alternate and year should select IMDb ID: %+v", result)
+				}
+			} else if result.IMDbID != 0 || !result.Tentative || len(result.Candidates) != 1 {
+				t.Fatalf("discovery-only result must remain tentative: %+v", result)
+			}
+		})
 	}
 }
 

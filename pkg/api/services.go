@@ -2705,7 +2705,7 @@ type TVDBNameDisambiguation struct {
 type TVDBMetadata struct {
 	RemoteLinks     TVDBRemoteLinks
 	TVDBID          int
-	Name            string
+	Name            string // The title from the primary series record.
 	NameEnglish     string
 	Overview        string
 	OverviewEnglish string

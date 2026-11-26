@@ -111,10 +111,9 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 
 	info.Year = getInt(titleData, "releaseYear", "year")
 	info.EndYear = getInt(titleData, "releaseYear", "endYear")
-	originalTitle := getString(titleData, "originalTitleText", "text")
-	if originalTitle != "" && originalTitle != info.Title {
-		info.AKA = originalTitle
-	} else {
+	info.AKA = getString(titleData, "originalTitleText", "text")
+	isOriginalTitle, _ := getMap(titleData, "titleText")["isOriginalTitle"].(bool)
+	if info.AKA == "" && isOriginalTitle {
 		info.AKA = info.Title
 	}
 	info.Type = getString(titleData, "titleType", "id")
@@ -332,7 +331,9 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 	}
 
 	searchYear := input.SearchYear
-	secondary := strings.TrimSpace(input.SecondaryTitle)
+	alternate := strings.TrimSpace(input.AlternateTitle)
+	subtitle := strings.TrimSpace(input.Subtitle)
+	secondary := metautil.FirstNonEmpty(alternate, subtitle)
 	parsedTitle := strings.TrimSpace(input.ParsedTitle)
 	if parsedTitle == "" {
 		parsedTitle = fallbackParsedTitle(input.UntouchedFilename)
@@ -352,7 +353,7 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 	if len(results) == 0 {
 		results = run(filename, searchYear, false)
 	}
-	if len(results) == 0 && secondary != "" {
+	if len(results) == 0 && secondary != "" && !strings.EqualFold(secondary, filename) {
 		results = run(secondary, searchYear, true)
 	}
 	if len(results) == 0 {
@@ -402,7 +403,11 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 	}
 
 	if len(results) > 0 {
-		candidates := rankCandidates(results, filename, searchYear)
+		primary := filename
+		if input.ParsedTitle == "" && strings.EqualFold(primary, subtitle) {
+			primary = ""
+		}
+		candidates := rankCandidates(results, primary, alternate, searchYear)
 		if len(candidates) == 0 {
 			return SearchResult{}, nil
 		}
@@ -440,23 +445,14 @@ func applyReleaseHints(input SearchInput) SearchInput {
 	}
 	release := metautil.ParseRelease(base)
 
-	mainTitle := release.Title
-	secondaryTitle := release.Alt
-	if mainTitle == "" {
-		mainTitle = release.Subtitle
+	if title := metautil.FirstNonEmpty(release.Title, release.Subtitle); title != "" {
+		input.Filename = title
 	}
-	if secondaryTitle == "" {
-		secondaryTitle = release.Subtitle
+	if release.Alt != "" && !strings.EqualFold(release.Alt, release.Title) {
+		input.AlternateTitle = release.Alt
 	}
-	if mainTitle != "" && secondaryTitle == mainTitle {
-		secondaryTitle = ""
-	}
-
-	if mainTitle != "" {
-		input.Filename = mainTitle
-	}
-	if secondaryTitle != "" {
-		input.SecondaryTitle = secondaryTitle
+	if release.Subtitle != "" {
+		input.Subtitle = release.Subtitle
 	}
 	if strings.TrimSpace(input.Category) == "" && release.Category != "" {
 		input.Category = release.Category
@@ -465,7 +461,7 @@ func applyReleaseHints(input SearchInput) SearchInput {
 		input.SearchYear = release.Year
 	}
 	if strings.TrimSpace(input.ParsedTitle) == "" {
-		input.ParsedTitle = mainTitle
+		input.ParsedTitle = release.Title
 	}
 	return input
 }
@@ -802,8 +798,9 @@ func collectCredits(data map[string]any, keyword string) []Person {
 	return nil
 }
 
-func rankCandidates(results []map[string]any, filename string, searchYear int) []Candidate {
-	filenameNorm := strings.ToLower(strings.TrimSpace(filename))
+func rankCandidates(results []map[string]any, primary, alternate string, searchYear int) []Candidate {
+	primary = strings.ToLower(strings.TrimSpace(primary))
+	alternate = strings.ToLower(strings.TrimSpace(alternate))
 	searchYearInt := searchYear
 	candidates := make([]Candidate, 0, len(results))
 
@@ -815,7 +812,11 @@ func rankCandidates(results []map[string]any, filename string, searchYear int) [
 		imdbID := metautil.ParseIMDbNumeric(getStringFromMap(title, "id"))
 		plot := getStringFromMap(title, "plot", "plotText", "plainText")
 		posterURL := getStringFromMap(title, "primaryImage", "url")
-		similarity := metautil.SimilarityRatio(filenameNorm, strings.ToLower(strings.TrimSpace(text)))
+		titleNorm := strings.ToLower(strings.TrimSpace(text))
+		similarity := metautil.SimilarityRatio(primary, titleNorm)
+		if alternate != "" && (searchYearInt == 0 || (year > 0 && metautil.AbsInt(year-searchYearInt) <= 1)) {
+			similarity = max(similarity, metautil.SimilarityRatio(alternate, titleNorm))
+		}
 		confidenceScore := similarity
 		if similarity >= 0.99 && searchYearInt > 0 && year > 0 {
 			switch year {

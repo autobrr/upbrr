@@ -383,9 +383,6 @@ func (c *Client) GetSeriesMetadataWithLanguage(ctx context.Context, seriesID int
 	metadata.SeriesYearConfidence = seriesMeta.yearConfidence
 	metadata.Year = selectedTVDBSeriesYear(resp.Data, seriesMeta)
 
-	if metadata.Name == "" && len(resp.Data.Aliases) > 0 {
-		metadata.Name = strings.TrimSpace(resp.Data.Aliases[0].Name)
-	}
 	if !isEnglishCode(metadata.OriginalLanguage) {
 		needsEnglishName := strings.TrimSpace(metadata.NameEnglish) == "" && containsEnglishTranslation(resp.Data.NameTranslations)
 		needsEnglishOverview := strings.TrimSpace(metadata.OverviewEnglish) == "" && containsEnglishTranslation(resp.Data.OverviewTranslations)

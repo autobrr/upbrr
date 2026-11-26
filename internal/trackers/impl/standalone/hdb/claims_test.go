@@ -351,6 +351,10 @@ func TestHDBClaimsUseCanonicalTitlesAndProviderOverrides(t *testing.T) {
 	if err != nil || !claimed {
 		t.Fatalf("provider override match = %t, %v", claimed, err)
 	}
+	meta.ProviderMetadata.TVDB = &api.TVDBMetadata{NameEnglish: "Different Canonical Title", Aliases: []string{"Harbor Watch"}}
+	if claimed, err := checker.HasClaim(t.Context(), meta); err != nil || !claimed {
+		t.Fatalf("retained TVDB display-name match = %t, %v", claimed, err)
+	}
 	meta.ProviderMetadata.TVDB = nil
 	meta.AlternateTitle = "AKA Harbour Watch (US)"
 	claimed, err = checker.HasClaim(t.Context(), meta)

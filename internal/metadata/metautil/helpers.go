@@ -8,12 +8,15 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/autobrr/rls"
 	"github.com/autobrr/rls/taginfo"
+	"golang.org/x/text/unicode/norm"
 
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/providerid"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // ParsedRelease is the subset of basename parser output used by metadata
@@ -45,6 +48,7 @@ func ParseRelease(filename string) ParsedRelease {
 }
 
 var releaseSeasonTokenPattern = regexp.MustCompile(`(?i)^(?:s(?:eason|eries)?[ ._-]*(\d+)|(\d+)x)`)
+var releaseAKAMarker = regexp.MustCompile(`(?i) aka `)
 var releaseTagBuilder = rls.NewTagBuilder().Init(taginfo.All())
 
 // ParseReleaseTokens parses source-name text with RLS. X-separated pairs and
@@ -61,7 +65,78 @@ func ParseReleaseTokens(name string) rls.Release {
 			tags[i] = tag.As(rls.TagTypeText, nil)
 		}
 	}
-	return releaseTagBuilder.Build(tags, end)
+	release := releaseTagBuilder.Build(tags, end)
+	if release.Alt == "" && (release.Type == rls.Movie || release.Type == rls.Series || release.Type == rls.Episode) {
+		parts := releaseAKAMarker.Split(release.Title, -1)
+		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			release.Title, release.Alt = parts[0], parts[1]
+		}
+	}
+	return release
+}
+
+// TrimAKAPrefix removes a standalone AKA marker preceding an alternate title.
+func TrimAKAPrefix(title string) string {
+	title = strings.TrimSpace(title)
+	if split := strings.IndexFunc(title, unicode.IsSpace); split >= 0 && strings.EqualFold(title[:split], "AKA") {
+		return strings.TrimSpace(title[split:])
+	}
+	return title
+}
+
+// FormatAKA renders a non-empty alternate title with an AKA marker.
+func FormatAKA(title string) string {
+	return FormatOriginalAKA(TrimAKAPrefix(title))
+}
+
+// FormatOriginalAKA adds an AKA marker to raw title evidence.
+func FormatOriginalAKA(title string) string {
+	if title = strings.TrimSpace(title); title != "" {
+		return "AKA " + title
+	}
+	return ""
+}
+
+// TitleIdentityKey compares titles across punctuation and spacing differences.
+func TitleIdentityKey(title string) string {
+	var key strings.Builder
+	for _, r := range norm.NFC.String(title) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			key.WriteRune(unicode.ToLower(r))
+		}
+	}
+	return key.String()
+}
+
+// DistinctTitle reports whether an alternate is sufficiently different from the primary.
+func DistinctTitle(primary, alternate string) bool {
+	return strings.TrimSpace(alternate) != "" && !strings.EqualFold(strings.TrimSpace(primary), strings.TrimSpace(alternate)) &&
+		SimilarityRatio(TitleIdentityKey(primary), TitleIdentityKey(alternate)) < 0.7
+}
+
+// AnimeRomanizedTitle selects raw romanization bound to the effective MAL and TMDB IDs.
+// The caller verifies the provider metadata's source and any published generation.
+func AnimeRomanizedTitle(identity api.ExternalIdentity, metadata api.SourceScopedMetadata) string {
+	tmdb := metadata.TMDB
+	if identity.MALID <= 0 || identity.Overrides.MAL == api.OverrideStateClear ||
+		tmdb == nil || identity.TMDBID <= 0 || tmdb.TMDBID != identity.TMDBID {
+		return ""
+	}
+	category, err := api.NormalizeCanonicalCategory(string(identity.Category))
+	tmdbCategory, tmdbErr := api.NormalizeCanonicalCategory(tmdb.Category)
+	if err != nil || tmdbErr != nil || category != api.CanonicalCategoryUnknown && tmdbCategory != category {
+		return ""
+	}
+	retained := ""
+	if tmdb.MALID == identity.MALID {
+		retained = TrimAKAPrefix(tmdb.RetrievedAKA)
+	}
+	if anilist := metadata.AniList; anilist != nil && anilist.MALID == identity.MALID &&
+		(identity.Overrides.MAL == api.OverrideStateValue ||
+			tmdb.Anime && retained == "" && (tmdb.MALID == 0 || tmdb.MALID == identity.MALID)) {
+		return TrimTrailingParentheticalYear(FirstNonEmptyTrimmed(anilist.TitleRomaji, retained), tmdb.Year)
+	}
+	return retained
 }
 
 // NormalizeIMDbID adds the tt prefix and seven-digit padding to numeric IDs.

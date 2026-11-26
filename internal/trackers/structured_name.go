@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -481,6 +482,8 @@ func resolveStructuredNames(input ReleaseNameInput, binding ReleaseNamePolicyBin
 		if err := editor.Omit(api.NameRoleEpisodeTitle); err != nil {
 			return ResolvedReleaseNames{}, err
 		}
+	} else {
+		restoreGeneratedEpisodeTitle(document, editor.document)
 	}
 	if policy.Defaults != nil {
 		if err := policy.Defaults(editor, subject, input.TrackerConfig); err != nil {
@@ -496,6 +499,7 @@ func resolveStructuredNames(input ReleaseNameInput, binding ReleaseNamePolicyBin
 			return ResolvedReleaseNames{}, err
 		}
 	}
+	omitRepeatedEpisodeTitle(editor.document)
 	if err := editor.document.Validate(); err != nil {
 		return ResolvedReleaseNames{}, fmt.Errorf("tracker name: %w", err)
 	}
@@ -508,6 +512,42 @@ func resolveStructuredNames(input ReleaseNameInput, binding ReleaseNamePolicyBin
 		resolved.Duplicate = policy.Search(searchSubject, input.TrackerConfig)
 	}
 	return resolved, nil
+}
+
+func restoreGeneratedEpisodeTitle(original, projected *api.ReleaseNameDocument) {
+	episode, ok := original.Component(api.NameRoleEpisodeTitle)
+	if ok && !episode.Present && !episode.Manual && episodeTitleRepeatsDocument(original, episode.Value) {
+		for i := range projected.Components {
+			if projected.Components[i].Role == api.NameRoleEpisodeTitle {
+				projected.Components[i].Present = true
+				return
+			}
+		}
+	}
+}
+
+func omitRepeatedEpisodeTitle(document *api.ReleaseNameDocument) {
+	for i := range document.Components {
+		component := &document.Components[i]
+		if component.Role == api.NameRoleEpisodeTitle && component.Present && !component.Manual {
+			component.Present = !episodeTitleRepeatsDocument(document, component.Value)
+			return
+		}
+	}
+}
+
+func episodeTitleRepeatsDocument(document *api.ReleaseNameDocument, episode string) bool {
+	number, _ := document.Component(api.NameRoleEpisode)
+	dailyDate, _ := document.Component(api.NameRoleDailyDate)
+	if number.Value == "" || dailyDate.Present {
+		return false
+	}
+	title, _ := document.Component(api.NameRoleTitle)
+	alternate, _ := document.Component(api.NameRoleAlternateTitle)
+	if !alternate.Present {
+		alternate.Value = ""
+	}
+	return title.Present && metautil.EpisodeTitleRepeatsName(episode, title.Value, alternate.Value)
 }
 
 func applyStructuredMovieYear(document *api.ReleaseNameDocument, subject api.UploadSubject, provider api.IdentityProvider) {

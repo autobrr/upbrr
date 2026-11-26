@@ -113,6 +113,9 @@ func TestFetchMetadataUsesGermanDetailFallbackWhenTranslationsFail(t *testing.T)
 	if got := result.LocalizedTitles["de"]; got != "Deutscher Titel" {
 		t.Fatalf("expected german localized title fallback, got %q", got)
 	}
+	if result.OriginalTitle != "Original English" {
+		t.Fatalf("verified original matching the display title was lost: %q", result.OriginalTitle)
+	}
 }
 
 func TestFetchMetadataRetriesLogoAfterArtworkFailure(t *testing.T) {
@@ -148,6 +151,9 @@ func TestFetchMetadataRetriesLogoAfterArtworkFailure(t *testing.T) {
 	}
 	if first.Logo != "" || first.LogoLookupAttempted {
 		t.Fatalf("failed artwork lookup must remain retryable, got %#v", first)
+	}
+	if first.Title != "Example Movie" || first.OriginalTitle != "" {
+		t.Fatalf("display title = %q, original = %q, want display title only", first.Title, first.OriginalTitle)
 	}
 	second, err := client.FetchMetadata(t.Context(), input)
 	if err != nil {
@@ -537,7 +543,8 @@ func TestFetchMetadataResolvesAnimeAKA(t *testing.T) {
 	anilist := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		anilistRequested.Store(true)
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"data":{"Page":{"media":[{"id":1,"idMal":67890,"title":{"romaji":"Rei No Sakuhin","english":"Example Anime Series","native":"サンプル作品"},"seasonYear":2026,"episodes":12}]}}}`))
+		_, _ = w.Write([]byte(`{"data":{"Page":{"media":[{"id":1,"idMal":67890,"title":{"romaji":"Rei No Sakuhin (2026)",` +
+			`"english":"Example Anime Series","native":"サンプル作品"},"seasonYear":2026,"episodes":12}]}}}`))
 	}))
 	defer anilist.Close()
 

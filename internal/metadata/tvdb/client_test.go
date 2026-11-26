@@ -1403,7 +1403,7 @@ func TestGetSeriesMetadataWithLanguageDerivesEnglishFromAlias(t *testing.T) {
 			_, _ = w.Write([]byte(`{"data":{"token":"token"}}`))
 		case "/series/411800/extended":
 			requestedLang = r.URL.Query().Get("lang")
-			_, _ = w.Write([]byte(`{"data":{"id":411800,"name":"アークナイツ","overview":"日本語概要","originalLanguage":"jpn","nameTranslations":["jpn","eng"],"overviewTranslations":["jpn","eng"],"aliases":[{"language":"eng","name":"Arknights [PRELUDE TO DAWN]"},{"language":"eng","name":"Arknights: Prelude to Dawn"}]}}`))
+			_, _ = w.Write([]byte(`{"data":{"id":411800,"overview":"元の概要","originalLanguage":"jpn","nameTranslations":["jpn","eng"],"overviewTranslations":["jpn","eng"],"aliases":[{"language":"eng","name":"Dawn Over the Sea [TV]"},{"language":"eng","name":"Dawn Over the Sea"}]}}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -1420,8 +1420,8 @@ func TestGetSeriesMetadataWithLanguageDerivesEnglishFromAlias(t *testing.T) {
 	if requestedLang != "" {
 		t.Fatalf("expected lang none request, got %q", requestedLang)
 	}
-	if metadata.NameEnglish != "Arknights: Prelude to Dawn" {
-		t.Fatalf("expected clean english alias selection, got %q", metadata.NameEnglish)
+	if metadata.NameEnglish != "Dawn Over the Sea" || metadata.Name != "" {
+		t.Fatalf("English title = %q, original = %q, want clean English alias with no original", metadata.NameEnglish, metadata.Name)
 	}
 	if metadata.OverviewEnglish != "" {
 		t.Fatalf("expected empty english overview when not present, got %q", metadata.OverviewEnglish)

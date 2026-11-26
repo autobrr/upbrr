@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -64,13 +65,29 @@ func applyBHDNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _
 // applyBHDNameQualifiers keeps IMDb title and movie-year selection in the central
 // policy and uses current TVDB evidence only for automatic TV year inclusion.
 func applyBHDNameQualifiers(editor *trackers.NameEditor, meta api.UploadSubject) error {
-	if alternate := bhdAlternateTitle(meta); alternate == "" {
+	// Finalize year first so title qualifiers are compared using the year BHD will render.
+	if err := applyBHDNameYear(editor, meta); err != nil {
+		return err
+	}
+	title, _ := editor.Component(api.NameRoleTitle)
+	component, _ := editor.Component(api.NameRoleAlternateTitle)
+	yearComponent, _ := editor.Component(api.NameRoleYear)
+	year, _ := strconv.Atoi(metautil.FirstNonEmptyTrimmed(yearComponent.Value, yearComponent.AvailableValue))
+	if alternate := bhdAlternateTitle(meta, title.Value, year); alternate == "" {
 		if err := editor.Omit(api.NameRoleAlternateTitle); err != nil {
 			return bhdNameEditorError("omit alternate title", err)
 		}
-	} else if err := editor.Set(api.NameRoleAlternateTitle, "AKA "+alternate); err != nil {
+	} else if component.Present {
+		if err := editor.Set(api.NameRoleAlternateTitle, alternate); err != nil {
+			return bhdNameEditorError("set alternate title", err)
+		}
+	} else if err := editor.InsertAfter(api.NameRoleAlternateTitle, alternate, api.NameRoleTitle); err != nil {
 		return bhdNameEditorError("set alternate title", err)
 	}
+	return nil
+}
+
+func applyBHDNameYear(editor *trackers.NameEditor, meta api.UploadSubject) error {
 	if !isBHDTV(meta) || meta.EffectiveMetadata.YearProvenance.IsManual() {
 		return nil
 	}
@@ -96,19 +113,16 @@ func applyBHDNameQualifiers(editor *trackers.NameEditor, meta api.UploadSubject)
 	return nil
 }
 
-func bhdAlternateTitle(meta api.UploadSubject) string {
+func bhdAlternateTitle(meta api.UploadSubject, primary string, year int) string {
 	if meta.NamePresentation.Version == api.ReleaseNamePresentationVersionV1 && meta.NamePresentation.OmitAlternateTitle {
 		return ""
 	}
-	return trimBHDAKAPrefix(trackers.PreferredAlternateTitle(meta, meta.AlternateTitle))
-}
-
-func trimBHDAKAPrefix(value string) string {
-	value = strings.TrimSpace(value)
-	if len(value) > len("AKA ") && strings.EqualFold(value[:len("AKA ")], "AKA ") {
-		return strings.TrimSpace(value[len("AKA "):])
+	if !meta.EffectiveMetadata.AlternateTitleProvenance.IsManual() {
+		if original := trackers.DistinctProviderAlternateTitle(meta, primary, year); original != "" {
+			return metautil.FormatOriginalAKA(original)
+		}
 	}
-	return value
+	return metautil.FormatAKA(meta.EffectiveMetadata.PreferredAlternateTitle(strings.TrimSpace(meta.AlternateTitle)))
 }
 
 func isBHDTV(meta api.UploadSubject) bool {

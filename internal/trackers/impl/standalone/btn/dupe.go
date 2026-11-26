@@ -437,7 +437,7 @@ func searchTitle(meta api.DuplicateSubject) string {
 		candidates = append(candidates, dupe.ProjectedSearchName(meta))
 	}
 	if meta.ProviderMetadata.TVDB != nil {
-		candidates = append(candidates, strings.TrimSpace(meta.ProviderMetadata.TVDB.Name), strings.TrimSpace(meta.ProviderMetadata.TVDB.NameEnglish))
+		candidates = append(candidates, meta.ProviderMetadata.TVDB.DisplayName())
 	}
 	if meta.ProviderMetadata.TVmaze != nil {
 		candidates = append(candidates, strings.TrimSpace(meta.ProviderMetadata.TVmaze.Name))

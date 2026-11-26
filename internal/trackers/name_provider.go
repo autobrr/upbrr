@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -46,7 +47,85 @@ func applyTitleProvider(editor *NameEditor, subject api.UploadSubject, provider 
 			Reason: fmt.Sprintf("current matching %s title and generated title component are required; refresh metadata and reprepare the release", provider),
 		}
 	}
-	return editor.Set(api.NameRoleTitle, title)
+	if err := editor.Set(api.NameRoleTitle, title); err != nil {
+		return err
+	}
+	if subject.NamePresentation.OmitAlternateTitle || subject.EffectiveMetadata.AlternateTitleProvenance.IsManual() {
+		return nil
+	}
+	alternate, _ := editor.Component(api.NameRoleAlternateTitle)
+	year := providerNameTVYear(editor, subject)
+	if alternate.Manual || (alternate.Present && distinctAutomaticTitle(title, metautil.TrimAKAPrefix(alternate.Value), year)) {
+		return nil
+	}
+	// Recover a former primary only when a current provider corroborates it as an original.
+	for _, original := range currentProviderOriginalTitles(subject) {
+		if !sameAutomaticTitle(component.Value, original, year) || !distinctAutomaticTitle(title, original, year) {
+			continue
+		}
+		value := metautil.FormatOriginalAKA(metautil.TrimTrailingParentheticalYear(original, year))
+		if alternate.Present {
+			return editor.Set(api.NameRoleAlternateTitle, value)
+		}
+		return editor.InsertAfter(api.NameRoleAlternateTitle, value, api.NameRoleTitle)
+	}
+	return nil
+}
+
+// DistinctProviderAlternateTitle returns a bound original or anime romanization that differs from the primary.
+func DistinctProviderAlternateTitle(subject api.UploadSubject, primary string, year int) string {
+	originals := currentProviderOriginalTitles(subject)
+	romaji := ""
+	if currentNameProviderMetadata(subject) {
+		romaji = metautil.AnimeRomanizedTitle(subject.Identity, subject.ProviderMetadata)
+	}
+	for _, original := range []string{originals[0], romaji, originals[1], originals[2]} {
+		if distinctAutomaticTitle(primary, original, year) {
+			return metautil.TrimTrailingParentheticalYear(original, year)
+		}
+	}
+	return ""
+}
+
+func currentProviderOriginalTitles(subject api.UploadSubject) [3]string {
+	var titles [3]string
+	if !currentNameProviderMetadata(subject) {
+		return titles
+	}
+	metadata := subject.ProviderMetadata
+	if imdb := metadata.IMDB; imdb != nil && subject.Identity.IMDBID > 0 && imdb.IMDBID == subject.Identity.IMDBID {
+		titles[0] = imdb.AKA
+	}
+	if tmdb := metadata.TMDB; tmdb != nil && subject.Identity.TMDBID > 0 && tmdb.TMDBID == subject.Identity.TMDBID {
+		if category, err := api.NormalizeCanonicalCategory(tmdb.Category); err == nil && category == subject.Identity.Category {
+			titles[1] = tmdb.OriginalTitle
+		}
+	}
+	if subject.Identity.Category == api.CanonicalCategoryTV && metadata.TVDBNamingAvailable(subject.SourcePath, subject.Identity) {
+		tvdb := metadata.TVDB
+		if tvdb.OriginalLanguage != "" && !languageutil.SameLanguage(tvdb.OriginalLanguage, "en") {
+			titles[2] = tvdb.Name
+		}
+	}
+	return titles
+}
+
+func distinctAutomaticTitle(primary, alternate string, year int) bool {
+	return metautil.DistinctTitle(metautil.TrimTrailingParentheticalYear(primary, year), metautil.TrimTrailingParentheticalYear(alternate, year))
+}
+
+func sameAutomaticTitle(primary, alternate string, year int) bool {
+	primaryKey := metautil.TitleIdentityKey(metautil.TrimTrailingParentheticalYear(primary, year))
+	return primaryKey != "" && primaryKey == metautil.TitleIdentityKey(metautil.TrimTrailingParentheticalYear(alternate, year))
+}
+
+func providerNameTVYear(editor *NameEditor, subject api.UploadSubject) int {
+	if subject.Identity.Category != api.CanonicalCategoryTV {
+		return 0
+	}
+	component, _ := editor.Component(api.NameRoleYear)
+	year, _ := strconv.Atoi(firstProjectionValue(component.Value, component.AvailableValue))
+	return year
 }
 
 // normalizeProviderName keeps canonical title formatting after provider and
@@ -56,10 +135,8 @@ func normalizeProviderName(editor *NameEditor, subject api.UploadSubject, provid
 	if provider == "" || !ok || !title.Present || title.Manual || subject.EffectiveMetadata.TitleProvenance.IsManual() {
 		return nil
 	}
-	year := 0
+	year := providerNameTVYear(editor, subject)
 	if subject.Identity.Category == api.CanonicalCategoryTV {
-		component, _ := editor.Component(api.NameRoleYear)
-		year, _ = strconv.Atoi(firstProjectionValue(component.Value, component.AvailableValue))
 		title.Value = metautil.TrimTrailingParentheticalYear(title.Value, year)
 		if err := editor.Set(api.NameRoleTitle, title.Value); err != nil {
 			return err
@@ -69,12 +146,7 @@ func normalizeProviderName(editor *NameEditor, subject api.UploadSubject, provid
 	if !ok || !alternate.Present || alternate.Manual || subject.EffectiveMetadata.AlternateTitleProvenance.IsManual() {
 		return nil
 	}
-	words := strings.Fields(alternate.Value)
-	if len(words) > 0 && strings.EqualFold(words[0], "AKA") {
-		words = words[1:]
-	}
-	alternateTitle := metautil.TrimTrailingParentheticalYear(strings.Join(words, " "), year)
-	if strings.EqualFold(alternateTitle, strings.Join(strings.Fields(title.Value), " ")) {
+	if !distinctAutomaticTitle(title.Value, metautil.TrimAKAPrefix(alternate.Value), year) {
 		return editor.Omit(api.NameRoleAlternateTitle)
 	}
 	return nil
@@ -98,6 +170,8 @@ func applyLegacyTitleProvider(subject api.UploadSubject, requested *string, bind
 	if err := normalizeProviderName(editor, subject, binding.TitleProvider); err != nil {
 		return api.UploadSubject{}, err
 	}
+	restoreGeneratedEpisodeTitle(subject.GeneratedName, editor.document)
+	omitRepeatedEpisodeTitle(editor.document)
 	subject.GeneratedName = editor.document
 	title, _ := editor.Component(api.NameRoleTitle)
 	subject.Release.Title = title.Value

@@ -1045,7 +1045,7 @@ func releaseNameComponentIndex(document *api.ReleaseNameDocument, role api.Relea
 func releaseNameRoleIsManual(role api.ReleaseNameRole, overrides api.ReleaseNameOverrides) bool {
 	switch role {
 	case api.NameRoleAlternateTitle:
-		return overrides.NoAKA != nil
+		return overrides.NoAKA != nil && *overrides.NoAKA
 	case api.NameRoleYear:
 		return overrides.ManualYear != nil || overrides.NoYear != nil
 	case api.NameRoleSeason:
