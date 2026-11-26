@@ -665,11 +665,18 @@ func TestComparisonMainColumnIsTheOnlyReusableScreenshot(t *testing.T) {
 		media := snapshot
 		media.ImageRequirementsPrepared = true
 		refreshMutatedMediaStatus(&media, mixed, mixed)
-		if media.Status != api.StageStatusBlocked {
-			t.Fatal("a hosted comparison satisfied the local screenshot minimum")
+		if media.Status != api.StageStatusCompleted {
+			t.Fatal("reviewed local main-column image did not satisfy the local screenshot minimum")
 		}
 
-		media.Artifacts = append(slices.Clone(snapshot.Artifacts), api.MediaArtifact{
+		media.Artifacts = slices.Clone(snapshot.Artifacts)
+		media.Artifacts[1].SourceUnavailable = true
+		refreshMutatedMediaStatus(&media, mixed, mixed)
+		if media.Status != api.StageStatusBlocked {
+			t.Fatal("an unavailable main-column image or another comparison column satisfied the local minimum")
+		}
+
+		media.Artifacts = append(media.Artifacts, api.MediaArtifact{
 			ID:       "local-screenshot",
 			Kind:     api.MediaArtifactScreenshot,
 			Purpose:  api.ScreenshotPurposeFinal,

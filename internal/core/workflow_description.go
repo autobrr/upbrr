@@ -426,6 +426,7 @@ func resolveWorkflowExactMedia(
 	sourceKinds := make(map[api.PublicResourceID]api.MediaArtifactKind)
 	sourceOrders := make(map[api.PublicResourceID]int)
 	selectedSources := make(map[api.PublicResourceID]struct{})
+	unavailableComparisonImages := make(map[api.PublicResourceID]bool)
 	screenshotIndex, menuIndex := 0, 0
 	for _, artifact := range media.Artifacts {
 		switch artifact.Kind {
@@ -464,6 +465,9 @@ func resolveWorkflowExactMedia(
 			if !exists || artifact.Purpose != api.ScreenshotPurposeComparison || image.Purpose != api.ScreenshotPurposeComparison {
 				return nil, errors.New("workflow exact media: comparison image has invalid purpose or content")
 			}
+			if artifact.SourceUnavailable {
+				unavailableComparisonImages[artifact.ID] = true
+			}
 			sourceKinds[artifact.ID] = artifact.Kind
 			sourceOrders[artifact.ID] = artifact.Order
 			if artifact.Selected {
@@ -497,6 +501,7 @@ func resolveWorkflowExactMedia(
 				if media.Comparisons.ReuseMainScreenshots && cell.SourceID == media.Comparisons.MainSourceID {
 					mainComparisonImages[cell.ArtifactID] = true
 					image.Purpose = api.ScreenshotPurposeFinal
+					image.SourceUnavailable = unavailableComparisonImages[cell.ArtifactID]
 					exact.Screenshots = append(exact.Screenshots, image)
 				}
 			}

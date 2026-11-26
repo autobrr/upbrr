@@ -14,6 +14,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
@@ -25,9 +26,10 @@ import (
 )
 
 const (
-	ascUploadPath     = "/torrents"
-	ascUploadFormPath = "/torrents/upload"
-	ascScreenshotPath = "/torrents/screenshots"
+	ascUploadPath        = "/torrents"
+	ascUploadFormPath    = "/torrents/upload"
+	ascScreenshotPath    = "/torrents/screenshots"
+	ascStatusPageExpired = 419 // Laravel's CSRF middleware response.
 )
 
 var ascRegisteredPath = regexp.MustCompile(`^/torrents/([1-9][0-9]*)/?$`)
@@ -58,9 +60,13 @@ func submitASC(
 	result, err := postASCForm(ctx, session, ascUploadPath, finalFields, files)
 	location := ascSubmitRedirect(result)
 	if match := ascRegisteredPath.FindStringSubmatch(location); match != nil {
-		return finishASCSubmission(ctx, session, match[1], artifactPath), nil
+		var submitted []byte
+		if index := slices.IndexFunc(files, func(file commonhttp.FileField) bool { return file.FieldName == "torrent" }); index >= 0 {
+			submitted = files[index].Content
+		}
+		return finishASCSubmission(ctx, session, match[1], artifactPath, submitted), nil
 	}
-	if strings.TrimSuffix(location, "/") == "/login" || ascValidationRejected(result) {
+	if strings.TrimSuffix(location, "/") == "/login" || ascResponseRejected(result) {
 		return api.UploadSummary{}, submission.NewError(submission.Rejected, fmt.Errorf("trackers: ASC rejected the upload (status %d)", result.StatusCode))
 	}
 	if err != nil {
@@ -187,24 +193,31 @@ func ascSubmitRedirect(result commonhttp.UploadExecution) string {
 	return target.EscapedPath()
 }
 
-func ascValidationRejected(result commonhttp.UploadExecution) bool {
-	if result.StatusCode != http.StatusUnprocessableEntity || !result.BodyComplete {
+func ascResponseRejected(result commonhttp.UploadExecution) bool {
+	if !result.BodyComplete {
 		return false
 	}
-	var validation struct {
-		Errors map[string][]string `json:"errors"`
+	switch result.StatusCode {
+	case http.StatusUnauthorized, ascStatusPageExpired:
+		return true
+	case http.StatusUnprocessableEntity:
+		var validation struct {
+			Errors map[string][]string `json:"errors"`
+		}
+		return json.Unmarshal(result.ProtocolBody, &validation) == nil && len(validation.Errors) > 0
+	default:
+		return false
 	}
-	return json.Unmarshal(result.ProtocolBody, &validation) == nil && len(validation.Errors) > 0
 }
 
-func finishASCSubmission(ctx context.Context, client *http.Client, id, artifactPath string) api.UploadSummary {
+func finishASCSubmission(ctx context.Context, client *http.Client, id, artifactPath string, submitted []byte) api.UploadSummary {
 	endpoint := siteURL + ascUploadPath + "/" + id
 	registeredPath := ""
 	if artifactPath != "" {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/download", nil)
 		if err == nil {
 			req.Header.Set("User-Agent", userAgent)
-			if trackers.DownloadRegisteredTorrent(ctx, client, req, artifactPath) == nil {
+			if trackers.DownloadMatchingRegisteredTorrent(ctx, client, req, artifactPath, submitted) == nil {
 				registeredPath = artifactPath
 			}
 		}

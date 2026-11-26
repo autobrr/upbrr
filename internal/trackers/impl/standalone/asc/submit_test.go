@@ -6,12 +6,17 @@ package asc
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
+	"testing/iotest"
+
+	"github.com/autobrr/go-torrent/bencode"
+	"github.com/autobrr/go-torrent/metainfo"
 
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/submission"
@@ -19,12 +24,20 @@ import (
 
 func TestSubmitASCUsesMigratedProtocol(t *testing.T) {
 	t.Parallel()
-	const registered = "d4:infod6:lengthi1e4:name9:fixture.x12:piece lengthi1e6:pieces20:01234567890123456789ee"
+	const root = "Synthetic Release"
+	member := metainfo.FileInfo{Path: []string{"video.mkv"}, Length: 1}
+	nested := metainfo.FileInfo{Path: []string{"Subs", "video.srt"}, Length: 1}
+	submitted := ascProtocolTorrent(t, root, "", member, nested)
+	// ASC may legitimately rewrite tracker-specific info fields.
+	registered := ascProtocolTorrent(t, root, "ASC", member, nested)
 	for _, tc := range []struct {
 		name, redirect string
 		want           submission.Outcome
+		finalStatus    int
+		incomplete     bool
 		failDownload   bool
 		failScreenshot bool
+		mismatched     []byte
 	}{
 		{
 			name:     "registered",
@@ -38,6 +51,30 @@ func TestSubmitASCUsesMigratedProtocol(t *testing.T) {
 			failDownload: true,
 		},
 		{
+			name:       "different registered root",
+			redirect:   "/torrents/42",
+			want:       submission.Accepted,
+			mismatched: ascProtocolTorrent(t, "Another Release", "ASC", member, nested),
+		},
+		{
+			name:       "different registered form",
+			redirect:   "/torrents/42",
+			want:       submission.Accepted,
+			mismatched: ascProtocolTorrent(t, root, "ASC"),
+		},
+		{
+			name:       "different registered member path",
+			redirect:   "/torrents/42",
+			want:       submission.Accepted,
+			mismatched: ascProtocolTorrent(t, root, "ASC", member, metainfo.FileInfo{Path: []string{"video.srt"}, Length: 1}),
+		},
+		{
+			name:       "different registered member length",
+			redirect:   "/torrents/42",
+			want:       submission.Accepted,
+			mismatched: ascProtocolTorrent(t, root, "ASC", member, metainfo.FileInfo{Path: nested.Path, Length: 2}),
+		},
+		{
 			name:     "foreign redirect",
 			redirect: "https://foreign.example/torrents/42",
 			want:     submission.Unknown,
@@ -47,6 +84,27 @@ func TestSubmitASCUsesMigratedProtocol(t *testing.T) {
 			redirect: "/login",
 			want:     submission.Rejected,
 		},
+		{
+name: "authentication rejected",
+ finalStatus: http.StatusUnauthorized,
+ want: submission.Rejected,
+},
+		{
+name: "CSRF rejected",
+ finalStatus: 419,
+ want: submission.Rejected,
+},
+		{
+name: "incomplete response",
+ finalStatus: 419,
+ incomplete: true,
+ want: submission.Unknown,
+},
+		{
+name: "ambiguous server error",
+ finalStatus: http.StatusBadGateway,
+ want: submission.Unknown,
+},
 		{
 			name:           "screenshot error",
 			want:           submission.NotSent,
@@ -95,14 +153,26 @@ func TestSubmitASCUsesMigratedProtocol(t *testing.T) {
 							!slices.Equal(r.MultipartForm.Value["screenshot_paths[]"], []string{"screenshots/synthetic.webp"}) {
 							t.Fatal("torrent submission missing file or stored screenshot path")
 						}
-						w.Header().Set("Location", tc.redirect)
-						w.WriteHeader(http.StatusFound)
+						if tc.finalStatus != 0 {
+							w.WriteHeader(tc.finalStatus)
+							_, _ = fmt.Fprint(w, `{"message":"Synthetic middleware response"}`)
+							if tc.incomplete {
+								resp := w.Result()
+								resp.Body = io.NopCloser(iotest.ErrReader(io.ErrUnexpectedEOF))
+								return resp, nil
+							}
+						} else {
+							w.Header().Set("Location", tc.redirect)
+							w.WriteHeader(http.StatusFound)
+						}
 					}
 				case "GET /torrents/42/download":
 					if tc.failDownload {
 						w.WriteHeader(http.StatusNotFound)
+					} else if tc.mismatched != nil {
+						_, _ = w.Write(tc.mismatched)
 					} else {
-						_, _ = fmt.Fprint(w, registered)
+						_, _ = w.Write(registered)
 					}
 				default:
 					t.Fatal("unexpected ASC request")
@@ -111,7 +181,7 @@ func TestSubmitASCUsesMigratedProtocol(t *testing.T) {
 			})}
 			output := filepath.Join(t.TempDir(), "registered.torrent")
 			result, err := submitASC(t.Context(), client, map[string]string{"amigos-share-club-session": "synthetic"}, nil,
-				[]commonhttp.FileField{{FieldName: "torrent", Content: []byte("synthetic torrent")}},
+				[]commonhttp.FileField{{FieldName: "torrent", Content: submitted}},
 				[]commonhttp.FileField{{FieldName: "image", Content: []byte("synthetic screenshot")}}, output)
 			if outcome := submission.OutcomeOf(err); outcome != tc.want {
 				t.Fatalf("outcome = %v, want %v: %v", outcome, tc.want, err)
@@ -125,11 +195,14 @@ func TestSubmitASCUsesMigratedProtocol(t *testing.T) {
 				if result.Uploaded != 1 || len(result.UploadedTorrents) != 1 || result.UploadedTorrents[0].TorrentID != "42" {
 					t.Fatal("missing registered torrent identity")
 				}
-				if tc.failDownload {
+				if tc.failDownload || tc.mismatched != nil {
 					if result.UploadedTorrents[0].TorrentPath != "" {
 						t.Fatal("should skip client injection without the registered file")
 					}
-				} else if payload, err := os.ReadFile(result.UploadedTorrents[0].TorrentPath); err != nil || !bytes.Equal(payload, []byte(registered)) {
+					if _, err := os.Stat(output); !os.IsNotExist(err) {
+						t.Fatalf("unexpected registered file: %v", err)
+					}
+				} else if payload, err := os.ReadFile(result.UploadedTorrents[0].TorrentPath); err != nil || !bytes.Equal(payload, registered) {
 					t.Fatal("registered torrent was not saved byte for byte")
 				}
 			}
@@ -138,4 +211,27 @@ func TestSubmitASCUsesMigratedProtocol(t *testing.T) {
 			}
 		})
 	}
+}
+
+func ascProtocolTorrent(t *testing.T, root, source string, files ...metainfo.FileInfo) []byte {
+	t.Helper()
+	info := metainfo.Info{
+Name: root,
+ Source: source,
+ PieceLength: 4,
+ Pieces: make([]byte, metainfo.HashSize),
+ Files: files,
+}
+	if len(files) == 0 {
+		info.Length = 2
+	}
+	encoded, err := bencode.Marshal(info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload bytes.Buffer
+	if err := (&metainfo.MetaInfo{InfoBytes: encoded}).Write(&payload); err != nil {
+		t.Fatal(err)
+	}
+	return payload.Bytes()
 }

@@ -108,6 +108,11 @@ func TestComparisonDescriptionProjectionRetainsCellIdentity(t *testing.T) {
 	for _, reuse := range []bool{false, true} {
 		t.Run(fmt.Sprintf("reuse=%t", reuse), func(t *testing.T) {
 			media, retained := testComparisonDescriptionMedia(t, reuse)
+			for index := range media.Artifacts {
+				if media.Artifacts[index].ID == "comparison-1-2" {
+					media.Artifacts[index].SourceUnavailable = true
+				}
+			}
 			exact, err := resolveWorkflowExactMedia(t.Context(), retained, media, config.ScreenshotHandlingConfig{})
 			if err != nil {
 				t.Fatal(err)
@@ -127,7 +132,8 @@ func TestComparisonDescriptionProjectionRetainsCellIdentity(t *testing.T) {
 				original := retained.ArtifactImages[id]
 				link := retained.HostedImages[api.PublicResourceID("hosted-"+string(id))]
 				if screenshot.Path != original.Path || screenshot.ContentSHA256 != original.ContentSHA256 ||
-					exact.ScreenshotUploads[index].RawURL != link.RawURL || screenshot.Purpose != api.ScreenshotPurposeFinal {
+					exact.ScreenshotUploads[index].RawURL != link.RawURL || screenshot.Purpose != api.ScreenshotPurposeFinal ||
+					screenshot.SourceUnavailable != (index == 0) {
 					t.Fatalf("main column acquired a different image/upload: %+v", screenshot)
 				}
 			}

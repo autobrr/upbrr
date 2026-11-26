@@ -89,13 +89,20 @@ func testConnection(ctx context.Context, input trackers.ConnectionProbeInput, cl
 	var payload struct {
 		Props struct {
 			Auth struct {
-				User struct {
-					ID int `json:"id"`
-				} `json:"user"`
+				User json.RawMessage `json:"user"`
 			} `json:"auth"`
 		} `json:"props"`
 	}
-	if err := json.Unmarshal([]byte(page), &payload); err != nil || payload.Props.Auth.User.ID <= 0 {
+	if err := json.Unmarshal([]byte(page), &payload); err != nil {
+		return connectiontest.UnexpectedResponse()
+	}
+	if string(payload.Props.Auth.User) == "null" {
+		return ascAuthenticationRequired()
+	}
+	var user struct {
+		ID int `json:"id"`
+	}
+	if err := json.Unmarshal(payload.Props.Auth.User, &user); err != nil || user.ID <= 0 {
 		return connectiontest.UnexpectedResponse()
 	}
 	return api.ConnectionTestResult{Code: "success", Message: "ASC returned its authenticated dashboard."}
@@ -130,10 +137,20 @@ func readSearchPage(ctx context.Context, client *http.Client, cookies map[string
 func readPageData(ctx context.Context, client *http.Client, cookies map[string]string, endpoint string) (string, api.ConnectionTestResult) {
 	readClient := *client
 	readClient.Jar = nil
-	readClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	var loginRedirect bool
+	readClient.CheckRedirect = func(next *http.Request, _ []*http.Request) error {
+		target := next.URL
+		port := target.Port()
+		loginRedirect = target.Scheme == "https" && strings.EqualFold(target.Hostname(), siteHost) &&
+			target.User == nil && (port == "" || port == "443") && target.EscapedPath() == "/login"
+		return http.ErrUseLastResponse
+	}
 	headers := connectiontest.CookieHeaders(cookies)
 	headers.Set("Accept", "text/html")
 	body, failure := connectiontest.Request(ctx, &readClient, http.MethodGet, endpoint, nil, headers)
+	if loginRedirect {
+		return "", ascAuthenticationRequired()
+	}
 	if failure.Code != "" {
 		return "", failure
 	}
@@ -149,4 +166,11 @@ func readPageData(ctx context.Context, client *http.Client, cookies map[string]s
 		return "", connectiontest.UnexpectedResponse()
 	}
 	return script.FirstChild.Data, api.ConnectionTestResult{}
+}
+
+func ascAuthenticationRequired() api.ConnectionTestResult {
+	return api.ConnectionTestResult{
+		Code:    "authentication_required",
+		Message: "ASC requires authentication. Import a current ASC session cookie.",
+	}
 }

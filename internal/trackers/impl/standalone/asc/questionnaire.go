@@ -29,7 +29,7 @@ func buildQuestionnaire(meta api.UploadSubject) *api.TrackerQuestionnaire {
 			Required: true,
 		})
 	}
-	if _, answered := answers["genre"]; genres == "" || answered {
+	if _, answered := answers["genre"]; len(resolveGenreIDs(genres)) == 0 || answered {
 		fields = append(fields, api.TrackerQuestionnaireField{
 			Key:         "genre",
 			Label:       "Gêneros",

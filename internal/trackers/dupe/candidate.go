@@ -30,6 +30,7 @@ type TrackerCandidate struct {
 	TrackerSlot      string
 	ID               string
 	Name             string
+	DisplayNameOnly  bool `json:",omitempty"`
 	Files            []string
 	FileCount        int
 	SizeBytes        int64
@@ -73,6 +74,7 @@ func NormalizeCandidate(entry api.DupeEntry, _ string) TrackerCandidate {
 		TrackerSlot:       entry.TrackerSlot,
 		ID:                strings.TrimSpace(entry.ID),
 		Name:              strings.TrimSpace(entry.Name),
+		DisplayNameOnly:   entry.DisplayNameOnly,
 		Files:             append([]string(nil), entry.Files...),
 		FileCount:         entry.FileCount,
 		SizeBytes:         entry.SizeBytes,

@@ -9,7 +9,9 @@ import (
 
 // DupeEntry is one backend adapter's private duplicate-search hit.
 type DupeEntry struct {
-	Evidence DupeReleaseEvidence
+	// DisplayNameOnly marks titles that can describe multiple distinct releases.
+	DisplayNameOnly bool `json:",omitempty"`
+	Evidence        DupeReleaseEvidence
 	// EnglishSubtitles records positive inspected subtitle-language evidence, never a title inference.
 	EnglishSubtitles      bool
 	EnglishSubtitlesKnown bool

@@ -62,7 +62,7 @@ func validatePayloadFields(meta api.UploadSubject, payload uploadPayload, screen
 	case strings.TrimSpace(fields["year"]) == "":
 		return "missing year"
 	case payload.qualityID == "":
-		return "release type has no ASC quality"
+		return "release type or source has no ASC quality"
 	case payload.containerID == "":
 		return "missing container"
 	case strings.TrimSpace(resolveOverview(meta, standalone.QuestionnaireAnswers(meta, "ASC"))) == "":
@@ -103,7 +103,7 @@ func validateASCVideoNames(info metainfo.Info, mediaInfo, discType string) error
 			name = path[len(path)-1]
 		}
 		switch strings.ToLower(filepath.Ext(name)) {
-		case ".mkv", ".mp4", ".m4v", ".avi", ".ts", ".m2ts", ".mpg", ".mpeg", ".wmv", ".mov", ".webm":
+		case ".mkv", ".mp4", ".m4v", ".avi", ".ts", ".m2ts", ".mpg", ".mpeg", ".wmv", ".mov", ".webm", ".vob":
 		default:
 			continue
 		}

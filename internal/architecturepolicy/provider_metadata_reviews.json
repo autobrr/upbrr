@@ -341,7 +341,7 @@
   },
   "internal/trackers/impl/standalone/asc/questionnaire.go:buildQuestionnaire": {
     "reason": "Retains answered controls and displays the same resolved values as upload. Nonempty questionnaire overview/genre answers precede localized and base provider defaults; manual genres still bypass localized genres, and blank answers preserve existing fallbacks.",
-    "sha256": "294d2795f2333bc431df9aecd21e73a87f39747d30cdca1293a18eaa9007c2c3"
+    "sha256": "2834c289dba0268dc7dc6749d35c77edfb6f83abe26ffd7b1c391c69fd41ab6e"
   },
   "internal/trackers/impl/standalone/asc/taxonomy.go:resolveAudio": {
     "reason": "Language-identity review: finalized language comparisons preserve manual values and explicit clears; existing provider priority, source guards, work-origin country taxonomy and naming overrides remain unchanged. Existing precedence and source-bound language tests cover these boundaries.",
@@ -357,7 +357,7 @@
   },
   "internal/trackers/impl/standalone/asc/validation.go:validatePayloadFields": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "14da478586ead038f0655b7c0341efc516dc710e37fb297566213dc8c87ea8f4"
+    "sha256": "d5357ccf24154ff8a95bc90f0587ff8527c4007bb1aa036b1b9b2f8c87e92596"
   },
   "internal/trackers/impl/standalone/asc/validation.go:validationPolicy": {
     "reason": "Questionnaire gating review: genre and overview retain explicit-answer precedence over existing finalized metadata fallbacks. Missing IMDb and poster remain independent strict failures.",

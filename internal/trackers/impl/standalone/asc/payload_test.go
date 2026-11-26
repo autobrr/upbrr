@@ -72,3 +72,16 @@ func TestResolveDiscQualityIDUsesUsableCapacity(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveQualityIDDistinguishesDVDFromHDDVDEncodes(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ source, want string }{
+		{"DVD", "44"}, {"PAL DVD", "44"}, {"NTSC DVD", "44"}, {"HDDVD", ""}, {"HD DVD", ""}, {"HD-DVD", ""},
+	} {
+		meta := api.UploadSubject{Type: "ENCODE", Source: tc.source}
+		if got := resolveQualityID(meta); got != tc.want {
+			t.Errorf("quality for %s encode = %q, want %q", tc.source, got, tc.want)
+		}
+	}
+}

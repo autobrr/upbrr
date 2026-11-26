@@ -99,13 +99,14 @@ func buildASCSearchURL(query string, page int) string {
 func (row searchRow) entry() api.DupeEntry {
 	id := strconv.Itoa(row.ID)
 	return api.DupeEntry{
-		ID:        id,
-		Name:      strings.TrimSpace(row.Name),
-		Link:      siteURL + "/torrents/" + id,
-		SizeBytes: row.Size,
-		SizeKnown: row.Size > 0,
-		Internal:  row.Internal,
-		Res:       resolutionBadge(row.Badges),
+		ID:              id,
+		Name:            strings.TrimSpace(row.Name),
+		DisplayNameOnly: true,
+		Link:            siteURL + "/torrents/" + id,
+		SizeBytes:       row.Size,
+		SizeKnown:       row.Size > 0,
+		Internal:        row.Internal,
+		Res:             resolutionBadge(row.Badges),
 	}
 }
 

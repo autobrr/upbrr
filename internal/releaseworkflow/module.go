@@ -7116,6 +7116,9 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 		case api.MediaArtifactComparison:
 			if _, reused := comparisonScreenshots[artifact.ID]; reused {
 				selectedScreenshots++
+				if !artifact.SourceUnavailable {
+					selectedFinalScreenshots++
+				}
 			}
 		case api.MediaArtifactDVDMenu:
 			selectedMenus++

@@ -137,14 +137,50 @@ func TestASCSearchUsesNewSiteAndEnumeratesPages(t *testing.T) {
 	}
 }
 
+func TestASCDisplayTitleIsNotExactReleaseIdentity(t *testing.T) {
+	t.Parallel()
+
+	const title = "Synthetic Series - S02E03"
+	candidate := dupe.NormalizeCandidate(searchRow{
+		ID: 1,
+ Name: title,
+		Badges: []searchBadge{{Kind: "resolution", Label: "4K"}},
+	}.entry(), "ASC")
+	target := api.TrackerDuplicateTarget{
+		Names: []string{title},
+ Resolution: "1080p",
+ Season: 2,
+ Episode: 3,
+	}
+	evidence := dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID}
+	evaluation := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, trackers.DupePolicy{}, evidence)
+	if got := evaluation.Candidates[0]; got.Relation != api.DupeRelationCoexists || got.Candidate.Name != title || evaluation.Blocks {
+		t.Fatalf("different resolution with display title %q: relation=%s, blocks=%t, candidate=%q", title, got.Relation, evaluation.Blocks, got.Candidate.Name)
+	}
+
+	target.Resolution = "2160p"
+	evaluation = dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, trackers.DupePolicy{}, evidence)
+	if evaluation.Blocks || !evaluation.RequiresAction {
+		t.Fatalf("same resolution without exact release evidence: blocks=%t, requires action=%t", evaluation.Blocks, evaluation.RequiresAction)
+	}
+
+	candidate.Files = []string{"Synthetic.Series.S02E03.2160p-GRP.mkv"}
+	target.FileNames = candidate.Files
+	evaluation = dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, trackers.DupePolicy{}, evidence)
+	if evaluation.Candidates[0].Relation != api.DupeRelationExactDuplicate || !evaluation.Blocks {
+		t.Fatalf("matching primary file: relation=%s, blocks=%t", evaluation.Candidates[0].Relation, evaluation.Blocks)
+	}
+}
+
 func TestASCConnectionChecksImportedSession(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name   string
-		cookie string
-		status int
-		body   string
-		want   string
+		name     string
+		cookie   string
+		status   int
+		location string
+		body     string
+		want     string
 	}{
 		{name: "missing", want: "missing_configuration"},
 		{
@@ -172,7 +208,7 @@ func TestASCConnectionChecksImportedSession(t *testing.T) {
 			cookie: "synthetic",
 			status: http.StatusOK,
 			body:   `<script data-page="app" type="application/json">{"props":{"auth":{"user":null}}}</script>`,
-			want:   "unexpected_response",
+			want:   "authentication_required",
 		},
 		{
 			name:   "null ID",
@@ -189,10 +225,39 @@ func TestASCConnectionChecksImportedSession(t *testing.T) {
 			want:   "unexpected_response",
 		},
 		{
-			name:   "redirect",
-			cookie: "synthetic",
-			status: http.StatusFound,
-			want:   "unexpected_response",
+			name:     "redirect to ASC login",
+			cookie:   "synthetic",
+			status:   http.StatusFound,
+			location: "/login?expired=1",
+			want:     "authentication_required",
+		},
+		{
+			name:     "redirect to ASC login with explicit HTTPS port",
+			cookie:   "synthetic",
+			status:   http.StatusSeeOther,
+			location: "https://" + siteHost + ":443/login",
+			want:     "authentication_required",
+		},
+		{
+			name:     "redirect to foreign login",
+			cookie:   "synthetic",
+			status:   http.StatusFound,
+			location: "https://example.invalid/login",
+			want:     "unexpected_response",
+		},
+		{
+			name:     "redirect to different ASC port",
+			cookie:   "synthetic",
+			status:   http.StatusFound,
+			location: "https://" + siteHost + ":444/login",
+			want:     "unexpected_response",
+		},
+		{
+			name:     "redirect to another ASC page",
+			cookie:   "synthetic",
+			status:   http.StatusFound,
+			location: "/maintenance",
+			want:     "unexpected_response",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -202,8 +267,8 @@ func TestASCConnectionChecksImportedSession(t *testing.T) {
 					t.Fatalf("unexpected request: %s %s", r.Method, r.URL)
 				}
 				w := httptest.NewRecorder()
-				if tc.status == http.StatusFound {
-					w.Header().Set("Location", "https://example.invalid/login")
+				if tc.location != "" {
+					w.Header().Set("Location", tc.location)
 				}
 				w.WriteHeader(tc.status)
 				_, _ = w.WriteString(tc.body)

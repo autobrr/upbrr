@@ -78,7 +78,7 @@ func resolveQualityID(meta api.UploadSubject) string {
 		return "48"
 	case "ENCODE":
 		switch source := strings.ToUpper(strings.TrimSpace(meta.Source)); {
-		case strings.Contains(source, "DVD"):
+		case source == "DVD", source == "PAL DVD", source == "NTSC DVD":
 			return "44"
 		case strings.Contains(source, "BLURAY") || strings.Contains(source, "BLU-RAY"):
 			return "48"
