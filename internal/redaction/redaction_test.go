@@ -212,6 +212,7 @@ func TestRedactValueDelimitedAuthAndCookieTails(t *testing.T) {
 		`Cookie: uid=first-secret; session=second-secret, Authorization=Bearer alpha-secret,beta-secret token=third-secret`,
 		"Cookie: uid=first-secret; preferences=[1,2]; other=second-secret\nresponse: {\"status\":\"kept\"}",
 		"Cookie: [REDACTED][1]; other=second-secret\nresponse: {\"status\":\"kept\"}",
+		"Coo\u212aie: uid=first-secret; other=second-secret",
 	} {
 		output := RedactValue(input, nil)
 		for _, secret := range []string{"first-secret", "second-secret", "alpha-secret", "beta-secret", "third-secret"} {
@@ -222,6 +223,15 @@ func TestRedactValueDelimitedAuthAndCookieTails(t *testing.T) {
 		if contains(input, "kept") && !contains(output, `response: {"status":"kept"}`) {
 			t.Fatal("expected separate diagnostic JSON to survive")
 		}
+	}
+}
+
+func TestRedactValueCaseFoldedAPIPath(t *testing.T) {
+	t.Parallel()
+
+	input := "/api/torrent\u017f/syntheticToken"
+	if got := RedactValue(input, nil); got != "/api/torrent\u017f/[REDACTED]" {
+		t.Fatal("expected the API path token to be redacted")
 	}
 }
 

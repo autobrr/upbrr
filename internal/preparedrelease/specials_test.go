@@ -17,6 +17,7 @@ import (
 	"github.com/autobrr/upbrr/internal/externalidentity"
 	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/internal/trackers/impl"
@@ -765,14 +766,14 @@ func assertSpecialEpisodeProjection(t *testing.T, module *Module, release api.Pr
 // only external media inspection and scene/IMDb services are stubbed.
 func openSpecialPreparation(t *testing.T, dbPath string) (*Module, *db.SQLiteRepository) {
 	t.Helper()
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		dbfixture.WriteMigrated(t, dbPath)
+	}
 	repo, err := db.OpenContext(t.Context(), dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.MigrateContext(t.Context()); err != nil {
-		t.Fatal(err)
-	}
 	service := metadata.NewService(repo,
 		metadata.WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
 		metadata.WithTagsPathFromDB(dbPath),

@@ -24,14 +24,14 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        shard: [core, core-hdr, core-decoded, workflow, media, metadata, other]
+        shard: [core, core-comparisons, core-hdr, workflow, media, metadata, other]
         include:
           - { os: ubuntu-latest, mode: race }
           - { os: windows-latest, mode: native }
           - { os: macos-latest, mode: native }
-          - { shard: core, skip: '^Test.*(HDR|Native|Decoded).*$' }
-          - { shard: core-hdr, run: '^Test.*(HDR|Native).*$', skip: '^Test.*Decoded.*$' }
-          - { shard: core-decoded, run: '^Test.*Decoded.*$' }
+          - { shard: core, skip: '^Test.*(HDR|Native|Decoded|Comparison).*$' }
+          - { shard: core-comparisons, run: '^Test.*Comparison.*$' }
+          - { shard: core-hdr, run: '^Test.*(HDR|Native|Decoded).*$', skip: '^Test.*Comparison.*$' }
 
     steps:
       - name: Checkout
@@ -113,11 +113,13 @@ jobs:
           TEST_MODE: ${{ matrix.mode }}
           TEST_RUN: ${{ matrix.run }}
           TEST_SKIP: ${{ matrix.skip }}
-        # These limits apply per test binary; package concurrency keeps Go's default -p.
+        # Single-package shards use all 4 vCPUs; multi-package race shards bound
+        # per-binary workers to avoid 4x4 oversubscription while keeping default -p.
         run: |
           $packages = @(pwsh -NoProfile -File scripts/ci/go-test-packages.ps1 -Shard $env:TEST_SHARD)
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $testFlags = @('-json', '-cpu=4', '-parallel=4', '-timeout', '20m')
+          $perBinary = if ($env:TEST_MODE -eq 'race' -and $packages.Count -gt 1) { 2 } else { 4 }
+          $testFlags = @('-json', "-cpu=$perBinary", "-parallel=$perBinary", '-timeout', '20m')
           if ($env:TEST_MODE -eq 'race') { $testFlags += '-race' }
           if ($env:TEST_RUN) { $testFlags += @('-run', $env:TEST_RUN) }
           if ($env:TEST_SKIP) { $testFlags += @('-skip', $env:TEST_SKIP) }

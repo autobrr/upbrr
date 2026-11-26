@@ -263,6 +263,7 @@ func TestComparisonHardwareInitializationDeadline(t *testing.T) {
 }
 
 func TestComparisonNativeDecoderReplaysMatchedPicture(t *testing.T) {
+	t.Parallel()
 	executable, err := resolveFFmpeg()
 	if err != nil {
 		t.Skip("FFmpeg unavailable")
@@ -272,6 +273,7 @@ func TestComparisonNativeDecoderReplaysMatchedPicture(t *testing.T) {
 		hdr           bool
 	}{{"libx264", "yuv420p", false}, {"libx264", "yuv420p10le", false}, {"libx265", "yuv420p10le", true}, {"mpeg2video", "yuv420p", false}} {
 		t.Run(fixture.codec+"_"+fixture.format, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			path := filepath.Join(dir, "Example.Native.mkv")
 			args := []string{"-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=256x144:rate=25:duration=2", "-vf", "format=" + fixture.format, "-c:v", fixture.codec, "-threads", "2", "-pix_fmt", fixture.format, "-color_range", "tv", "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"}

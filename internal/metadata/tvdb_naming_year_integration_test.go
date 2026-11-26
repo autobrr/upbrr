@@ -19,6 +19,7 @@ import (
 )
 
 func TestPreparedTVDBExplicitNamingYear(t *testing.T) {
+	t.Parallel()
 	registry := trackerimpl.MustNewRegistry()
 	for _, scenario := range []struct {
 		name, translation                string
@@ -55,6 +56,7 @@ func TestPreparedTVDBExplicitNamingYear(t *testing.T) {
 		},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
+			t.Parallel()
 			fixture := newCorrectionEvidenceFixture(t)
 			fixture.input.Instructions.Identity.TMDBID = nil
 			fixture.input.Instructions.Identity.TVDBID = nil

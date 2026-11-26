@@ -27,6 +27,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/tvmaze"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -986,6 +987,7 @@ func TestPreparedProviderRetentionSurvivesCorrectionsAndRestart(t *testing.T) {
 }
 
 func TestPreparedExplicitTVAcquiresTVDBDespiteParsedMovie(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		aliasYear bool
 		edit      string
@@ -998,6 +1000,7 @@ func TestPreparedExplicitTVAcquiresTVDBDespiteParsedMovie(t *testing.T) {
 	} {
 		aliasYear, edit := test.aliasYear, test.edit
 		t.Run(fmt.Sprintf("alias=%t/%s", aliasYear, edit), func(t *testing.T) {
+			t.Parallel()
 			fixture := newCorrectionEvidenceFixtureForSource(t, "Example.Movie.2026.1080p.WEB-DL.H264-GRP.mkv")
 			fixture.input.Instructions.Category = new(api.CanonicalCategoryMovie)
 			fixture.tvdb = tvdb.NewClient(fixture.http, nil, "synthetic-api-key", "")
@@ -1125,8 +1128,10 @@ func TestPreparedExplicitTVAcquiresTVDBDespiteParsedMovie(t *testing.T) {
 }
 
 func TestPreparedIndependentManualProviderIDsSurviveRefreshAndRestart(t *testing.T) {
+	t.Parallel()
 	for _, sequential := range []bool{false, true} {
 		t.Run(fmt.Sprintf("sequential=%t", sequential), func(t *testing.T) {
+			t.Parallel()
 			fixture := newCorrectionEvidenceFixture(t)
 			fixture.tmdbExternalIDs = `{"imdb_id":"tt7654321","tvdb_id":999888}`
 			imdbProvider := &stubIMDB{info: imdb.Info{
@@ -1517,14 +1522,14 @@ func newCorrectionEvidenceFixtureForSource(t *testing.T, filename string) *corre
 
 func (f *correctionEvidenceFixture) open(t *testing.T, overrides ...Option) (*preparedrelease.Module, *db.SQLiteRepository) {
 	t.Helper()
+	if _, err := os.Stat(f.dbPath); os.IsNotExist(err) {
+		dbfixture.WriteMigrated(t, f.dbPath)
+	}
 	repo, err := db.OpenContext(t.Context(), f.dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.MigrateContext(t.Context()); err != nil {
-		t.Fatal(err)
-	}
 	mediaInfo := f.mediaInfo
 	if mediaInfo == nil {
 		mediaInfo = &stubMediaInfo{}

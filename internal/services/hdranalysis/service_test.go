@@ -164,35 +164,40 @@ func TestSidecarAllowsFeatureLengthMetadataWithinBoundedRestore(t *testing.T) {
 }
 
 func TestRenderAllEstimatorsAndCancellation(t *testing.T) {
-	service := New(NewAdmission(), api.NopLogger{})
-	for _, peak := range []api.HDRPeakSource{api.HDRPeakHistogram, api.HDRPeakHistogram99, api.HDRPeakMaxSCL, api.HDRPeakMaxSCLLuminance} {
-		t.Run(string(peak), func(t *testing.T) {
-			output := filepath.Join(t.TempDir(), "hdr10plus.png")
-			if err := service.Render(t.Context(), testExtraction(), peak, "Synthetic HDR10+", output); err != nil {
-				t.Fatal(err)
-			}
-			file, err := os.Open(output)
-			if err != nil {
-				t.Fatal(err)
-			}
-			image, decodeErr := png.Decode(file)
-			closeErr := file.Close()
-			if decodeErr != nil || closeErr != nil {
-				t.Fatalf("PNG decode/close = %v / %v", decodeErr, closeErr)
-			}
-			if image.Bounds().Dx() != 3000 || image.Bounds().Dy() != 1200 {
-				t.Fatalf("dimensions = %v", image.Bounds())
-			}
-			for y := 0; y < 1200; y += 13 {
-				for x := 0; x < 3000; x += 13 {
-					_, _, _, alpha := image.At(x, y).RGBA()
-					if alpha != 65535 {
-						t.Fatal("plot is transparent")
+	t.Parallel()
+	t.Run("estimators", func(t *testing.T) {
+		for _, peak := range []api.HDRPeakSource{api.HDRPeakHistogram, api.HDRPeakHistogram99, api.HDRPeakMaxSCL, api.HDRPeakMaxSCLLuminance} {
+			t.Run(string(peak), func(t *testing.T) {
+				t.Parallel()
+				service := New(NewAdmission(), api.NopLogger{})
+				output := filepath.Join(t.TempDir(), "hdr10plus.png")
+				if err := service.Render(t.Context(), testExtraction(), peak, "Synthetic HDR10+", output); err != nil {
+					t.Fatal(err)
+				}
+				file, err := os.Open(output)
+				if err != nil {
+					t.Fatal(err)
+				}
+				image, decodeErr := png.Decode(file)
+				closeErr := file.Close()
+				if decodeErr != nil || closeErr != nil {
+					t.Fatalf("PNG decode/close = %v / %v", decodeErr, closeErr)
+				}
+				if image.Bounds().Dx() != 3000 || image.Bounds().Dy() != 1200 {
+					t.Fatalf("dimensions = %v", image.Bounds())
+				}
+				for y := 0; y < 1200; y += 13 {
+					for x := 0; x < 3000; x += 13 {
+						_, _, _, alpha := image.At(x, y).RGBA()
+						if alpha != 65535 {
+							t.Fatal("plot is transparent")
+						}
 					}
 				}
-			}
-		})
-	}
+			})
+		}
+	})
+	service := New(NewAdmission(), api.NopLogger{})
 	ctx, cancel := context.WithCancel(t.Context())
 	output := filepath.Join(t.TempDir(), "canceled.png")
 	ctx = WithProgress(ctx, func(progress Progress) {

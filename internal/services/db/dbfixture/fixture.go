@@ -44,6 +44,19 @@ func WriteMigrated(t testing.TB, dbPath string) {
 	}
 }
 
+// OpenMigrated writes a migrated database to a new path and opens it for the
+// test. Test cleanup closes the repository.
+func OpenMigrated(t testing.TB, dbPath string) *db.SQLiteRepository {
+	t.Helper()
+	WriteMigrated(t, dbPath)
+	repo, err := db.OpenContext(t.Context(), dbPath)
+	if err != nil {
+		t.Fatalf("open migrated database fixture: %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	return repo
+}
+
 func buildTemplate() ([]byte, error) {
 	dir, err := os.MkdirTemp("", "upbrr-db-fixture-")
 	if err != nil {

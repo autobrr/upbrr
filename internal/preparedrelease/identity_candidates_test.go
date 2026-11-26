@@ -11,6 +11,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/externalidentity"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -22,14 +23,12 @@ func TestPrepareCandidatesSurviveReuseAndSQLiteRestart(t *testing.T) {
 		}
 	}
 	databasePath := filepath.Join(t.TempDir(), "candidates.db")
+	dbfixture.WriteMigrated(t, databasePath)
 	repo, err := db.Open(databasePath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.MigrateContext(t.Context()); err != nil {
-		t.Fatal(err)
-	}
 	resolver := &candidateIdentityResolver{candidates: []api.ExternalIdentityCandidate{{
 		Provider: api.IdentityProviderTMDB,
 		ID:       42,

@@ -65,9 +65,11 @@ func TestNativeRestorePreservesCloseFailure(t *testing.T) {
 }
 
 func TestNativeEvidencePersistence(t *testing.T) {
+	t.Parallel()
 	for _, source := range []string{"reordered-hybrid.hevc", "reordered-hybrid.mkv"} {
 		for _, formats := range []api.HDRAnalysisFormats{api.HDRAnalysisFormatsBoth, api.HDRAnalysisFormatsHDR10Plus, api.HDRAnalysisFormatsDolbyVision} {
 			t.Run(source+"/"+string(formats), func(t *testing.T) {
+				t.Parallel()
 				err := New(NewAdmission(), nil).WithSession(t.Context(), func(session *Session) error {
 					native, err := session.ExtractNativeFile(t.Context(), filepath.Join("testdata", source), formats)
 					if err != nil {

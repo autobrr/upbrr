@@ -19,6 +19,7 @@ import (
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/internal/sourcelayout"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -36,6 +37,7 @@ func (dvdPrimaryWitnessAnalyzer) Analyze(_ context.Context, path string) (string
 }
 
 func TestDVDPreparationPublishesRootReportsForCanonicalPrimary(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		usable  []bool
@@ -47,6 +49,7 @@ func TestDVDPreparationPublishesRootReportsForCanonicalPrimary(t *testing.T) {
 		{"no usable disc", []bool{false, false}, -1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root := filepath.Join(t.TempDir(), "Example.Movie.2026.PAL.DVD")
 			for i, usable := range tc.usable {
 				discRoot := root
@@ -74,14 +77,7 @@ func TestDVDPreparationPublishesRootReportsForCanonicalPrimary(t *testing.T) {
 				}
 			}
 			cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "metadata.sqlite")}}
-			repo, err := db.OpenContext(t.Context(), cfg.MainSettings.DBPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = repo.Close() })
-			if err := repo.MigrateContext(t.Context()); err != nil {
-				t.Fatal(err)
-			}
+			repo := dbfixture.OpenMigrated(t, cfg.MainSettings.DBPath)
 			service := newTestService(t, repo,
 				WithConfig(cfg),
 				WithMediaInfoExporter(mediainfo.NewService(nil, dvdPrimaryWitnessAnalyzer{})),

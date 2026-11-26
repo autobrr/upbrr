@@ -67,6 +67,7 @@ func TestComparisonInventoryLimitKeepsReadableCompletedFrames(t *testing.T) {
 }
 
 func TestComparisonDeepInventoryCompletesReranksAndRestores(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	path := filepath.Join(root, "Example.mkv")
 	if err := os.WriteFile(path, []byte("synthetic source identity"), 0o600); err != nil {

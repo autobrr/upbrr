@@ -599,6 +599,7 @@ func TestFFmpegDecodeStreamsMultipleTracksFromOneProcess(t *testing.T) {
 }
 
 func TestFFmpegDecodeKeepsHealthySiblingAfterEmptyTrack(t *testing.T) {
+	t.Parallel()
 	decoder := helperProcessDecoder("multi-output-empty-first")
 	request := decodeRequestForTest()
 	request.streams = append(request.streams, decodeStreamRequest{audioOrdinal: 1, codec: "AAC"})
@@ -632,6 +633,7 @@ func TestFFmpegDecodeKeepsHealthySiblingAfterEmptyTrack(t *testing.T) {
 }
 
 func TestFFmpegDecodeMarksProcessFailureEvenWithConsumerFailure(t *testing.T) {
+	t.Parallel()
 	decoder := helperProcessDecoder("multi-output-nonzero")
 	request := decodeRequestForTest()
 	request.streams = append(request.streams, decodeStreamRequest{audioOrdinal: 1, codec: "AAC"})
@@ -665,6 +667,7 @@ func (d inspectedHelperDecoder) Inspect(context.Context, string) ([]inspectedStr
 }
 
 func TestServiceRetriesTracksAfterSharedDecoderFailure(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name            string
 		mode            string
@@ -682,6 +685,7 @@ func TestServiceRetriesTracksAfterSharedDecoderFailure(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			decoder := inspectedHelperDecoder{
 				ffmpegDecoder: helperProcessDecoder(test.mode),
 				streams: []inspectedStream{

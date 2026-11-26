@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"golang.org/x/tools/go/packages"
 )
@@ -71,8 +72,12 @@ func CountAdded(ctx context.Context, root, base, head string) (AddedCounts, erro
 			added[filepath.Join(root, filepath.FromSlash(name))] = lines
 		}
 	}
-	uncompiled := maps.Clone(added)
-	seen := make(map[string]bool)
+	type buildTarget struct {
+		tags     []string
+		platform string
+		patterns []string
+	}
+	var targets []buildTarget
 	for _, tags := range [][]string{nil, {"e2e"}} {
 		for _, platform := range []string{"linux", "windows", "darwin"} {
 			buildContext := build.Default
@@ -93,82 +98,113 @@ func CountAdded(ctx context.Context, root, base, head string) (AddedCounts, erro
 			if len(patterns) == 0 {
 				continue
 			}
+			targets = append(targets, buildTarget{
+				tags:     tags,
+				platform: platform,
+				patterns: patterns,
+			})
+		}
+	}
+	type targetResult struct {
+		pkgs []*packages.Package
+		err  error
+	}
+	results := make([]targetResult, len(targets))
+	baseEnv := os.Environ()
+	var wg sync.WaitGroup
+	for idx, target := range targets {
+		wg.Go(func() {
+			env := make([]string, 0, len(baseEnv)+6)
+			env = append(env, baseEnv...)
+			env = append(env, "GOOS="+target.platform, "CGO_ENABLED=0", "GOTOOLCHAIN=local", "GOWORK=off", "GOFLAGS=", "GOPACKAGESDRIVER=off")
 			pkgs, err := packages.Load(&packages.Config{
 				Context:    ctx,
 				Dir:        root,
 				Tests:      true,
-				BuildFlags: []string{"-tags=" + strings.Join(tags, ",")},
-				Env:        append(os.Environ(), "GOOS="+platform, "CGO_ENABLED=0", "GOTOOLCHAIN=local", "GOWORK=off", "GOFLAGS=", "GOPACKAGESDRIVER=off"),
+				BuildFlags: []string{"-tags=" + strings.Join(target.tags, ",")},
+				Env:        env,
 				Mode:       packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports,
-			}, patterns...)
+			}, target.patterns...)
 			if err != nil {
-				return AddedCounts{}, countContextError("load", platform, tags, 1)
+				results[idx].err = countContextError("load", target.platform, target.tags, 1)
+				return
 			}
-			for _, pkg := range pkgs {
-				if len(pkg.Errors) > 0 {
-					category := "list"
-					for _, problem := range pkg.Errors {
-						switch problem.Kind {
-						case packages.ParseError:
-							category = "parse"
-						case packages.TypeError:
-							category = "type"
-						case packages.UnknownError, packages.ListError:
-							continue
-						}
-					}
-					return AddedCounts{}, countContextError(category, platform, tags, len(pkg.Errors))
-				}
-				for _, file := range pkg.Syntax {
-					name := pkg.Fset.Position(file.Pos()).Filename
-					lines, ok := added[name]
-					if !ok {
+			results[idx].pkgs = pkgs
+		})
+	}
+	wg.Wait()
+
+	uncompiled := maps.Clone(added)
+	seen := make(map[string]bool)
+	for idx, target := range targets {
+		if results[idx].err != nil {
+			return AddedCounts{}, results[idx].err
+		}
+		pkgs := results[idx].pkgs
+		for _, pkg := range pkgs {
+			if len(pkg.Errors) > 0 {
+				category := "list"
+				for _, problem := range pkg.Errors {
+					switch problem.Kind {
+					case packages.ParseError:
+						category = "parse"
+					case packages.TypeError:
+						category = "type"
+					case packages.UnknownError, packages.ListError:
 						continue
 					}
-					tokens, err := addedTokens(pkg.Fset, file, name, lines)
-					if err != nil {
-						return AddedCounts{}, err
-					}
-					ast.Inspect(file, func(node ast.Node) bool {
-						call, ok := node.(*ast.CallExpr)
-						if !ok {
-							return true
-						}
-						i, _ := slices.BinarySearch(tokens, call.Pos())
-						if i == len(tokens) || tokens[i] >= call.End() {
-							return true
-						}
-						selector, ok := call.Fun.(*ast.SelectorExpr)
-						if !ok || !typedLoggerCall(pkg.TypesInfo, call) {
-							return true
-						}
-						level := selector.Sel.Name
-						key := name + ":" + strconv.Itoa(pkg.Fset.Position(call.Pos()).Offset)
-						if seen[key] {
-							return true
-						}
-						seen[key] = true
-						switch level {
-						case "Tracef":
-							counts.Trace++
-						case "Debugf":
-							counts.Debug++
-						case "Infof":
-							counts.Info++
-						case "Warnf":
-							counts.Warn++
-						case "Errorf":
-							counts.Error++
-						}
-						return true
-					})
-					// Test variants can contain the same file more than once.
 				}
+				return AddedCounts{}, countContextError(category, target.platform, target.tags, len(pkg.Errors))
 			}
-			for name := range uncompiled {
-				if slices.ContainsFunc(pkgs, func(pkg *packages.Package) bool { return slices.Contains(pkg.CompiledGoFiles, name) }) {
-					delete(uncompiled, name)
+			for _, file := range pkg.Syntax {
+				name := pkg.Fset.Position(file.Pos()).Filename
+				lines, ok := added[name]
+				if !ok {
+					continue
 				}
+				tokens, err := addedTokens(pkg.Fset, file, name, lines)
+				if err != nil {
+					return AddedCounts{}, err
+				}
+				ast.Inspect(file, func(node ast.Node) bool {
+					call, ok := node.(*ast.CallExpr)
+					if !ok {
+						return true
+					}
+					i, _ := slices.BinarySearch(tokens, call.Pos())
+					if i == len(tokens) || tokens[i] >= call.End() {
+						return true
+					}
+					selector, ok := call.Fun.(*ast.SelectorExpr)
+					if !ok || !typedLoggerCall(pkg.TypesInfo, call) {
+						return true
+					}
+					level := selector.Sel.Name
+					key := name + ":" + strconv.Itoa(pkg.Fset.Position(call.Pos()).Offset)
+					if seen[key] {
+						return true
+					}
+					seen[key] = true
+					switch level {
+					case "Tracef":
+						counts.Trace++
+					case "Debugf":
+						counts.Debug++
+					case "Infof":
+						counts.Info++
+					case "Warnf":
+						counts.Warn++
+					case "Errorf":
+						counts.Error++
+					}
+					return true
+				})
+				// Test variants can contain the same file more than once.
+			}
+		}
+		for name := range uncompiled {
+			if slices.ContainsFunc(pkgs, func(pkg *packages.Package) bool { return slices.Contains(pkg.CompiledGoFiles, name) }) {
+				delete(uncompiled, name)
 			}
 		}
 	}
