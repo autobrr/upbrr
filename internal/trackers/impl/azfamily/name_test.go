@@ -538,6 +538,17 @@ func TestCinemaZUsesBoundRomanizationForNativeTitle(t *testing.T) {
 	}{
 		{name: "matching MAL without a rendered AKA", wantTitle: "Aoi Umi"},
 		{
+			name:      "romanization identical to TMDB title still eligible for CinemaZ",
+			wantTitle: "Aoi Umi",
+			mutate: func(subject *api.UploadSubject) {
+				subject.ProviderMetadata.TMDB.Title = "Aoi Umi (2024)"
+				subject.ProviderMetadata.TMDB.Year = 2024
+				subject.ProviderMetadata.AniList.TitleRomaji = "Aoi Umi (2024)"
+				subject.Identity.IMDBID = 40
+				subject.ProviderMetadata.IMDB = &api.IMDBMetadata{IMDBID: 40, Title: "Different Latin Title"}
+			},
+		},
+		{
 			name: "manual MAL replaces retained evidence",
 			mutate: func(subject *api.UploadSubject) {
 				subject.Identity.Overrides.MAL = api.OverrideStateValue
@@ -649,6 +660,13 @@ func TestAZFamilyDeduplicatesEpisodeAgainstFinalTitle(t *testing.T) {
 			want:      "Sora no Ao S01E02",
 			wantCount: 1,
 		},
+		{
+			name:      "AZ keeps TV DVDRip episode title omitted when matching original AKA",
+			site:      "AZ",
+			mediaType: "DVDRIP",
+			want:      "Blue Sky S01",
+			wantCount: 0,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			subject := azFamilyGeneratedSubject(t, api.ReleaseNameRequest{
@@ -665,7 +683,7 @@ func TestAZFamilyDeduplicatesEpisodeAgainstFinalTitle(t *testing.T) {
 				NoAKA:        test.omitAKA,
 			})
 			subject.ProviderMetadata.TVDB = &api.TVDBMetadata{Name: "Sora no Ao", NameEnglish: "Blue Sky"}
-			if test.mediaType == "WEBDL" {
+			if test.mediaType == "WEBDL" || test.mediaType == "DVDRIP" {
 				state := preparationstate.State{
 					Identity:               api.ExternalIdentity{Category: api.CanonicalCategoryTV},
 					Release:                subject.Release,
@@ -683,6 +701,12 @@ func TestAZFamilyDeduplicatesEpisodeAgainstFinalTitle(t *testing.T) {
 				state.Release.Alt = "Sora no Ao"
 				metadata.RebuildReleaseName(&state, api.NopLogger{})
 				subject.GeneratedName, subject.ReleaseName = state.GeneratedName, state.ReleaseName
+			}
+			if test.mediaType == "DVDRIP" {
+				episode, ok := subject.GeneratedName.Component(api.NameRoleEpisodeTitle)
+				if !ok || episode.Present || episode.Value != "Sora no Ao" {
+					t.Fatalf("want retained, omitted episode title, got %+v", episode)
+				}
 			}
 			if got := azFamilyReviewedName(t, test.site, subject, nil); !strings.HasPrefix(got, test.want+" ") ||
 				strings.Count(got, "Sora no Ao") != test.wantCount {

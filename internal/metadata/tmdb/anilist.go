@@ -50,7 +50,7 @@ type anilistSearchTerm struct {
 // AnimeLookupResult carries the selected anime and the status of its lookup.
 type AnimeLookupResult struct {
 	AnimeResult
-	LookupFailed bool // At least one search ran and none completed successfully.
+	LookupFailed bool // At least one search failed and no candidate was selected.
 }
 
 // ResolveAnime best-effort selects AniList metadata by explicit MAL ID or title
@@ -86,7 +86,6 @@ func (c *Client) ResolveAnime(ctx context.Context, tmdbName string, input Metada
 		}
 		searchTerms = []anilistSearchTerm{primary, fallback}
 	}
-	searchCompleted := false
 	for i, term := range searchTerms {
 		if result.MALID == 0 && (term.query == "" || i > 0 && term.query == searchTerms[0].query) {
 			continue
@@ -100,8 +99,7 @@ func (c *Client) ResolveAnime(ctx context.Context, tmdbName string, input Metada
 			logger.Warnf("tmdb: anilist search failed mal=%d err=%s", result.MALID, redaction.RedactValue(err.Error(), nil))
 			continue
 		}
-		searchCompleted = true
-		best := selectAniListMedia(items, normalizeAnimeTitle(term.rank), expectedSeason, result.MALID)
+		best := selectAniListMedia(items, term.rank, expectedSeason, result.MALID)
 		if best == nil {
 			continue
 		}
@@ -111,13 +109,17 @@ func (c *Client) ResolveAnime(ctx context.Context, tmdbName string, input Metada
 		result.SeasonYear = best.SeasonYear
 		result.Episodes = best.Episodes
 		result.Demographic = resolveDemographic(best.Tags, result.Demographic)
+		result.LookupFailed = false
 		break
 	}
-	result.LookupFailed = result.LookupFailed && !searchCompleted
 	return result, nil
 }
 
 func selectAniListMedia(media []anilistMedia, searchName string, expectedSeason, manualMAL int) *anilistMedia {
+	const minSeasonTitleSimilarity = 0.7
+	fullName := normalizeAnimeTitle(searchName)
+	// Season labels carry episode scope, so exclude them from the title evidence for that scope.
+	seasonBase := normalizeAnimeTitle(titleSeasonPattern.ReplaceAllString(searchName, ""))
 	var best *anilistMedia
 	bestScore := 0.0
 	bestMatchesSeason := false
@@ -129,14 +131,19 @@ func selectAniListMedia(media []anilistMedia, searchName string, expectedSeason,
 			}
 			continue
 		}
-		score := 0.0
+		hasExpectedSeason := expectedSeason != 0 && findSeasonInTitles(item.Title) == expectedSeason
+		score, seasonTitleScore := 0.0, 0.0
 		for _, title := range []string{item.Title.Romaji, item.Title.English, item.Title.Native} {
-			score = max(score, metautil.SimilarityRatio(normalizeAnimeTitle(title), searchName))
+			score = max(score, metautil.SimilarityRatio(normalizeAnimeTitle(title), fullName))
+			if hasExpectedSeason {
+				base := normalizeAnimeTitle(titleSeasonPattern.ReplaceAllString(title, ""))
+				seasonTitleScore = max(seasonTitleScore, metautil.SimilarityRatio(base, seasonBase))
+			}
 		}
 		if score <= 0 {
 			continue
 		}
-		matchesSeason := expectedSeason != 0 && findSeasonInTitles(item.Title) == expectedSeason
+		matchesSeason := seasonTitleScore >= minSeasonTitleSimilarity
 		if best == nil || (matchesSeason && !bestMatchesSeason) || (matchesSeason == bestMatchesSeason && score > bestScore) {
 			best = item
 			bestScore = score

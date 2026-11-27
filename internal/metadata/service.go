@@ -4,6 +4,7 @@
 package metadata
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -26,6 +27,7 @@ import (
 	"github.com/autobrr/upbrr/internal/clientdiscovery"
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/externalidentity"
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/metadata/bluraycom"
@@ -546,13 +548,18 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 	}
 
 	if meta.StoredDataFresh {
+		fingerprint := cmp.Or(meta.IdentitySourceFingerprint, meta.SourceFingerprint)
+		var storedIdentity api.ExternalIdentity
 		if storedIDs, err := s.repo.GetExternalIdentity(ctx, primary); err == nil {
-			meta.Identity = storedIDs
+			storedIdentity = storedIDs
+			meta.Identity = externalidentity.StoredIdentityForSource(
+				storedIDs.WithoutResetPins(meta.IdentityResetFields), primary, fingerprint, meta.ExternalIDOverrides,
+			)
 		} else if !errors.Is(err, internalerrors.ErrNotFound) {
 			return preparationstate.State{}, fmt.Errorf("metadata: external ids lookup: %w", err)
 		}
 		if storedMeta, err := s.repo.GetExternalMetadata(ctx, primary); err == nil {
-			meta.ProviderMetadata = storedMeta
+			meta.ProviderMetadata = externalidentity.StoredMetadataForSource(storedMeta, storedIdentity, primary, fingerprint)
 		} else if !errors.Is(err, internalerrors.ErrNotFound) {
 			return preparationstate.State{}, fmt.Errorf("metadata: external metadata lookup: %w", err)
 		}

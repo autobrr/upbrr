@@ -730,8 +730,11 @@ func isAnime(language string, genres []genre) bool {
 	return false
 }
 
-// FormatRetrievedAKA cleans a retrieved anime title before comparing and rendering it.
+// FormatRetrievedAKA cleans and renders a distinct retrieved anime title.
 func FormatRetrievedAKA(title, alternate string, year int) string {
+	if metautil.SameAnimeTitle(title, alternate, year) {
+		return ""
+	}
 	alternate = metautil.TrimTrailingParentheticalYear(alternate, year)
 	if !metautil.DistinctTitle(title, alternate) {
 		return ""

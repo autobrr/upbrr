@@ -4,10 +4,14 @@
 package imdb
 
 import (
+	"cmp"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +20,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -508,6 +514,42 @@ func TestSearchSelectsOnlyRequestedCategory(t *testing.T) {
 	}
 }
 
+type searchRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f searchRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func TestSearchCancelsDuringFallbackPause(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		attempts := 0
+		client := NewClient(&http.Client{Transport: searchRoundTripper(func(_ *http.Request) (*http.Response, error) {
+			attempts++
+			body := `{"data":{"advancedTitleSearch":{"edges":[]}}}`
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+		})}, nil)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() {
+			_, err := client.Search(ctx, SearchInput{Filename: "The Example Film"})
+			done <- err
+		}()
+		synctest.Wait()
+		if attempts != 1 {
+			t.Fatalf("got %d requests before the fallback pause, want one", attempts)
+		}
+		canceledAt := time.Now()
+		cancel()
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Errorf("Search error = %v, want context.Canceled", err)
+		}
+		if elapsed := time.Since(canceledAt); elapsed != 0 || attempts != 1 {
+			t.Errorf("Search took %v after cancellation and made %d requests, want an immediate return after one request", elapsed, attempts)
+		}
+	})
+}
+
 func assertIMDbGraphQLHeaders(t *testing.T, request *http.Request) {
 	t.Helper()
 
@@ -619,12 +661,23 @@ func TestSearchRanksAlternateTitleWithCompatibleYear(t *testing.T) {
 		rejected     bool
 		displayTitle string
 		weakPrimary  bool
+		alternate    string
+		nearMatch    string
 	}{
 		{
 			name:     "exact alternate",
 			year:     2024,
 			input:    SearchInput{UntouchedFilename: "雪.aka.Hidden.Tide.2024.1080p.WEB-DL-GRP.mkv", Category: "MOVIE"},
 			selectID: true,
+		},
+		{
+			name:         "canonically equivalent alternate",
+			year:         2024,
+			input:        SearchInput{UntouchedFilename: "雪.aka.Café.2024.1080p.WEB-DL-GRP.mkv", Category: "MOVIE"},
+			selectID:     true,
+			displayTitle: "Cafe\u0301",
+			alternate:    "Café",
+			nearMatch:    "Cafés",
 		},
 		{
 			name:      "movie rejects tv episode alternate",
@@ -720,13 +773,18 @@ func TestSearchRanksAlternateTitleWithCompatibleYear(t *testing.T) {
 				}
 				edges := "[]"
 				term := getStringFromMap(request.Variables, "constraints", "titleTextConstraint", "searchTerm")
-				if term == "Hidden Tide" {
+				if term == cmp.Or(test.alternate, "Hidden Tide") {
 					displayTitle := test.displayTitle
 					if displayTitle == "" {
 						displayTitle = term
 					}
 					edges = fmt.Sprintf(`[{"node":{"title":{"id":"tt0555001","titleText":{"text":%q},"releaseYear":{"year":%d},`+
 						`"titleType":{"text":%q}}}}]`, displayTitle, test.year, titleType)
+					if test.nearMatch != "" {
+						edges = strings.TrimSuffix(edges, "]") +
+							fmt.Sprintf(`,{"node":{"title":{"id":"tt0555003","titleText":{"text":%q},"releaseYear":{"year":%d},"titleType":{"text":%q}}}}]`,
+								test.nearMatch, test.year, titleType)
+					}
 				} else if test.weakPrimary && term == test.input.Filename {
 					edges = `[{"node":{"title":{"id":"tt0555002","titleText":{"text":"Cold Rain"},"releaseYear":{"year":2024},"titleType":{"text":"Movie"}}}}]`
 				}
@@ -743,6 +801,9 @@ func TestSearchRanksAlternateTitleWithCompatibleYear(t *testing.T) {
 			case test.selectID:
 				if result.IMDbID != 555001 || !result.AutoSelected {
 					t.Fatalf("exact alternate and year should select IMDb ID: %+v", result)
+				}
+				if test.nearMatch != "" && (len(result.Candidates) == 0 || result.Candidates[0].Title != test.displayTitle) {
+					t.Fatalf("selected candidate lost its provider display title: %+v", result.Candidates)
 				}
 			case test.rejected:
 				if result.IMDbID != 0 || result.AutoSelected || len(result.Candidates) != 0 {

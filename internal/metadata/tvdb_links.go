@@ -4,18 +4,18 @@
 package metadata
 
 import (
-	"context"
 	"slices"
 	"strconv"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/metadata/tmdb"
 	"github.com/autobrr/upbrr/internal/metadata/tvdb"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+const tvdbSiblingConflictWarning = "TVDB series remote IDs conflict with the selected provider identities. Correct the conflicting IDs before resolving missing siblings."
 
 // rejectTVDBEpisodeLink returns the unusable ID so other provider links cannot reintroduce it.
 func rejectTVDBEpisodeLink(meta *preparationstate.State, ids *api.ExternalIdentity, metadata *api.SourceScopedMetadata) int {
@@ -36,8 +36,6 @@ func rejectTVDBEpisodeLink(meta *preparationstate.State, ids *api.ExternalIdenti
 	clearInferredProviderID(&ids.IMDBID, &ids.Provenance.IMDB)
 	ids.Dependencies.IMDB = api.IdentityDependency{}
 	metadata.IMDB = nil
-	invalidateIdentityDependencies(ids, false)
-	invalidateMismatchedProviderMetadata(metadata, *ids)
 	return rejectedID
 }
 
@@ -65,24 +63,8 @@ func hasTVDBMALConflict(links api.TVDBRemoteLinks) bool {
 	})
 }
 
-func replayTVDBMALLinks(ctx context.Context, client TVDBClient, id int) api.TVDBRemoteLinks {
-	if evidence.Enabled(ctx) {
-		// The extended record and the links-only response have distinct cache
-		// keys. Start with the extended evidence used to collect the series.
-		if series, err := client.GetSeriesMetadata(ctx, id); err == nil && series.TVDBID == id &&
-			slices.ContainsFunc(series.RemoteLinks.Links, isUsableTVDBMALLink) {
-			return series.RemoteLinks
-		}
-	}
-	links, err := client.GetSeriesRemoteLinks(ctx, id)
-	if err != nil {
-		return api.TVDBRemoteLinks{}
-	}
-	return links
-}
-
-func restoreAgreeingTVDBMALLinks(links, raw api.TVDBRemoteLinks, malID int) api.TVDBRemoteLinks {
-	if raw.Status != api.MetadataEvidenceStatusComplete && raw.Status != api.MetadataEvidenceStatusContradictory || hasTVDBMALConflict(raw) {
+func restoreAgreeingTVDBMALLinks(links, raw api.TVDBRemoteLinks, malID int, explicitMAL bool) api.TVDBRemoteLinks {
+	if raw.Status != api.MetadataEvidenceStatusComplete || hasTVDBMALConflict(raw) {
 		return links
 	}
 	var agreeing []api.TVDBRemoteLink
@@ -94,11 +76,14 @@ func restoreAgreeingTVDBMALLinks(links, raw api.TVDBRemoteLinks, malID int) api.
 			agreeing = append(agreeing, link)
 		}
 	}
-	if len(agreeing) == 0 {
+	// An explicit MAL decision can supersede the old disagreement once TVDB
+	// confirms that it no longer has a MAL link.
+	if len(agreeing) == 0 && !explicitMAL {
 		return links
 	}
 	for _, link := range links.Links {
-		if !isUsableTVDBMALLink(link) {
+		// Keep earlier rejection states, and reapply valid links only when the replay confirms them.
+		if !isUsableTVDBMALLink(link) && (link.State != "valid" || slices.Contains(raw.Links, link)) {
 			agreeing = append(agreeing, link)
 		}
 	}
@@ -149,7 +134,7 @@ func tvdbSiblingTargets(ids *api.ExternalIdentity, overrides api.ExternalIDOverr
 		api.IdentityProviderMAL:    {&ids.MALID, &ids.Provenance.MAL, &ids.Dependencies.MAL, overrides.MALID},
 	}
 	// A manually selected TMDB resource retains its existing independent MAL authority.
-	if positiveProviderOverride(overrides.TMDBID) {
+	if positiveProviderOverride(overrides.TMDBID) && !positiveProviderOverride(overrides.MALID) {
 		delete(targets, api.IdentityProviderMAL)
 	}
 	return targets
@@ -189,10 +174,7 @@ func applyTVDBSeriesLinks(
 		}
 	}
 	if links.Status == api.MetadataEvidenceStatusContradictory || tvdbSiblingLinksMismatch(links, targets) {
-		appendIdentityCorrectionWarning(
-			meta,
-			"TVDB series remote IDs conflict with the selected provider identities. Correct the conflicting IDs before resolving missing siblings.",
-		)
+		appendIdentityCorrectionWarning(meta, tvdbSiblingConflictWarning)
 		return
 	}
 	for _, link := range links.Links {

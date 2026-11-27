@@ -538,53 +538,43 @@ func (l *captureTMDBLogger) warnings() []string {
 }
 
 func TestFetchMetadataResolvesAnimeAKA(t *testing.T) {
-	var anilistRequested atomic.Bool
+	for _, test := range []struct {
+		name, category, title, romaji, wantAKA string
+	}{
+		{"distinct series romanization", "TV", "Example Anime Series", "Rei No Sakuhin (2026)", "AKA Rei No Sakuhin"},
+		{"matching movie titles with year", "MOVIE", "Ox (2026)", "Ox (2026)", ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			anilist := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = fmt.Fprintf(w, `{"data":{"Page":{"media":[{"id":1,"idMal":67890,"title":{"romaji":%q,`+
+					`"english":%q,"native":"サンプル作品"},"seasonYear":2026,"episodes":12}]}}}`, test.romaji, test.title)
+			}))
+			defer anilist.Close()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/tv/12345", "/movie/12345":
+					_, _ = fmt.Fprintf(w, `{"name":%q,"title":%q,"original_name":"サンプル作品","original_title":"サンプル作品",`+
+						`"first_air_date":"2026-07-11","release_date":"2026-07-11","original_language":"ja","genres":[{"id":16,"name":"Animation"}]}`,
+						test.title, test.title)
+				default:
+					_, _ = w.Write([]byte(`{}`))
+				}
+			}))
+			defer server.Close()
 
-	anilist := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		anilistRequested.Store(true)
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"data":{"Page":{"media":[{"id":1,"idMal":67890,"title":{"romaji":"Rei No Sakuhin (2026)",` +
-			`"english":"Example Anime Series","native":"サンプル作品"},"seasonYear":2026,"episodes":12}]}}}`))
-	}))
-	defer anilist.Close()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/tv/12345":
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"name":"Example Anime Series","original_name":"サンプル作品","first_air_date":"2026-07-11","original_language":"ja","genres":[{"id":16,"name":"Animation"}]}`))
-		case "/tv/12345/credits":
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"crew":[],"cast":[]}`))
-		default:
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{}`))
-		}
-	}))
-	defer server.Close()
-
-	client := NewClient(server.Client(), nil, "api-key")
-	client.baseURL = server.URL
-	client.anilistURL = anilist.URL
-
-	result, err := client.FetchMetadata(context.Background(), MetadataInput{
-		TMDBID:   12345,
-		Category: "TV",
-	})
-	if err != nil {
-		t.Fatalf("fetch metadata: %v", err)
-	}
-	if !anilistRequested.Load() {
-		t.Fatalf("expected anilist to be queried for an anime title")
-	}
-	if !result.Anime {
-		t.Fatalf("expected anime detection for a japanese animation title")
-	}
-	if result.MALID != 67890 {
-		t.Fatalf("expected mal id 67890, got %d", result.MALID)
-	}
-	if result.RetrievedAKA != "AKA Rei No Sakuhin" {
-		t.Fatalf("expected romaji AKA, got %q", result.RetrievedAKA)
+			client := NewClient(server.Client(), nil, "api-key")
+			client.baseURL = server.URL
+			client.anilistURL = anilist.URL
+			result, err := client.FetchMetadata(t.Context(), MetadataInput{TMDBID: 12345, Category: test.category})
+			if err != nil {
+				t.Fatalf("fetch metadata: %v", err)
+			}
+			if !result.Anime || result.MALID != 67890 || result.Title != test.title || result.RetrievedAKA != test.wantAKA {
+				t.Fatalf("anime=%t MAL=%d title=%q AKA=%q, want anime, MAL 67890, title %q and AKA %q",
+					result.Anime, result.MALID, result.Title, result.RetrievedAKA, test.title, test.wantAKA)
+			}
+		})
 	}
 }
 

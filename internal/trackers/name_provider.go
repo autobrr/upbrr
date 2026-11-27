@@ -59,7 +59,7 @@ func applyTitleProvider(editor *NameEditor, subject api.UploadSubject, provider 
 		return nil
 	}
 	// Recover a former primary only when a current provider corroborates it as an original.
-	for _, original := range currentProviderAlternateTitles(subject, false) {
+	for _, original := range currentProviderAlternateTitles(subject, "") {
 		if !sameAutomaticTitle(component.Value, original, year) || !distinctAutomaticTitle(title, original, year) {
 			continue
 		}
@@ -74,7 +74,8 @@ func applyTitleProvider(editor *NameEditor, subject api.UploadSubject, provider 
 
 // DistinctProviderAlternateTitle returns a bound original or anime romanization that differs from the primary.
 func DistinctProviderAlternateTitle(subject api.UploadSubject, primary string, year int) string {
-	for _, original := range currentProviderAlternateTitles(subject, true) {
+	romaji := metautil.AnimeRomanizedAlternateTitle(subject.Identity, subject.ProviderMetadata, primary)
+	for _, original := range currentProviderAlternateTitles(subject, romaji) {
 		if distinctAutomaticTitle(primary, original, year) {
 			return metautil.TrimTrailingParentheticalYear(original, year)
 		}
@@ -82,7 +83,7 @@ func DistinctProviderAlternateTitle(subject api.UploadSubject, primary string, y
 	return ""
 }
 
-func currentProviderAlternateTitles(subject api.UploadSubject, includeRomaji bool) []string {
+func currentProviderAlternateTitles(subject api.UploadSubject, romaji string) []string {
 	if !currentNameProviderMetadata(subject) {
 		return nil
 	}
@@ -91,8 +92,8 @@ func currentProviderAlternateTitles(subject api.UploadSubject, includeRomaji boo
 	if imdb := metadata.IMDB; imdb != nil && subject.Identity.IMDBID > 0 && imdb.IMDBID == subject.Identity.IMDBID {
 		titles = append(titles, imdb.AKA)
 	}
-	if includeRomaji {
-		titles = append(titles, metautil.AnimeRomanizedTitle(subject.Identity, metadata))
+	if romaji != "" {
+		titles = append(titles, romaji)
 	}
 	if tmdb := metadata.TMDB; tmdb != nil && subject.Identity.TMDBID > 0 && tmdb.TMDBID == subject.Identity.TMDBID {
 		if category, err := api.NormalizeCanonicalCategory(tmdb.Category); err == nil && category == subject.Identity.Category {

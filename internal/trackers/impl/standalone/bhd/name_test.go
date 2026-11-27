@@ -515,6 +515,16 @@ func TestBHDUsesOriginalTitleAfterProviderSwitch(t *testing.T) {
 	if got, want := bhdReviewedName(t, subject, nil), "Ox AKA Ox (2002) 2002 1080p WEB-DL-GRP"; got != want {
 		t.Errorf("literal movie AKA year qualified name = %q, want %q", got, want)
 	}
+
+	subject.ProviderMetadata.IMDB.AKA = ""
+	subject.Identity.MALID = 10
+	tmdb := subject.ProviderMetadata.TMDB
+	tmdb.Title, tmdb.Year, tmdb.Anime, tmdb.MALID = "Ox (2024)", 2024, true, 10
+	subject.ProviderMetadata.AniList = &api.AniListMetadata{MALID: 10, TitleRomaji: "Ox (2024)"}
+	subject.ProviderMetadata.IMDB.Title = "Forest Signal"
+	if got, want := bhdReviewedName(t, subject, nil), "Forest Signal AKA Ox 2002 1080p WEB-DL-GRP"; got != want {
+		t.Errorf("romanization alongside independent IMDb title = %q, want %q", got, want)
+	}
 }
 
 func TestBHDChoosesBoundOriginalTitleEvidence(t *testing.T) {

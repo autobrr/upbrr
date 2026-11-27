@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/autobrr/rls"
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
@@ -323,6 +324,7 @@ type titleSearchHit struct {
 
 // Search tries increasingly broad title variants in order, pausing one second
 // between remote attempts. Individual request failures are treated as no results.
+// Context cancellation stops the search and returns the context error.
 // A sufficiently confident result is selected. Weak matches, including a lone
 // weak result, remain tentative candidates. Quickie validates only the first result.
 func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, error) {
@@ -351,8 +353,15 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 	}
 
 	run := func(name string, scope titleSearchScope) []titleSearchHit {
-		if attempted > 0 {
-			time.Sleep(1 * time.Second)
+		if attempted > 0 && ctx.Err() == nil {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(time.Second):
+			}
+		}
+		if ctx.Err() != nil {
+			return nil
 		}
 		attempted++
 		edges := c.runSearch(ctx, name, searchYear, category, input.DurationMinutes, scope != titleSearchConstrained)
@@ -399,6 +408,9 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 			results = run(reduced, titleSearchWide)
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return SearchResult{}, fmt.Errorf("imdb: title search canceled: %w", err)
+	}
 
 	if input.Quickie {
 		if len(results) == 0 {
@@ -428,6 +440,9 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 	candidates := rankCandidates(results, primary, alternate, searchYear)
 	if !searchedSecondary && alternate != "" && !strings.EqualFold(alternate, filename) && !confidentIMDbCandidate(candidates) {
 		results = append(results, run(alternate, titleSearchAlternate)...)
+		if err := ctx.Err(); err != nil {
+			return SearchResult{}, fmt.Errorf("imdb: title search canceled: %w", err)
+		}
 		candidates = rankCandidates(results, primary, alternate, searchYear)
 	}
 	if len(candidates) == 0 {
@@ -824,8 +839,8 @@ func collectCredits(data map[string]any, keyword string) []Person {
 }
 
 func rankCandidates(results []titleSearchHit, primary, alternate string, searchYear int) []Candidate {
-	primary = strings.ToLower(strings.TrimSpace(primary))
-	alternate = strings.ToLower(strings.TrimSpace(alternate))
+	primary = strings.ToLower(norm.NFC.String(strings.TrimSpace(primary)))
+	alternate = strings.ToLower(norm.NFC.String(strings.TrimSpace(alternate)))
 	candidates := make([]Candidate, 0, len(results))
 
 	for _, result := range results {
@@ -836,7 +851,7 @@ func rankCandidates(results []titleSearchHit, primary, alternate string, searchY
 		imdbID := metautil.ParseIMDbNumeric(getStringFromMap(title, "id"))
 		plot := getStringFromMap(title, "plot", "plotText", "plainText")
 		posterURL := getStringFromMap(title, "primaryImage", "url")
-		titleNorm := strings.ToLower(strings.TrimSpace(text))
+		titleNorm := strings.ToLower(norm.NFC.String(strings.TrimSpace(text)))
 		similarity := metautil.SimilarityRatio(primary, titleNorm)
 		compatibleYear := searchYear == 0 || (year > 0 && metautil.AbsInt(year-searchYear) <= 1)
 		if alternate != "" && compatibleYear {

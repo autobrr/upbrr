@@ -288,6 +288,7 @@ type State struct {
 	AuthoritativeIMDB                    bool
 	AuthoritativeTVmaze                  bool
 	AuthoritativeMAL                     bool
+	WithdrawnStoredIDs                   map[api.IdentityProvider]int
 	ExternalIdentityCandidates           []api.ExternalIdentityCandidate
 	ProviderMetadata                     api.SourceScopedMetadata
 	MediaFileFacts                       api.MediaFileFacts

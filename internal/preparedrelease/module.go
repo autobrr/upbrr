@@ -27,7 +27,7 @@ import (
 
 // ContractVersion changes whenever prepared fact semantics or the private seed
 // contract become incompatible, forcing persisted generations to be recomputed.
-const ContractVersion = "prepared-release-v89-aka-evidence"
+const ContractVersion = "prepared-release-v90-source-and-sibling-evidence"
 
 // Store is the prepared-release persistence port. Implementations must commit
 // facts, identity, and provider metadata as one generation transaction.
@@ -278,10 +278,11 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 			}
 			finish := api.BeginPreparationProgress(ctx, api.PreparationPhaseClientDiscovery, "Hydrating private prepared resources.")
 			resources, hydrateErr := hydrator.HydratePrivateResources(ctx, preparationstate.Request{
-				Input:             input,
-				Manifest:          current.Source,
-				Layout:            layout,
-				SourceFingerprint: sourceFingerprint,
+				Input:                     input,
+				Manifest:                  current.Source,
+				Layout:                    layout,
+				SourceFingerprint:         sourceFingerprint,
+				IdentitySourceFingerprint: identitySourceFingerprint,
 			})
 			finish(hydrateErr)
 			if hydrateErr != nil {

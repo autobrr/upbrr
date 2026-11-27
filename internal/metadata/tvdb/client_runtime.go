@@ -334,17 +334,25 @@ func (c *Client) GetSeriesMetadataWithLanguage(ctx context.Context, seriesID int
 		return SeriesMetadata{}, errNotFound
 	}
 
-	path := fmt.Sprintf("/series/%d/extended", seriesID)
-	var resp seriesExtendedResponse
-	if err := c.getJSON(ctx, path, c.languageParamsFor(nil, language), &resp); err != nil {
+	params := c.languageParamsFor(nil, language)
+	var legacy seriesExtendedResponse
+	resp, err := c.getSeriesExtended(ctx, seriesID, params, &legacy)
+	if err != nil && (legacy.Data.ID == 0 || ctx.Err() != nil) {
 		return SeriesMetadata{}, err
 	}
-	if resp.Data.ID != seriesID {
+	if err == nil && resp.Data.ID != seriesID {
 		return SeriesMetadata{}, errors.New("tvdb: series identity mismatch")
+	}
+	links := parseSeriesRemoteLinks(resp.Data.RemoteIDs)
+	if legacy.Data.ID != 0 {
+		resp = legacy
+		if err != nil {
+			links.Status = api.MetadataEvidenceStatusUnavailable
+		}
 	}
 
 	metadata := SeriesMetadata{
-		RemoteLinks:      parseSeriesRemoteLinks(resp.Data.RemoteIDs),
+		RemoteLinks:      links,
 		TVDBID:           metautil.FirstInt(resp.Data.ID, seriesID),
 		Name:             strings.TrimSpace(resp.Data.Name),
 		Overview:         strings.TrimSpace(resp.Data.Overview),
@@ -361,7 +369,7 @@ func (c *Client) GetSeriesMetadataWithLanguage(ctx context.Context, seriesID int
 		Poster:           extractPosterURL(resp.Data),
 		Aliases:          mapAliases(resp.Data.Aliases),
 	}
-	if resp.Data.RemoteIDs == nil {
+	if len(params) > 0 && resp.Data.RemoteIDs == nil {
 		links, err := c.GetSeriesRemoteLinks(ctx, seriesID)
 		metadata.RemoteLinks = links
 		if err != nil {
@@ -851,9 +859,8 @@ type seriesDetails struct {
 func (c *Client) fetchSeriesDetails(ctx context.Context, seriesID int, language string) (seriesDetails, error) {
 	logger := logging.FromContext(ctx, c.logger)
 
-	path := fmt.Sprintf("/series/%d/extended", seriesID)
-	var resp seriesExtendedResponse
-	if err := c.getJSON(ctx, path, c.languageParamsFor(nil, language), &resp); err != nil {
+	resp, err := c.getSeriesExtended(ctx, seriesID, c.languageParamsFor(nil, language), nil)
+	if err != nil {
 		return seriesDetails{}, err
 	}
 	airsDays, airsTime, airsTimezone, airsTimezoneSource := extractTVDBAirsSchedule(resp.Data)

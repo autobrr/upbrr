@@ -446,28 +446,46 @@ func TestResolveAnimeWarnsSanitizedOnSearchFailure(t *testing.T) {
 	}
 }
 
-func TestResolveAnimeSuccessfulEmptyFallbackIsNotAnOutage(t *testing.T) {
-	attempts := 0
-	client := &Client{
-		anilistURL: testAnilistURL,
-		logger:     &captureTMDBLogger{},
-		http: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-			attempts++
-			if attempts == 1 {
-				return &http.Response{
-					StatusCode: http.StatusInternalServerError,
-					Body:       io.NopCloser(strings.NewReader("upstream failure")),
-				}, nil
+func TestResolveAnimePartialFailures(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name        string
+		failAttempt int
+		wantMAL     int
+	}{
+		{name: "failed primary, empty fallback", failAttempt: 1},
+		{name: "empty primary, failed fallback", failAttempt: 2},
+		{
+			name:        "failed primary, successful fallback",
+			failAttempt: 1,
+			wantMAL:     200,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			attempts := 0
+			client := &Client{
+				anilistURL: testAnilistURL,
+				logger:     api.NopLogger{},
+				http: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+					attempts++
+					if attempts == test.failAttempt {
+						return &http.Response{
+							StatusCode: http.StatusInternalServerError,
+							Body:       io.NopCloser(strings.NewReader("upstream failure")),
+						}, nil
+					}
+					body := `{"data":{"Page":{"media":[]}}}`
+					if test.wantMAL != 0 {
+						body = `{"data":{"Page":{"media":[{"idMal":200,"title":{"english":"Other Series"}}]}}}`
+					}
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+				})},
 			}
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Body:       io.NopCloser(strings.NewReader(`{"data":{"Page":{"media":[]}}}`)),
-			}, nil
-		})},
-	}
-	result, err := client.ResolveAnime(t.Context(), "Example Anime", MetadataInput{Filename: "Other.Series.S01.1080p.WEB-DL-GRP"})
-	if err != nil || result.LookupFailed || result.MALID != 0 || attempts != 2 {
-		t.Fatalf("expected a completed empty fallback, got %+v after %d attempts, err=%v", result, attempts, err)
+			result, err := client.ResolveAnime(t.Context(), "Example Anime", MetadataInput{Filename: "Other.Series.S01.1080p.WEB-DL-GRP"})
+			if err != nil || result.LookupFailed != (test.wantMAL == 0) || result.MALID != test.wantMAL || attempts != 2 {
+				t.Fatalf("lookup = %+v after %d attempts, err=%v, want MAL %d", result, attempts, err, test.wantMAL)
+			}
+		})
 	}
 }
 
@@ -796,6 +814,47 @@ func TestResolveAnimeMatchesOrdinalSeasonLabelsAndCanonicalUnicode(t *testing.T)
 		got, err := client.ResolveAnime(t.Context(), test.title, test.input)
 		if err != nil || got.MALID != test.malID {
 			t.Errorf("title %q input %+v selected MAL %d, error %v, want %d", test.title, test.input, got.MALID, err, test.malID)
+		}
+	}
+}
+
+func TestSelectAniListMediaRequiresCompatibleTitleForSeasonPriority(t *testing.T) {
+	t.Parallel()
+	media := []anilistMedia{
+		{IDMal: 100, Title: anilistTitle{English: "Q7"}},
+		{IDMal: 200, Title: anilistTitle{English: "Q7 2nd Season"}},
+		{IDMal: 300, Title: anilistTitle{English: "Q9 3rd Season"}},
+		{IDMal: 400, Title: anilistTitle{English: "Q9 2nd Season"}},
+	}
+	for _, test := range []struct {
+		title                   string
+		season, manualMAL, want int
+	}{
+		{
+			title:  "Q7",
+			season: 2,
+			want:   200,
+		},
+		{
+			title:  "Q7",
+			season: 3,
+			want:   100,
+		},
+		{
+			title:  "Q7 2nd Season",
+			season: 2,
+			want:   200,
+		},
+		{
+			title:     "Q7",
+			season:    2,
+			manualMAL: 400,
+			want:      400,
+		},
+	} {
+		got := selectAniListMedia(media, test.title, test.season, test.manualMAL)
+		if got == nil || got.IDMal != test.want {
+			t.Errorf("title %q, season %d, manual MAL %d selected %+v, want MAL %d", test.title, test.season, test.manualMAL, got, test.want)
 		}
 	}
 }

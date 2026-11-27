@@ -114,18 +114,44 @@ func DistinctTitle(primary, alternate string) bool {
 		SimilarityRatio(TitleIdentityKey(primary), TitleIdentityKey(alternate)) < 0.7
 }
 
-// AnimeRomanizedTitle selects raw romanization bound to the effective MAL and TMDB IDs.
+// SameAnimeTitle compares bound anime titles as supplied and without the known
+// release year. The latter also covers a previously cleaned romanization.
+func SameAnimeTitle(primary, alternate string, year int) bool {
+	key := TitleIdentityKey(primary)
+	if key != "" && key == TitleIdentityKey(alternate) {
+		return true
+	}
+	key = TitleIdentityKey(TrimTrailingParentheticalYear(primary, year))
+	return key != "" && key == TitleIdentityKey(TrimTrailingParentheticalYear(alternate, year))
+}
+
+// AnimeRomanizedTitle selects romanization bound to the effective MAL and TMDB IDs.
 // The caller verifies the provider metadata's source and any published generation.
 func AnimeRomanizedTitle(identity api.ExternalIdentity, metadata api.SourceScopedMetadata) string {
+	title, trimYear := boundAnimeRomanizedTitle(identity, metadata)
+	return TrimTrailingParentheticalYear(title, trimYear)
+}
+
+// AnimeRomanizedAlternateTitle omits romanization that repeats the primary title
+// before cleaning it for an AKA. Independent title selection can use AnimeRomanizedTitle.
+func AnimeRomanizedAlternateTitle(identity api.ExternalIdentity, metadata api.SourceScopedMetadata, primary string) string {
+	title, trimYear := boundAnimeRomanizedTitle(identity, metadata)
+	if title == "" || SameAnimeTitle(primary, title, metadata.TMDB.Year) {
+		return ""
+	}
+	return TrimTrailingParentheticalYear(title, trimYear)
+}
+
+func boundAnimeRomanizedTitle(identity api.ExternalIdentity, metadata api.SourceScopedMetadata) (string, int) {
 	tmdb := metadata.TMDB
 	if identity.MALID <= 0 || identity.Overrides.MAL == api.OverrideStateClear ||
 		tmdb == nil || identity.TMDBID <= 0 || tmdb.TMDBID != identity.TMDBID {
-		return ""
+		return "", 0
 	}
 	category, err := api.NormalizeCanonicalCategory(string(identity.Category))
 	tmdbCategory, tmdbErr := api.NormalizeCanonicalCategory(tmdb.Category)
 	if err != nil || tmdbErr != nil || category != api.CanonicalCategoryUnknown && tmdbCategory != category {
-		return ""
+		return "", 0
 	}
 	retained := ""
 	if tmdb.MALID == identity.MALID {
@@ -134,9 +160,9 @@ func AnimeRomanizedTitle(identity api.ExternalIdentity, metadata api.SourceScope
 	if anilist := metadata.AniList; anilist != nil && anilist.MALID == identity.MALID &&
 		(identity.Overrides.MAL == api.OverrideStateValue ||
 			tmdb.Anime && retained == "" && (tmdb.MALID == 0 || tmdb.MALID == identity.MALID)) {
-		return TrimTrailingParentheticalYear(FirstNonEmptyTrimmed(anilist.TitleRomaji, retained), tmdb.Year)
+		return FirstNonEmptyTrimmed(anilist.TitleRomaji, retained), tmdb.Year
 	}
-	return retained
+	return retained, 0
 }
 
 // NormalizeIMDbID adds the tt prefix and seven-digit padding to numeric IDs.

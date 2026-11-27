@@ -520,8 +520,8 @@
     "sha256": "f52890a936f5010efff101f414d3332cecca5a76ad91e6d2c8ebb8e42ecfb129"
   },
   "internal/trackers/impl/standalone/bt/dupe.go:animeSearchTitle": {
-    "reason": "TVDB display aliases provide a search fallback in the same position as the previous TVDB primary name. Manual title precedence is preserved.",
-    "sha256": "86822ec2f0133f6be1408d41c3a1d06682779dfbabce1f62f1404c28452d3780"
+    "reason": "Anime requests consume the reviewed duplicate criterion, including an empty name. A manual clear still suppresses search when the projector fills the blank with the upload name. Direct calls preserve manual, canonical and provider title precedence.",
+    "sha256": "9fd7c220b81e390707354a4e53eac98ea9588652552567c445c88422bbc7539f"
   },
   "internal/trackers/impl/standalone/bt/dupe.go:dupeSearcher.Search": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. Operation-local logger binding leaves these selectors and search filters unchanged.",
@@ -536,8 +536,8 @@
     "sha256": "9ebde20f95fddb2631371c8ab3aa2109a4069581536a201bd56056a2d1ae71b1"
   },
   "internal/trackers/impl/standalone/bt/profile.go:Profile": {
-    "reason": "Adds only the read-only Settings connection-probe binding. Existing localized metadata policy and upload/search naming callbacks are unchanged; anime searches still honor manual title, including manual-empty, before provider fallbacks.",
-    "sha256": "08bd0efbc39df9ed9043e44bf33f846bfd3ed225206f67d92531ad5af63bbe45"
+    "reason": "BT versions duplicate evidence because anime requests now use the reviewed search criterion. The bound name resolver preserves manual title and manual-empty authority before provider fallbacks.",
+    "sha256": "539b803fe12db68ecfb89bbafcf8b73925d1541effea1becb7c98bd699a38ed7"
   },
   "internal/trackers/impl/standalone/bt/questionnaire.go:buildQuestionnaire": {
     "reason": "Pure projection and upload schema prefer nonempty overview/tag answers to exact-subject localized/base provider defaults. Scoped episode overview and manual genres retain precedence; explicit blanks preserve fallback semantics without reading media files.",

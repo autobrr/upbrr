@@ -6,6 +6,7 @@ package metadata
 import (
 	"errors"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/externalidentity"
@@ -15,6 +16,50 @@ import (
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestTVDBMALRecoveryRequiresCompleteRawLinksAndPreservesLocalRejections(t *testing.T) {
+	imdbLink := api.TVDBRemoteLink{
+		Provider: api.IdentityProviderIMDB,
+		ID:       202,
+		State:    "valid",
+	}
+	tvmazeLink := api.TVDBRemoteLink{
+		Provider: api.IdentityProviderTVmaze,
+		ID:       404,
+		State:    "valid",
+	}
+	unsupportedIMDb := api.TVDBRemoteLink{Provider: api.IdentityProviderIMDB, State: "unsupported"}
+	malConflict := api.TVDBRemoteLink{Provider: api.IdentityProviderMAL, State: "conflicting"}
+	retained := api.TVDBRemoteLinks{
+		Status: api.MetadataEvidenceStatusContradictory,
+		Links:  []api.TVDBRemoteLink{unsupportedIMDb, tvmazeLink, malConflict},
+	}
+	for _, status := range []api.MetadataEvidenceStatus{
+		api.MetadataEvidenceStatusPartial, api.MetadataEvidenceStatusUnavailable, api.MetadataEvidenceStatusContradictory,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			raw := api.TVDBRemoteLinks{Status: status, Links: []api.TVDBRemoteLink{imdbLink, tvmazeLink}}
+			if status == api.MetadataEvidenceStatusContradictory {
+				raw.Links = append(raw.Links, malConflict)
+			}
+			got := restoreAgreeingTVDBMALLinks(retained, raw, 444, true)
+			if got.Status != retained.Status || !slices.Equal(got.Links, retained.Links) {
+				t.Fatalf("incomplete or disputed observation cleared the conflict: %+v", got)
+			}
+		})
+	}
+	for _, currentLinks := range [][]api.TVDBRemoteLink{nil, {imdbLink, tvmazeLink}} {
+		raw := api.TVDBRemoteLinks{Status: api.MetadataEvidenceStatusComplete, Links: currentLinks}
+		want := []api.TVDBRemoteLink{unsupportedIMDb}
+		if len(currentLinks) > 0 {
+			want = append(want, tvmazeLink)
+		}
+		got := restoreAgreeingTVDBMALLinks(retained, raw, 444, true)
+		if got.Status != api.MetadataEvidenceStatusComplete || !slices.Equal(got.Links, want) {
+			t.Fatalf("replay admitted rejected or unconfirmed siblings: %+v", got)
+		}
+	}
+}
 
 func TestTVDBRejectedTMDBLinkCannotReturnDuringReconciliation(t *testing.T) {
 	tvdbClient := &stubTVDB{seriesMetadata: tvdb.SeriesMetadata{

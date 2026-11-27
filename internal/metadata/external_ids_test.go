@@ -509,6 +509,7 @@ type stubTVDB struct {
 	episodeTranslate         tvdb.EpisodeTranslation
 	episodeTransErr          error
 	seriesMetadata           tvdb.SeriesMetadata
+	seriesMetadataErr        error
 	remoteLinksErr           error
 	nameDisambiguation       tvdb.NameDisambiguation
 	episodeCalls             int
@@ -545,6 +546,9 @@ func (s *stubTVDB) GetByExternalID(_ context.Context, imdbID, tmdbID string, tvM
 
 func (s *stubTVDB) GetSeriesMetadata(_ context.Context, seriesID int) (tvdb.SeriesMetadata, error) {
 	s.seriesMetadataCalls++
+	if s.seriesMetadataErr != nil {
+		return tvdb.SeriesMetadata{}, s.seriesMetadataErr
+	}
 	result := s.seriesMetadata
 	if s.seriesMetadata.TVDBID != 0 || s.seriesMetadata.Name != "" {
 		if result.NameDisambiguation.Status == "" {
@@ -3005,7 +3009,11 @@ func TestResolveExternalIDsKeepsManualMetadataWithoutInferringConflictingSibling
 					Title:  "Example IMDb Selection",
 					Type:   "tvSeries",
 				}}),
-				WithTVDBClient(&stubTVDB{seriesMetadata: tvdb.SeriesMetadata{TVDBID: 222333, Name: "Unverified Sibling"}}),
+				WithTVDBClient(&stubTVDB{
+					id:             222333,
+					name:           "Unverified Sibling",
+					seriesMetadata: tvdb.SeriesMetadata{TVDBID: 222333, Name: "Unverified Sibling"},
+				}),
 			)
 			result, err := svc.resolveExternalIdentity(t.Context(), preparationstate.State{
 				SourcePath:          "Example.Series.S01E01.1080p-GRP.mkv",
@@ -3038,6 +3046,140 @@ func TestResolveExternalIDsKeepsManualMetadataWithoutInferringConflictingSibling
 			}
 			if len(result.LookupWarnings) != 0 {
 				t.Fatalf("manual selection blocked: %v", result.LookupWarnings)
+			}
+		})
+	}
+	for _, test := range []struct {
+		name      string
+		tvdbIMDb  int
+		wantTMDB  int
+		wantMaze  int
+		clearTMDB bool
+	}{
+		{
+			name:      "TVDB disagrees with IMDb before TVmaze reverse lookup",
+			tvdbIMDb:  7654321,
+			clearTMDB: true,
+		},
+		{name: "TVDB disagrees with IMDb before TMDB reverse lookup", tvdbIMDb: 7654321},
+		{
+			name:     "TVDB agrees with IMDb",
+			tvdbIMDb: 1234567,
+			wantTMDB: 444555,
+			wantMaze: 55,
+		},
+		{
+			name:     "TVDB has no IMDb link",
+			wantTMDB: 444555,
+			wantMaze: 55,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			overrides := api.ExternalIDOverrides{IMDBID: new(1234567), TVDBID: new(222333)}
+			if test.clearTMDB {
+				overrides.TMDBID = new(0)
+			}
+			links := api.TVDBRemoteLinks{Status: api.MetadataEvidenceStatusComplete}
+			if test.tvdbIMDb > 0 {
+				links.Links = []api.TVDBRemoteLink{{
+					Provider: api.IdentityProviderIMDB,
+					ID:       test.tvdbIMDb,
+					State:    "valid",
+				}}
+			}
+			svc := newTestService(t, &fakeRepo{},
+				WithTMDBClient(&stubTMDB{
+					findResult: tmdb.FindResult{TMDBID: 444555, Category: "TV"},
+					metadata: tmdb.MetadataResult{
+						Title:          "Example Sibling",
+						TMDBType:       "Scripted",
+						ExternalIMDbID: 1234567,
+						ExternalTVDBID: 222333,
+					},
+				}),
+				WithTVmazeClient(&stubTVmaze{result: tvmaze.SearchResult{
+					SelectedID:       55,
+					LookupDependency: api.IdentityDependency{TVDBID: 222333},
+					Candidates: []tvmaze.Candidate{{
+						ID:        55,
+						Name:      "Example Sibling",
+						Externals: tvmaze.Externals{IMDB: "tt1234567", TVDB: 222333},
+					}},
+				}}),
+				WithTVDBClient(&stubTVDB{seriesMetadata: tvdb.SeriesMetadata{
+					TVDBID:      222333,
+					Name:        "Example TVDB Selection",
+					RemoteLinks: links,
+				}}),
+				WithIMDBClient(&stubIMDB{info: imdb.Info{
+					IMDbID: "tt1234567",
+					Title:  "Example IMDb Selection",
+					Type:   "tvSeries",
+				}}),
+			)
+			result, err := svc.resolveExternalIdentity(t.Context(), preparationstate.State{
+				SourcePath:          "Example.Series.S01E01.1080p-GRP.mkv",
+				MediaInfoCategory:   "TV",
+				ExternalIDOverrides: overrides,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ids, metadata := result.Identity, result.ProviderMetadata
+			if ids.IMDBID != 1234567 || ids.TVDBID != 222333 || metadata.IMDB == nil || metadata.TVDB == nil ||
+				ids.TMDBID != test.wantTMDB || (metadata.TMDB != nil) != (test.wantTMDB > 0) ||
+				ids.TVmazeID != test.wantMaze || (metadata.TVmaze != nil) != (test.wantMaze > 0) {
+				t.Fatalf("unexpected sibling admission or loss of selected metadata: identity=%+v", ids)
+			}
+		})
+	}
+}
+
+func TestResolveExternalIDsChecksSelectedTVDBDuringTVDBOutage(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		linkedTVDB int
+		wantTMDB   int
+	}{
+		{name: "conflicting link", linkedTVDB: 909},
+		{
+			name:       "agreeing link",
+			linkedTVDB: 303,
+			wantTMDB:   101,
+		},
+		{name: "unknown link", wantTMDB: 101},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			outage := errors.New("synthetic TVDB outage")
+			svc := newTestService(t, &fakeRepo{},
+				WithTMDBClient(&stubTMDB{
+					findResult: tmdb.FindResult{TMDBID: 101, Category: "TV"},
+					metadata:   tmdb.MetadataResult{Title: "Example Reverse Match", TMDBType: "Scripted"},
+				}),
+				WithIMDBClient(&stubIMDB{}),
+				WithTVDBClient(&stubTVDB{seriesMetadataErr: outage, remoteLinksErr: outage}),
+				WithTVmazeClient(&stubTVmaze{result: tvmaze.SearchResult{
+					SelectedID: 404,
+					TVDBID:     test.linkedTVDB,
+					Candidates: []tvmaze.Candidate{{
+						ID:        404,
+						Name:      "Example Selected Series",
+						Externals: tvmaze.Externals{TVDB: test.linkedTVDB},
+					}},
+				}}),
+			)
+			result, err := svc.resolveExternalIdentity(t.Context(), preparationstate.State{
+				SourcePath:          "Example.Series.S01E01.1080p-GRP.mkv",
+				MediaInfoCategory:   "TV",
+				ExternalIDOverrides: api.ExternalIDOverrides{TVDBID: new(303), TVmazeID: new(404)},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ids, metadata := result.Identity, result.ProviderMetadata
+			if ids.TVDBID != 303 || ids.TVmazeID != 404 || metadata.TVmaze == nil || ids.TMDBID != test.wantTMDB ||
+				(metadata.TVDB != nil && metadata.TVDB.DisplayName() != "") || (metadata.TMDB != nil) != (test.wantTMDB > 0) {
+				t.Fatalf("TVDB outage changed manual authority or allowed an inferred sibling: identity=%+v TMDB=%+v", ids, metadata.TMDB)
 			}
 		})
 	}
@@ -6255,6 +6397,7 @@ func TestResolveExternalIDsCorrectsRetainedAnimeAKA(t *testing.T) {
 	initial.StoredDataFresh = true
 	// SQLite reloads the previous identity generation before binding the new metadata.
 	initial.Identity.Generation = 3
+	initial.ProviderMetadata.Generation = 3
 	client.anilistMetadata = tmdb.AniListMetadataResult{
 		MALID:       999,
 		AniListID:   998,
@@ -6789,6 +6932,213 @@ func TestResolveExternalIDsAniListFetchErrorDoesNotPersistEmptyMetadata(t *testi
 	}
 	if repo.externalMetaSaves != 0 {
 		t.Fatalf("expected no empty external metadata persistence after anilist fetch error, got %d saves", repo.externalMetaSaves)
+	}
+}
+
+func TestRefreshWithdrawsInferredMALAfterAniListDetailFailure(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name         string
+		manualMAL    *int
+		keepMAL      bool
+		wantMAL      int
+		wantAttempts int
+	}{
+		{name: "automatic", wantAttempts: 1},
+		{
+			name:         "explicit",
+			manualMAL:    new(400),
+			wantMAL:      400,
+			wantAttempts: 1,
+		},
+		{
+			name:         "retained",
+			keepMAL:      true,
+			wantMAL:      401,
+			wantAttempts: 1,
+		},
+		{name: "cleared", manualMAL: new(0)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			client := &stubDeferredAnimeTMDB{
+				metadata: tmdb.MetadataResult{
+					Title:    "Example Anime",
+					TMDBType: "tv",
+					Anime:    true,
+				},
+				anilistErr: errors.New("AniList detail lookup failed"),
+				anime:      tmdb.AnimeResult{MALID: 400, Romaji: "Aoi Hoshi"},
+			}
+			service := newTestService(t, &fakeRepo{}, WithTMDBClient(client), WithIMDBClient(&stubIMDB{}),
+				WithTVDBClient(&stubTVDB{}), WithTVmazeClient(&stubTVmaze{}))
+			input := preparationstate.State{
+				SourcePath:          filepath.Join(t.TempDir(), "Example.Anime.S01E04.mkv"),
+				MediaInfoTMDBID:     555001,
+				MediaInfoCategory:   "TV",
+				ExternalFreshness:   api.ExternalFreshnessRefresh,
+				ExternalIDOverrides: api.ExternalIDOverrides{MALID: test.manualMAL},
+			}
+			if test.keepMAL {
+				input.Identity = api.ExternalIdentity{
+					SourcePath: input.SourcePath,
+					MALID:      401,
+					Provenance: api.IdentityProvenanceSet{MAL: api.IdentityProvenanceProvider},
+				}
+				input.ExternalIDOverrides.KeepMAL = new(true)
+			}
+			got, err := service.resolveExternalIdentity(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Identity.MALID != test.wantMAL || got.MALID != test.wantMAL || got.ProviderMetadata.AniList != nil ||
+				client.anilistCalls != test.wantAttempts {
+				t.Fatalf("refresh MAL = %d / %d, AniList = %+v, lookups = %d, want MAL %d and %d lookups",
+					got.Identity.MALID, got.MALID, got.ProviderMetadata.AniList, client.anilistCalls, test.wantMAL, test.wantAttempts)
+			}
+			if test.wantMAL == 0 && test.wantAttempts != 0 &&
+				(got.Identity.Dependencies.MAL != (api.IdentityDependency{}) || got.ProviderMetadata.TMDB.RetrievedAKA != "") {
+				t.Fatalf("refresh kept withdrawn MAL evidence: %+v, TMDB AKA %q", got.Identity.Dependencies.MAL, got.ProviderMetadata.TMDB.RetrievedAKA)
+			}
+		})
+	}
+}
+
+func TestAnimeReconciliationUsesIndependentTVmazeEpisodeMapping(t *testing.T) {
+	t.Parallel()
+	const tmdbID, tvdbID, tvmazeID = 555001, 555003, 555004
+	for _, test := range []struct {
+		name                          string
+		dependency                    api.IdentityDependency
+		tvdbMAL                       int
+		wantRankSeason, wantPubSeason string
+		wantMAL, wantTVmaze           int
+		dated                         bool
+	}{
+		{
+			name:           "TVDB-dependent TVmaze cannot hide a conflict",
+			dependency:     api.IdentityDependency{TVDBID: tvdbID},
+			tvdbMAL:        445,
+			wantRankSeason: "S01",
+			wantPubSeason:  "S01",
+		},
+		{
+			name:           "TVDB-dependent TVmaze can still supply published episode fields",
+			dependency:     api.IdentityDependency{TVDBID: tvdbID},
+			tvdbMAL:        444,
+			wantRankSeason: "S01",
+			wantPubSeason:  "S02",
+			wantMAL:        444,
+			wantTVmaze:     tvmazeID,
+		},
+		{
+			name:           "independent TVmaze",
+			tvdbMAL:        445,
+			wantRankSeason: "S02",
+			wantPubSeason:  "S02",
+			wantMAL:        445,
+			wantTVmaze:     tvmazeID,
+		},
+		{
+			name:           "IMDb episode arrives after the first scoped mapping",
+			dependency:     api.IdentityDependency{TVDBID: tvdbID},
+			tvdbMAL:        444,
+			wantRankSeason: "S02",
+			wantPubSeason:  "S02",
+			dated:          true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			client := &stubDeferredAnimeTMDB{
+				metadata: tmdb.MetadataResult{
+					Title:    "Example Series",
+					TMDBType: "tv",
+					Anime:    true,
+				},
+				animeBySeason: map[string]tmdb.AnimeResult{
+					"S01": {MALID: 444},
+					"S02": {MALID: 445},
+				},
+			}
+			tvdbClient := &stubTVDB{seriesMetadata: tvdb.SeriesMetadata{
+				TVDBID: tvdbID,
+				Name:   "Example Series",
+				RemoteLinks: api.TVDBRemoteLinks{
+					Status: api.MetadataEvidenceStatusComplete,
+					Links: []api.TVDBRemoteLink{{
+						Provider: api.IdentityProviderMAL,
+						ID:       test.tvdbMAL,
+						State:    "valid",
+					}},
+				},
+			}}
+			tvmazeClient := &stubTVmaze{
+				result: tvmaze.SearchResult{
+					SelectedID:       tvmazeID,
+					TVDBID:           tvdbID,
+					LookupDependency: test.dependency,
+				},
+				episodeData: &tvmaze.EpisodeData{
+					SeasonNumber:  2,
+					EpisodeNumber: 1,
+					EpisodeName:   "Returning Signal",
+				},
+			}
+			imdbClient := &stubIMDB{}
+			input := preparationstate.State{
+				SourcePath:        filepath.Join(t.TempDir(), "Example.Series.S01E01.mkv"),
+				MediaInfoTMDBID:   tmdbID,
+				MediaInfoTVDBID:   tvdbID,
+				MediaInfoCategory: "TV",
+				SeasonInt:         1,
+				EpisodeInt:        1,
+			}
+			wantScopes := []string{test.wantRankSeason}
+			if test.dated {
+				input.SourcePath = filepath.Join(t.TempDir(), "Example.Series.2026.02.11.mkv")
+				input.SeasonInt, input.EpisodeInt, input.DailyEpisodeDate = 0, 0, "2026-02-11"
+				client.metadata.IMDbID = 555002
+				client.animeBySeason[""] = tmdb.AnimeResult{MALID: 444}
+				imdbClient.info = imdb.Info{
+					IMDbID: "tt0555002",
+					Title:  "Example Series",
+					Type:   "tvSeries",
+					Episodes: []imdb.Episode{{
+						Title:       "Independent IMDb Episode",
+						Season:      2,
+						EpisodeText: "1",
+						ReleaseDate: imdb.ReleaseDate{
+							Year:  2026,
+							Month: 2,
+							Day:   11,
+						},
+					}},
+				}
+				wantScopes = []string{"", test.wantRankSeason}
+			}
+			service := newTestService(t, &fakeRepo{}, WithTMDBClient(client), WithIMDBClient(imdbClient),
+				WithTVDBClient(tvdbClient), WithTVmazeClient(tvmazeClient))
+			got, err := service.resolveExternalIdentity(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(client.seasons, wantScopes) || got.SeasonStr != test.wantPubSeason ||
+				got.Identity.MALID != test.wantMAL || got.Identity.TVmazeID != test.wantTVmaze {
+				t.Fatalf("ranked scopes = %v, published season = %s, MAL = %d, TVmaze = %d, want %s, %s, %d, %d",
+					client.seasons, got.SeasonStr, got.Identity.MALID, got.Identity.TVmazeID, wantScopes, test.wantPubSeason, test.wantMAL, test.wantTVmaze)
+			}
+			if test.dated && (got.Identity.IMDBID != 555002 || got.EpisodeTitle != "Independent IMDb Episode" || tvmazeClient.episodeDateCalls != 0 ||
+				got.ProviderMetadata.TVmaze != nil ||
+				!slices.ContainsFunc(got.LookupWarnings, func(warning string) bool {
+					return strings.Contains(warning, "TMDB and TVDB reference different MAL IDs")
+				})) {
+				t.Fatalf("late IMDb evidence did not disqualify TVDB's TVmaze episode: identity=%+v title=%q warnings=%v", got.Identity, got.EpisodeTitle, got.LookupWarnings)
+			}
+			if conflict := got.ProviderMetadata.TVDB.RemoteLinks.Status == api.MetadataEvidenceStatusContradictory; conflict != (test.wantMAL == 0) {
+				t.Fatalf("TVDB conflict = %t, want %t", conflict, test.wantMAL == 0)
+			}
+		})
 	}
 }
 
@@ -7674,6 +8024,12 @@ func TestShouldUseTVDBHonorsExplicitCategoryBeforeParsedEvidence(t *testing.T) {
 }
 
 func TestResolveExternalIDsKeepOffRestoresCrossLinkInvalidation(t *testing.T) {
+	t.Run("unchanged source", func(t *testing.T) { assertKeepOffRestoresCrossLinkInvalidation(t, "initial-source") })
+	t.Run("replaced source", func(t *testing.T) { assertKeepOffRestoresCrossLinkInvalidation(t, "replacement-source") })
+}
+
+func assertKeepOffRestoresCrossLinkInvalidation(t *testing.T, sourceFingerprint string) {
+	t.Helper()
 	tmdbClient := &stubTMDB{
 		findResult: tmdb.FindResult{TMDBID: 101, Category: "MOVIE"},
 		metadata: tmdb.MetadataResult{
@@ -7725,17 +8081,20 @@ func TestResolveExternalIDsKeepOffRestoresCrossLinkInvalidation(t *testing.T) {
 		t.Fatalf("Keep setup failed: %+v", kept.Identity)
 	}
 	repo.ids, repo.meta = kept.Identity, kept.ProviderMetadata
+	repo.ids.Resolution.SourceFingerprint = "initial-source"
 	kept, err = svc.resolveExternalIdentity(t.Context(), preparationstate.State{
-		SourcePath:          state.SourcePath,
-		MediaInfoCategory:   "MOVIE",
-		ExternalIDOverrides: api.ExternalIDOverrides{KeepTMDB: new(true), KeepIMDB: new(true)},
+		SourcePath:                state.SourcePath,
+		MediaInfoCategory:         "MOVIE",
+		IdentitySourceFingerprint: sourceFingerprint,
+		ExternalIDOverrides:       api.ExternalIDOverrides{KeepTMDB: new(true), KeepIMDB: new(true)},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if kept.Identity.Dependencies.TMDB.IMDBID != 202 {
-		t.Fatal("stored Keep state discarded the original IMDb dependency")
+	if kept.Identity.TMDBID != 101 || kept.Identity.IMDBID != 202 || kept.Identity.Provenance.TMDB != api.IdentityProvenanceRetained {
+		t.Fatalf("replacement did not keep chosen provider IDs: %+v", kept.Identity)
 	}
+	kept.Identity.Resolution.SourceFingerprint = sourceFingerprint
 	kept.StoredDataFresh = true
 	kept.ExternalIDOverrides = api.ExternalIDOverrides{
 		KeepTMDB: new(false),
@@ -7748,6 +8107,9 @@ func TestResolveExternalIDsKeepOffRestoresCrossLinkInvalidation(t *testing.T) {
 	}
 	if cleared.Identity.TMDBID != 0 || cleared.ProviderMetadata.TMDB != nil {
 		t.Fatalf("Keep off plus explicit IMDb clear retained its stale dependent TMDB: identity=%+v metadata=%+v fetches=%d", cleared.Identity, cleared.ProviderMetadata.TMDB, tmdbClient.metaCalls)
+	}
+	if kept.Identity.Dependencies.TMDB.IMDBID != 202 {
+		t.Fatal("stored Keep state discarded the original IMDb dependency")
 	}
 }
 

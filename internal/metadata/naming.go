@@ -1510,7 +1510,7 @@ func resolveReleaseNameTitle(category string, meta preparationstate.State) (stri
 		if matchingIMDBMetadataForNaming(meta) {
 			imdbAKA = meta.ProviderMetadata.IMDB.AKA
 		}
-		romaji := metautil.AnimeRomanizedTitle(meta.Identity, meta.ProviderMetadata)
+		romaji := metautil.AnimeRomanizedAlternateTitle(meta.Identity, meta.ProviderMetadata, title)
 		altTitle = fillProviderAlternateTitle(altTitle, title, tvYear, romaji, imdbAKA, tmdb.OriginalTitle)
 		if year == 0 && tmdb.Year > 0 {
 			year = tmdb.Year

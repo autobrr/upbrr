@@ -989,16 +989,16 @@ func TestRebuildReleaseNameDeduplicatesAutomaticEpisodeAgainstDisplayedTitles(t 
 	meta := preparationstate.State{
 		Identity: api.ExternalIdentity{Category: "TV", TVDBID: 2},
 		ProviderMetadata: api.SourceScopedMetadata{
-			TVDB: &api.TVDBMetadata{TVDBID: 2, NameEnglish: "Re: ZERO, Starting Life in Another World"},
+			TVDB: &api.TVDBMetadata{TVDBID: 2, NameEnglish: "Signal: The Quiet Sky"},
 		},
 		Type:         "ENCODE",
 		SeasonStr:    "S04",
 		EpisodeStr:   "E11",
-		EpisodeTitle: "Re:ZERO -Starting Life in Another World-",
+		EpisodeTitle: "Signal -The Quiet Sky-",
 	}
 	RebuildReleaseName(&meta, api.NopLogger{})
-	if strings.Contains(meta.ReleaseNameNoTag, "Re:ZERO -Starting Life in Another World-") {
-		t.Fatalf("expected release name to omit duplicate episode title, got %q", meta.ReleaseNameNoTag)
+	if got, want := meta.ReleaseNameNoTag, "Signal: The Quiet Sky S04E11"; got != want {
+		t.Fatalf("release name = %q, want %q", got, want)
 	}
 	meta.ProviderMetadata.TVDB.NameEnglish = "Blue Sky"
 	meta.ProviderMetadata.TVDB.Name = "Sora no Ao"
@@ -1657,6 +1657,60 @@ func TestResolveReleaseNameTitleTMDBUsesMatchingIMDbAKA(t *testing.T) {
 	_, alt, _ = resolveReleaseNameTitle("MOVIE", meta)
 	if alt != "AKA TMDB Original" {
 		t.Fatalf("mismatched IMDb alternate=%q", alt)
+	}
+}
+
+func TestResolveMovieAnimeAlternateWithTitleYear(t *testing.T) {
+	for _, test := range []struct {
+		name, retained, romaji, want string
+	}{
+		{
+			name:   "detail repeats title",
+			romaji: "Ox (2024)",
+			want:   "AKA Original Signal",
+		},
+		{
+			name:     "retained title was already stripped",
+			retained: "AKA Ox",
+			want:     "AKA Original Signal",
+		},
+		{
+			name:   "distinct detail cleans release year",
+			romaji: "Forest Signal (2024)",
+			want:   "AKA Forest Signal",
+		},
+		{
+			name:     "distinct retained title",
+			retained: "AKA Forest Signal",
+			want:     "AKA Forest Signal",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			meta := preparationstate.State{
+				Identity: api.ExternalIdentity{
+					Category: api.CanonicalCategoryMovie,
+					TMDBID:   1,
+					MALID:    10,
+				},
+				ProviderMetadata: api.SourceScopedMetadata{
+					TMDB: &api.TMDBMetadata{
+						TMDBID:        1,
+						Category:      "MOVIE",
+						Title:         "Ox (2024)",
+						OriginalTitle: "Original Signal",
+						Year:          2024,
+						Anime:         true,
+						MALID:         10,
+						RetrievedAKA:  test.retained,
+					},
+					AniList: &api.AniListMetadata{MALID: 10, TitleRomaji: test.romaji},
+				},
+			}
+			title, aka, year := resolveReleaseNameTitle("MOVIE", meta)
+			if title != "Ox (2024)" || aka != test.want || year != 2024 {
+				t.Fatalf("title=%q AKA=%q year=%d, want literal title, AKA %q and 2024", title, aka, year, test.want)
+			}
+		})
 	}
 }
 

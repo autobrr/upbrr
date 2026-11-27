@@ -4,6 +4,7 @@
 package preparedrelease
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -85,8 +86,10 @@ func (c *EvidenceCollector) Collect(
 		AuthoritativeIMDB:   meta.AuthoritativeIMDB,
 		AuthoritativeTVmaze: meta.AuthoritativeTVmaze,
 		AuthoritativeMAL:    meta.AuthoritativeMAL,
+		WithdrawnStoredIDs:  meta.WithdrawnStoredIDs,
 	}
 	candidate.Identity.SourcePath = request.Manifest.SourcePath
+	candidate.Identity.Resolution.SourceFingerprint = cmp.Or(request.IdentitySourceFingerprint, request.SourceFingerprint)
 	candidate.Metadata.SourcePath = request.Manifest.SourcePath
 	c.mu.Lock()
 	c.pending[canonicalSourceKey(request.Manifest.SourcePath)] = candidate
