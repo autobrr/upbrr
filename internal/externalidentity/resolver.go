@@ -24,7 +24,7 @@ import (
 
 // ContractVersion changes whenever identity resolution semantics become
 // incompatible with a previously resolved identity.
-const ContractVersion = "external-identity-v19-source-and-sibling-evidence"
+const ContractVersion = "external-identity-v20-source-and-sibling-evidence"
 
 // CompatibleStoredIdentity preserves manual pins and clears while discarding
 // automatic IDs and dependencies produced before the current identity contract.
@@ -32,24 +32,23 @@ func CompatibleStoredIdentity(stored api.ExternalIdentity) api.ExternalIdentity 
 	if stored.Resolution.ContractVersion == ContractVersion {
 		return stored
 	}
-	return withoutAutomaticIdentity(stored, false)
+	return filterStoredIdentity(stored, false, api.ExternalIDOverrides{})
 }
 
-// StoredIdentityForSource admits automatic matches only for the same source
-// fingerprint. Path-scoped user choices survive a replacement.
+// StoredIdentityForSource admits same-source automatic matches and path-scoped
+// user choices. A previously kept match requires Keep to remain enabled or a
+// fresh automatic match to establish it again.
 func StoredIdentityForSource(stored api.ExternalIdentity, path, fingerprint string, overrides api.ExternalIDOverrides) api.ExternalIdentity {
 	if !sourceEvidenceMatches(stored.SourcePath, path) {
 		return api.ExternalIdentity{}
 	}
 	stored = CompatibleStoredIdentity(stored)
-	if stored.Resolution.SourceFingerprint != fingerprint {
-		return withoutAutomaticIdentity(stored.WithProviderRetention(overrides), true)
-	}
-	return stored
+	return filterStoredIdentity(stored, stored.Resolution.SourceFingerprint == fingerprint, overrides)
 }
 
 // StoredMetadataForSource admits provider snapshots paired with the same
-// source generation.
+// source generation. Older snapshots retain display facts without superseded
+// naming and anime-ranking evidence.
 func StoredMetadataForSource(
 	metadata api.SourceScopedMetadata,
 	stored api.ExternalIdentity,
@@ -59,31 +58,65 @@ func StoredMetadataForSource(
 		stored.Resolution.SourceFingerprint != fingerprint || metadata.Generation != stored.Generation {
 		return api.SourceScopedMetadata{}
 	}
+	if stored.Resolution.ContractVersion != ContractVersion {
+		return migrateStoredProviderNaming(metadata)
+	}
 	return metadata
 }
 
-func withoutAutomaticIdentity(stored api.ExternalIdentity, preserveKept bool) api.ExternalIdentity {
+func migrateStoredProviderNaming(metadata api.SourceScopedMetadata) api.SourceScopedMetadata {
+	if metadata.TMDB != nil {
+		current := *metadata.TMDB
+		current.MALID, current.AnimeSeason, current.RetrievedAKA = 0, "", ""
+		if current.OriginalTitle == current.Title {
+			current.OriginalTitle = ""
+		}
+		metadata.TMDB = &current
+	}
+	if metadata.IMDB != nil && metadata.IMDB.AKA != "" {
+		current := *metadata.IMDB
+		current.AKA = ""
+		metadata.IMDB = &current
+	}
+	if metadata.TVDB != nil && strings.TrimSpace(metadata.TVDB.Name) != "" {
+		// Older snapshots could promote a search result or an alias to Name.
+		current := *metadata.TVDB
+		if len(current.Aliases) == 0 || current.Aliases[0] != current.Name {
+			current.Aliases = append([]string{current.Name}, current.Aliases...)
+		}
+		current.Name = ""
+		metadata.TVDB = &current
+	}
+	return metadata
+}
+
+func filterStoredIdentity(stored api.ExternalIdentity, sameSource bool, overrides api.ExternalIDOverrides) api.ExternalIdentity {
 	providers := []struct {
 		id         *int
 		provenance *api.IdentityProvenance
 		override   api.OverrideState
 		dependency *api.IdentityDependency
+		keep       *bool
 	}{
-		{&stored.TMDBID, &stored.Provenance.TMDB, stored.Overrides.TMDB, &stored.Dependencies.TMDB},
-		{&stored.IMDBID, &stored.Provenance.IMDB, stored.Overrides.IMDB, &stored.Dependencies.IMDB},
-		{&stored.TVDBID, &stored.Provenance.TVDB, stored.Overrides.TVDB, &stored.Dependencies.TVDB},
-		{&stored.TVmazeID, &stored.Provenance.TVmaze, stored.Overrides.TVmaze, &stored.Dependencies.TVmaze},
-		{&stored.MALID, &stored.Provenance.MAL, stored.Overrides.MAL, &stored.Dependencies.MAL},
+		{&stored.TMDBID, &stored.Provenance.TMDB, stored.Overrides.TMDB, &stored.Dependencies.TMDB, overrides.KeepTMDB},
+		{&stored.IMDBID, &stored.Provenance.IMDB, stored.Overrides.IMDB, &stored.Dependencies.IMDB, overrides.KeepIMDB},
+		{&stored.TVDBID, &stored.Provenance.TVDB, stored.Overrides.TVDB, &stored.Dependencies.TVDB, overrides.KeepTVDB},
+		{&stored.TVmazeID, &stored.Provenance.TVmaze, stored.Overrides.TVmaze, &stored.Dependencies.TVmaze, overrides.KeepTVmaze},
+		{&stored.MALID, &stored.Provenance.MAL, stored.Overrides.MAL, &stored.Dependencies.MAL, overrides.KeepMAL},
 	}
 	for _, provider := range providers {
-		if providerIdentityLocked(provider.override, *provider.provenance) || preserveKept && *provider.provenance == api.IdentityProvenanceRetained {
+		if providerIdentityLocked(provider.override, *provider.provenance) || sameSource && *provider.provenance != api.IdentityProvenanceRetained {
+			continue
+		}
+		if provider.keep != nil && *provider.keep && *provider.id > 0 {
+			*provider.provenance = api.IdentityProvenanceRetained
 			continue
 		}
 		*provider.id = 0
 		*provider.provenance = api.IdentityProvenanceUnknown
 		*provider.dependency = api.IdentityDependency{}
 	}
-	if providerIdentityLocked(stored.Overrides.Category, stored.Provenance.Category) || preserveKept && stored.HasRetainedProvider() {
+	if sameSource || providerIdentityLocked(stored.Overrides.Category, stored.Provenance.Category) || stored.HasRetainedProvider() {
 		return stored
 	}
 	stored.Category = api.CanonicalCategoryUnknown

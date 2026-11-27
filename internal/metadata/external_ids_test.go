@@ -6463,7 +6463,7 @@ func TestResolveExternalIDsKeepsLegacyDisplayTitlesWithoutClaimingOriginals(t *t
 		IMDB: &api.IMDBMetadata{
 			IMDBID: 2,
 			Title:  "Daybreak",
-			AKA:    "Daybreak",
+			AKA:    "Unverified alternate",
 			Type:   "tvSeries",
 		},
 		TVDB: &api.TVDBMetadata{

@@ -59,7 +59,7 @@ func applyTitleProvider(editor *NameEditor, subject api.UploadSubject, provider 
 		return nil
 	}
 	// Recover a former primary only when a current provider corroborates it as an original.
-	for _, original := range currentProviderAlternateTitles(subject, "") {
+	for _, original := range currentProviderAlternateTitles(subject, title) {
 		if !sameAutomaticTitle(component.Value, original, year) || !distinctAutomaticTitle(title, original, year) {
 			continue
 		}
@@ -74,8 +74,7 @@ func applyTitleProvider(editor *NameEditor, subject api.UploadSubject, provider 
 
 // DistinctProviderAlternateTitle returns a bound original or anime romanization that differs from the primary.
 func DistinctProviderAlternateTitle(subject api.UploadSubject, primary string, year int) string {
-	romaji := metautil.AnimeRomanizedAlternateTitle(subject.Identity, subject.ProviderMetadata, primary)
-	for _, original := range currentProviderAlternateTitles(subject, romaji) {
+	for _, original := range currentProviderAlternateTitles(subject, primary) {
 		if distinctAutomaticTitle(primary, original, year) {
 			return metautil.TrimTrailingParentheticalYear(original, year)
 		}
@@ -83,7 +82,7 @@ func DistinctProviderAlternateTitle(subject api.UploadSubject, primary string, y
 	return ""
 }
 
-func currentProviderAlternateTitles(subject api.UploadSubject, romaji string) []string {
+func currentProviderAlternateTitles(subject api.UploadSubject, primary string) []string {
 	if !currentNameProviderMetadata(subject) {
 		return nil
 	}
@@ -92,7 +91,7 @@ func currentProviderAlternateTitles(subject api.UploadSubject, romaji string) []
 	if imdb := metadata.IMDB; imdb != nil && subject.Identity.IMDBID > 0 && imdb.IMDBID == subject.Identity.IMDBID {
 		titles = append(titles, imdb.AKA)
 	}
-	if romaji != "" {
+	if romaji := metautil.AnimeRomanizedAlternateTitle(subject.Identity, metadata, primary); romaji != "" {
 		titles = append(titles, romaji)
 	}
 	if tmdb := metadata.TMDB; tmdb != nil && subject.Identity.TMDBID > 0 && tmdb.TMDBID == subject.Identity.TMDBID {

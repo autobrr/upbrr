@@ -27,7 +27,7 @@ import (
 
 // ContractVersion changes whenever prepared fact semantics or the private seed
 // contract become incompatible, forcing persisted generations to be recomputed.
-const ContractVersion = "prepared-release-v90-source-and-sibling-evidence"
+const ContractVersion = "prepared-release-v91-source-and-sibling-evidence"
 
 // Store is the prepared-release persistence port. Implementations must commit
 // facts, identity, and provider metadata as one generation transaction.
@@ -256,7 +256,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 	if hasCurrent && reuseAllowed && !retryProviderLookup && !input.Force && !input.ExternalFreshness.RequiresRefresh() && !forceClientRefresh &&
 		!input.Controls.CaptureHDRMetadata && input.Controls.BlurayDetails == nil &&
 		(input.ExternalFreshness != api.ExternalFreshnessLoad || input.RequirePrepared) &&
-		current.Compatibility == compatibility && (verifiedSource.Digest == "" || current.Identity.Resolution.SourceFingerprint == identitySourceFingerprint) {
+		current.Compatibility == compatibility && current.Identity.Resolution.SourceFingerprint == identitySourceFingerprint {
 		// Public prepared rows omit private byte-verification evidence. Restore
 		// it only from the current active input's validated private manifest.
 		if verifiedSource.Version != "" {

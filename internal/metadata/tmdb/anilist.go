@@ -116,7 +116,7 @@ func (c *Client) ResolveAnime(ctx context.Context, tmdbName string, input Metada
 }
 
 func selectAniListMedia(media []anilistMedia, searchName string, expectedSeason, manualMAL int) *anilistMedia {
-	const minSeasonTitleSimilarity = 0.7
+	const minTitleSimilarity = 0.7
 	fullName := normalizeAnimeTitle(searchName)
 	// Season labels carry episode scope, so exclude them from the title evidence for that scope.
 	seasonBase := normalizeAnimeTitle(titleSeasonPattern.ReplaceAllString(searchName, ""))
@@ -140,10 +140,10 @@ func selectAniListMedia(media []anilistMedia, searchName string, expectedSeason,
 				seasonTitleScore = max(seasonTitleScore, metautil.SimilarityRatio(base, seasonBase))
 			}
 		}
-		if score <= 0 {
+		matchesSeason := seasonTitleScore >= minTitleSimilarity
+		if !matchesSeason && score < minTitleSimilarity {
 			continue
 		}
-		matchesSeason := seasonTitleScore >= minSeasonTitleSimilarity
 		if best == nil || (matchesSeason && !bestMatchesSeason) || (matchesSeason == bestMatchesSeason && score > bestScore) {
 			best = item
 			bestScore = score

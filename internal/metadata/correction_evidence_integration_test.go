@@ -1884,6 +1884,7 @@ func TestPrepareSeasonCorrectionWithdrawsTVDBMALAcrossRestart(t *testing.T) {
 			}
 			imdbDerivedTMDB := test.name == "kept IMDb with derived TMDB"
 			fixture.tmdbFindIMDb = imdbDerivedTMDB
+			fixture.noTMDBResults = imdbDerivedTMDB
 			fixture.tvmaze = &stubTVmaze{searchFn: func(input tvmaze.SearchInput) tvmaze.SearchResult {
 				linkedIMDb := imdbDerivedTVmaze && input.ImdbID == "tt0555002"
 				if input.ManualID != 555004 && !linkedIMDb {
@@ -2316,6 +2317,100 @@ func TestPrepareAnimeEpisodeMappingDisqualifiesTVDBIMDbVote(t *testing.T) {
 			}
 			if !test.restart && imdbClient.infoCalls != wantInfoCalls {
 				t.Fatalf("IMDb detail calls = %d, want %d", imdbClient.infoCalls, wantInfoCalls)
+			}
+		})
+	}
+}
+
+func TestPrepareSelectedSeriesMALDisagreementBlocksSiblings(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name     string
+		tvdbMAL  int
+		wantIMDb int
+	}{
+		{
+name: "providers agree",
+ tvdbMAL: 444,
+ wantIMDb: 555002,
+},
+		{name: "providers disagree", tvdbMAL: 445},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newCorrectionEvidenceFixture(t)
+			fixture.tmdbAnime, fixture.anilistSeasonTitles = true, true
+			fixture.tvdb = tvdb.NewClient(fixture.http, nil, "synthetic-api-key", "")
+			fixture.tvdbRemoteIDs = fmt.Sprintf(`[{"id":"%d","sourceName":"MyAnimeList"},{"id":"tt0555002","sourceName":"IMDB"}]`, test.tvdbMAL)
+			fixture.imdb = &stubIMDB{info: imdb.Info{
+IMDbID: "tt0555002",
+ Title: "Example Series",
+ Type: "tvSeries",
+}}
+			input := fixture.input
+			input.Instructions.Identity = api.ExternalIDOverrides{
+				TMDBID:   new(555001),
+				TVDBID:   new(555003),
+				TVmazeID: new(0),
+			}
+			module, repo := fixture.open(t)
+			for _, freshness := range []api.ExternalFreshness{api.ExternalFreshnessLoad, api.ExternalFreshnessRefresh} {
+				input.ExternalFreshness = freshness
+				result := prepareCorrectionEvidence(t, module, input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+				ids, metadata := result.Release.Identity, result.Release.ProviderMetadata
+				if ids.TMDBID != 555001 || ids.TVDBID != 555003 || ids.MALID != 444 ||
+					metadata.TMDB == nil || metadata.TVDB == nil || metadata.AniList == nil || metadata.AniList.MALID != 444 ||
+					ids.IMDBID != test.wantIMDb || (metadata.IMDB != nil) != (test.wantIMDb > 0) {
+					t.Fatalf("%s: selected identities or sibling inference differ: %+v", freshness, ids)
+				}
+				if freshness == api.ExternalFreshnessLoad {
+					if err := repo.Close(); err != nil {
+						t.Fatal(err)
+					}
+					module, _ = fixture.open(t)
+				}
+			}
+		})
+	}
+}
+
+func TestPrepareTVDBDerivedTMDBCannotCorroborateMALWithDailyMapping(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name       string
+		manualTMDB *int
+		wantMAL    int
+		wantRank   string
+	}{
+		{name: "TMDB supplied by TVDB", wantRank: "none"},
+		{
+name: "manual TMDB",
+ manualTMDB: new(555001),
+ wantMAL: 445,
+ wantRank: "S02",
+},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newCorrectionEvidenceFixtureForSource(t, "Example.Series.2026.02.01.1080p.WEB-DL.H264-GRP.mkv")
+			fixture.tmdbAnime, fixture.anilistSeasonTitles, fixture.noTMDBResults = true, true, true
+			fixture.tvdb = tvdb.NewClient(fixture.http, nil, "synthetic-api-key", "")
+			fixture.tvdbRemoteIDs = `[{"id":"445","sourceName":"MyAnimeList"},{"id":"555001","sourceName":"TheMovieDB.com","type":12}]`
+			input := fixture.input
+			input.Instructions.Identity = api.ExternalIDOverrides{
+				TMDBID:   test.manualTMDB,
+				TVDBID:   new(555003),
+				IMDBID:   new(0),
+				TVmazeID: new(0),
+			}
+			module, _ := fixture.open(t)
+			result := prepareCorrectionEvidence(t, module, input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+			ids, metadata := result.Release.Identity, result.Release.ProviderMetadata
+			if ids.TMDBID != 555001 || (ids.Dependencies.TMDB.TVDBID == 555003) != (test.manualTMDB == nil) ||
+				result.Release.Episode.SeasonLabel != "S02" || !result.Release.Episode.DateMatched ||
+				ids.MALID != test.wantMAL || metadata.TMDB == nil || metadata.TMDB.AnimeSeason != test.wantRank ||
+				(metadata.AniList != nil) != (test.wantMAL > 0) {
+				t.Fatalf("unexpected daily mapping or MAL evidence: identity=%+v episode=%+v TMDB=%+v", ids, result.Release.Episode, metadata.TMDB)
 			}
 		})
 	}

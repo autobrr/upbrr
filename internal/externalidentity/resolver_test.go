@@ -554,6 +554,10 @@ func TestResolvePropagatesCandidateIdentityDependenciesWithinSource(t *testing.T
 			wantTVDB:        api.IdentityDependency{ID: 300, IMDBID: 200},
 		},
 		{
+			name:      "same source withdrawal without replacement",
+			withdrawn: true,
+		},
+		{
 			name:       "missing match keeps fallback without a withdrawal",
 			wantTVDBID: 100,
 			wantTVDB:   api.IdentityDependency{ID: 100, IMDBID: 200},
@@ -613,7 +617,8 @@ func TestResolvePropagatesCandidateIdentityDependenciesWithinSource(t *testing.T
 				t.Fatalf("resolve: %v", err)
 			}
 			if result.Identity.TVDBID != tc.wantTVDBID || result.Identity.Dependencies.TVDB != tc.wantTVDB ||
-				result.Identity.Dependencies.IMDB != (api.IdentityDependency{ID: 200}) {
+				result.Identity.IMDBID != 200 || result.Identity.Dependencies.IMDB != (api.IdentityDependency{ID: 200}) ||
+				tc.wantTVDBID == 0 && result.Identity.Provenance.TVDB != api.IdentityProvenanceUnknown {
 				t.Fatalf("identity = %#v", result.Identity)
 			}
 		})

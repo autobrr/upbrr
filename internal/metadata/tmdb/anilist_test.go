@@ -612,6 +612,12 @@ func TestResolveAnimeRanksTheCurrentQuery(t *testing.T) {
 			queries:  []string{"月"},
 		},
 		{
+			name:      "weak native match falls back to the filename",
+			tmdbTitle: "月",
+			filename:  "Tsuki.1080p.WEB-DL-GRP",
+			queries:   []string{"月", "Tsuki"},
+		},
+		{
 			name:      "SubsPlease filename priority",
 			tmdbTitle: "Echo",
 			filename:  "[SubsPlease] Tsuki - 02 (1080p).mkv",
@@ -641,6 +647,10 @@ func TestResolveAnimeRanksTheCurrentQuery(t *testing.T) {
 						media = "[]"
 					case "Night":
 						media = `[{"idMal":300,"title":{"native":"朝空"}}]`
+					case "月":
+						if test.tmdbTitle == "月" {
+							media = `[{"idMal":300,"title":{"native":"月外伝"}}]`
+						}
 					}
 					body := `{"data":{"Page":{"media":` + media + `}}}`
 					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
