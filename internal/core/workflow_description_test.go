@@ -421,12 +421,13 @@ func TestResolveWorkflowExactMediaKeepsChannelsAndHostedVariantsSeparate(t *test
 			Order:    1,
 		},
 		{
-			ID:       "screen-2",
-			Kind:     api.MediaArtifactScreenshot,
-			Purpose:  api.ScreenshotPurposeFinal,
-			Selected: true,
-			Source:   "comparison",
-			Order:    0,
+			ID:                "screen-2",
+			Kind:              api.MediaArtifactScreenshot,
+			Purpose:           api.ScreenshotPurposeFinal,
+			Selected:          true,
+			Source:            "comparison",
+			Order:             0,
+			SourceUnavailable: true,
 		},
 		{
 			ID:       "menu-2",
@@ -497,7 +498,7 @@ func TestResolveWorkflowExactMediaKeepsChannelsAndHostedVariantsSeparate(t *test
 	}
 	wantScreenshots := []string{"screen-2.png", "screen-4.png", "screen-1.png", "screen-3.png"}
 	for index, want := range wantScreenshots {
-		if exact.Screenshots[index].Path != want {
+		if exact.Screenshots[index].Path != want || exact.Screenshots[index].SourceUnavailable != (index == 0) {
 			t.Fatalf("screenshot order = %#v", exact.Screenshots)
 		}
 	}

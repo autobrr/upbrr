@@ -942,6 +942,8 @@ type ClaimPolicyProvider interface {
 // WorkflowMediaRequirements declares tracker-owned media minimums and reuse policy.
 // Capture preferences and global caps do not belong here.
 type WorkflowMediaRequirements struct {
+	// LocalScreenshotCount is the minimum for trackers that accept local screenshots only.
+	LocalScreenshotCount int
 	// PackScreenshotsPerMember is the site-owned count for each eligible video
 	// in a multi-file pack, where a release-level count is not sufficient.
 	PackScreenshotsPerMember int

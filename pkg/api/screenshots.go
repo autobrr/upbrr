@@ -256,6 +256,8 @@ type ScreenshotImage struct {
 	Index            int
 	TimestampSeconds float64
 	Path             string
+	// SourceUnavailable keeps the hosted association while excluding missing local captures.
+	SourceUnavailable bool `json:"-"`
 	// Purpose distinguishes preview, normal final, and disc-menu images.
 	Purpose   ScreenshotPurpose
 	Width     int

@@ -53,3 +53,15 @@ func TestProjectionQuestionnairePreservesMetadataFallbacks(t *testing.T) {
 		t.Fatalf("explicit empty answer should retain its metadata fallback: %#v", got)
 	}
 }
+
+func TestProjectionQuestionnaireExposesUnmappedGenre(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{ProviderMetadata: api.SourceScopedMetadata{
+		TMDB: &api.TMDBMetadata{Overview: "Provider overview", Genres: "Unmapped"},
+	}}
+	got := projectionQuestionnaire(trackers.PreparationInput{Meta: meta})
+	if got == nil || len(got.Fields) != 1 || got.Fields[0].Key != "genre" || got.Fields[0].Value != "Unmapped" || !got.Fields[0].Required {
+		t.Fatalf("unmapped genre must be editable, got %#v", got)
+	}
+}

@@ -176,6 +176,9 @@ func exactCandidate(target api.TrackerDuplicateTarget, candidate TrackerCandidat
 			return true
 		}
 	}
+	if candidate.DisplayNameOnly {
+		return false
+	}
 	if slices.ContainsFunc(target.Names, func(name string) bool {
 		return sameCandidateName(name, candidate.Name)
 	}) {

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/autobrr/go-torrent/metainfo"
@@ -78,6 +79,32 @@ func DownloadRegisteredTorrent(
 	request *http.Request,
 	outputPath string,
 ) error {
+	return downloadRegisteredTorrent(ctx, client, request, outputPath, nil)
+}
+
+// DownloadMatchingRegisteredTorrent installs a download only when its payload
+// layout matches the torrent sent to the tracker. Tracker metadata may differ.
+func DownloadMatchingRegisteredTorrent(
+	ctx context.Context,
+	client *http.Client,
+	request *http.Request,
+	outputPath string,
+	submitted []byte,
+) error {
+	expected, err := registeredTorrentInfo(submitted)
+	if err != nil {
+		return err
+	}
+	return downloadRegisteredTorrent(ctx, client, request, outputPath, &expected)
+}
+
+func downloadRegisteredTorrent(
+	ctx context.Context,
+	client *http.Client,
+	request *http.Request,
+	outputPath string,
+	expected *metainfo.Info,
+) error {
 	if client == nil {
 		return errors.New("trackers: registered torrent HTTP client is required")
 	}
@@ -98,10 +125,34 @@ func DownloadRegisteredTorrent(
 	if err != nil {
 		return err
 	}
+	if expected != nil {
+		actual, err := registeredTorrentInfo(payload)
+		if err != nil {
+			return err
+		}
+		if !matchingRegisteredTorrentLayout(*expected, actual) {
+			return errors.New("trackers: registered torrent layout differs from the submitted torrent")
+		}
+	}
 	if err := PersistRegisteredTorrent(outputPath, payload); err != nil {
 		return fmt.Errorf("trackers: persist downloaded registered torrent: %w", err)
 	}
 	return nil
+}
+
+func matchingRegisteredTorrentLayout(expected, actual metainfo.Info) bool {
+	if !expected.HasV1() || expected.HasV2() || !actual.HasV1() || actual.HasV2() ||
+		expected.Name != actual.Name || expected.BestName() != actual.BestName() ||
+		expected.Length != actual.Length || len(expected.Files) != len(actual.Files) {
+		return false
+	}
+	expectedFiles, actualFiles := slices.Clone(expected.Files), slices.Clone(actual.Files)
+	comparePaths := func(left, right metainfo.FileInfo) int { return slices.Compare(left.BestPath(), right.BestPath()) }
+	slices.SortFunc(expectedFiles, comparePaths)
+	slices.SortFunc(actualFiles, comparePaths)
+	return slices.EqualFunc(expectedFiles, actualFiles, func(left, right metainfo.FileInfo) bool {
+		return left.Length == right.Length && slices.Equal(left.Path, right.Path) && comparePaths(left, right) == 0
+	})
 }
 
 // ReadRegisteredTorrent validates and returns exact bytes from a retained local
@@ -177,18 +228,24 @@ func readRegisteredTorrentPayload(reader io.Reader) ([]byte, error) {
 }
 
 func validateRegisteredTorrentPayload(payload []byte) error {
+	_, err := registeredTorrentInfo(payload)
+	return err
+}
+
+func registeredTorrentInfo(payload []byte) (metainfo.Info, error) {
 	if len(payload) == 0 {
-		return errors.New("trackers: registered torrent is empty")
+		return metainfo.Info{}, errors.New("trackers: registered torrent is empty")
 	}
 	if len(payload) > RegisteredTorrentMaxBytes {
-		return fmt.Errorf("trackers: registered torrent exceeds %d bytes", RegisteredTorrentMaxBytes)
+		return metainfo.Info{}, fmt.Errorf("trackers: registered torrent exceeds %d bytes", RegisteredTorrentMaxBytes)
 	}
 	torrentMeta, err := metainfo.Load(bytes.NewReader(payload))
 	if err != nil {
-		return fmt.Errorf("trackers: decode registered torrent metainfo: %w", err)
+		return metainfo.Info{}, fmt.Errorf("trackers: decode registered torrent metainfo: %w", err)
 	}
-	if _, err := torrentMeta.UnmarshalInfo(); err != nil {
-		return fmt.Errorf("trackers: decode registered torrent info: %w", err)
+	info, err := torrentMeta.UnmarshalInfo()
+	if err != nil {
+		return metainfo.Info{}, fmt.Errorf("trackers: decode registered torrent info: %w", err)
 	}
-	return nil
+	return info, nil
 }

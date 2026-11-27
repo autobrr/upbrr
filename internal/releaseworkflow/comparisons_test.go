@@ -657,6 +657,42 @@ func TestComparisonMainColumnIsTheOnlyReusableScreenshot(t *testing.T) {
 	if !HostedScreenshotRequirementsMet(snapshot, projections) {
 		t.Fatal("hosted main-column image did not satisfy the screenshot requirement")
 	}
+	t.Run("mixed local screenshots and hosted comparisons", func(t *testing.T) {
+		mixed := []api.TrackerReleaseProjection{
+			{TrackerID: "ALPHA"},
+			{TrackerID: "LOCAL", Artifacts: api.TrackerArtifactRequirements{LocalScreenshotsOnly: true, ScreenshotCount: 1}},
+		}
+		media := snapshot
+		media.ImageRequirementsPrepared = true
+		refreshMutatedMediaStatus(&media, mixed, mixed)
+		if media.Status != api.StageStatusCompleted {
+			t.Fatal("reviewed local main-column image did not satisfy the local screenshot minimum")
+		}
+
+		media.Artifacts = slices.Clone(snapshot.Artifacts)
+		media.Artifacts[1].SourceUnavailable = true
+		refreshMutatedMediaStatus(&media, mixed, mixed)
+		if media.Status != api.StageStatusBlocked {
+			t.Fatal("an unavailable main-column image or another comparison column satisfied the local minimum")
+		}
+
+		media.Artifacts = append(media.Artifacts, api.MediaArtifact{
+			ID:       "local-screenshot",
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+		})
+		refreshMutatedMediaStatus(&media, mixed, mixed)
+		if media.Status != api.StageStatusCompleted {
+			t.Fatal("local screenshot and complete hosted comparisons failed media readiness")
+		}
+
+		media.HostAttempts = snapshot.HostAttempts[1:]
+		refreshMutatedMediaStatus(&media, mixed, mixed)
+		if media.Status != api.StageStatusBlocked {
+			t.Fatal("a local-only tracker waived comparison coverage for the hosted tracker")
+		}
+	})
 	snapshot.ImageHostPreference = new("primary")
 	snapshot.HostAttempts[0].Host = "fallback"
 	if !HostedScreenshotRequirementsMet(snapshot, projections) {

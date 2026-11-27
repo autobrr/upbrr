@@ -209,7 +209,7 @@ func collectExactOnlyFinding(
 	}
 	// Name identity still blocks when differing sizes prevent exactCandidate
 	// from establishing identity through equal primary-video filenames.
-	if slices.ContainsFunc(target.Names, func(name string) bool {
+	if !candidate.DisplayNameOnly && slices.ContainsFunc(target.Names, func(name string) bool {
 		return sameCandidateName(name, candidate.Name)
 	}) {
 		finding.RuleID = policy.ID + "/exact_identity"
@@ -218,7 +218,7 @@ func collectExactOnlyFinding(
 		finding.Priority = findingPriorityExact
 		return finding
 	}
-	namesKnown := strings.TrimSpace(candidate.Name) != "" && slices.ContainsFunc(target.Names, func(name string) bool {
+	namesKnown := !candidate.DisplayNameOnly && strings.TrimSpace(candidate.Name) != "" && slices.ContainsFunc(target.Names, func(name string) bool {
 		return strings.TrimSpace(name) != ""
 	})
 	filesKnown := candidateFacts.Files.Status == FactComplete &&

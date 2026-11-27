@@ -99,10 +99,10 @@ func testPTPDescriptionCaptureScope(t *testing.T, disc string, frameDiscs []stri
 		ImageHostOverrides: api.ImageHostOverrides{SkipUpload: new(true)},
 	}
 	cfg := config.Config{
-MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "upbrr.db")},
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "upbrr.db")},
 		ImageHosting: config.ImageHostingConfig{Host1: "imgbb"},
 		Description:  config.DescriptionSettingsConfig{CustomDescriptionHeader: "Release notes", ScreenshotHeader: "[b]Screenshots[/b]"},
-}
+	}
 	service := trackers.NewServiceWithRegistry(cfg, api.NopLogger{}, descriptionPreviewPersistence{}, MustNewRegistry())
 	preview, err := service.BuildPreparation(t.Context(), api.NewDescriptionSubject(meta), trackerIDs)
 	if err != nil || len(preview.ContentFailures) != 0 || len(preview.Descriptions) != len(trackerIDs) {
@@ -827,6 +827,13 @@ func TestEveryTrackerProjectsScreenshotDefaultAndOverride(t *testing.T) {
 				if mode.UsesImages() {
 					want = test.want
 				}
+				localOnly := projection.TrackerID == "ASC"
+				if localOnly {
+					want = max(want, 2)
+				}
+				if projection.Artifacts.LocalScreenshotsOnly != localOnly {
+					t.Errorf("tracker %s local screenshots only = %t, want %t", projection.TrackerID, projection.Artifacts.LocalScreenshotsOnly, localOnly)
+				}
 				if projection.Artifacts.ScreenshotCount != want {
 					t.Errorf("tracker %s screenshot count = %d, want %d", projection.TrackerID, projection.Artifacts.ScreenshotCount, want)
 				}
@@ -1227,7 +1234,7 @@ func TestNewRegistryIncludesAuthResolvers(t *testing.T) {
 			wantMode = "form_upload"
 		}
 		wantLogin := slices.Contains([]string{"AR", "BTN", "FF", "FL", "PTP", "RTF"}, tracker)
-		wantResolver := slices.Contains([]string{"AR", "AZ", "BTN", "CZ", "FF", "FL", "HDB", "HDT", "PHD", "PTP", "RTF"}, tracker)
+		wantResolver := slices.Contains([]string{"AR", "ASC", "AZ", "BTN", "CZ", "FF", "FL", "HDB", "HDT", "PHD", "PTP", "RTF"}, tracker)
 		want2FA := tracker == "BTN" || tracker == "PTP"
 		capability, ok := registry.LookupAuthCapability(tracker)
 		if !ok || capability.TrackerID != tracker || capability.SupportsLogin != wantLogin {

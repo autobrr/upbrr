@@ -549,6 +549,7 @@ func TestWorkflowMediaRestoreCompatibleRebindsRetainedSnapshotWithoutCacheLookup
 	for _, testCase := range []struct {
 		name                    string
 		usageScope              string
+		localScreenshotsOnly    bool
 		wantPreservedAttempts   int
 		wantSynthesizedAttempts int
 	}{
@@ -563,6 +564,13 @@ func TestWorkflowMediaRestoreCompatibleRebindsRetainedSnapshotWithoutCacheLookup
 			usageScope:            "tracker:ONE",
 			wantPreservedAttempts: 2,
 		},
+		{
+			name:                    "deleted local capture remains usable by hosted peers",
+			usageScope:              "global",
+			localScreenshotsOnly:    true,
+			wantPreservedAttempts:   1,
+			wantSynthesizedAttempts: 2,
+		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
@@ -570,12 +578,22 @@ func TestWorkflowMediaRestoreCompatibleRebindsRetainedSnapshotWithoutCacheLookup
 			link := private.HostedImages[hosted.ID]
 			link.UsageScope = testCase.usageScope
 			private.HostedImages[hosted.ID] = link
+			projections := projections
+			expectedArtifacts := slices.Clone(existing.Artifacts)
+			if testCase.localScreenshotsOnly {
+				projections.Projections = append(slices.Clone(projections.Projections), api.TrackerReleaseProjection{
+					TrackerID: "LOCAL",
+					Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1, LocalScreenshotsOnly: true},
+				})
+				expectedArtifacts[0].SourceUnavailable = true
+				expectedArtifacts[2].SourceUnavailable = true
+			}
 
 			rebound, reboundResource, restoreErr := builder.RestoreCompatible(ctx, release, projections, &existing, private, time.Now())
 			if restoreErr != nil {
 				t.Fatalf("rebind retained media: %v", restoreErr)
 			}
-			if !reflect.DeepEqual(rebound.Artifacts, existing.Artifacts) || rebound.Artifacts[2].Selected ||
+			if !reflect.DeepEqual(rebound.Artifacts, expectedArtifacts) || rebound.Artifacts[2].Selected ||
 				rebound.Artifacts[0].Order != 8 || rebound.Artifacts[2].Order != 1 {
 				t.Fatalf("rebind changed retained selection/order/artifacts: %#v", rebound.Artifacts)
 			}
@@ -3181,6 +3199,30 @@ func TestReconcileRetriedImageHostFailuresClearsOnlySatisfiedTracker(t *testing.
 	}
 }
 
+func TestReconcileRetriedImageHostFailuresPreservesUnknownOutcomeForLocalOnlyTracker(t *testing.T) {
+	t.Parallel()
+
+	const trackerID api.TrackerID = "LOCAL"
+	unknown := hostedImageFailure(trackerID, "first-host", "Unresolved hosting outcome")
+	unknown.Failure.Code = api.OperationFailureUnknownOutcome
+	snapshot := api.MediaArtifactSet{Failures: []api.WorkflowFailure{unknown}}
+	projections := []api.TrackerReleaseProjection{{
+		TrackerID: trackerID,
+		Artifacts: api.TrackerArtifactRequirements{LocalScreenshotsOnly: true, ScreenshotCount: 2},
+	}}
+	attempts := []api.HostedImageAttempt{{
+		Host:       "other-host",
+		UsageScope: "tracker:LOCAL",
+		TrackerIDs: []api.TrackerID{trackerID},
+		Status:     api.StageStatusCompleted,
+	}}
+
+	reconcileRetriedImageHostFailures(&snapshot, projections, attempts, nil)
+	if !slices.Equal(snapshot.Failures, []api.WorkflowFailure{unknown}) {
+		t.Fatalf("retry in another host cleared the unresolved outcome: %#v", snapshot.Failures)
+	}
+}
+
 func TestWorkflowMediaBuilderExplicitDVDMenuCaptureUsesCap(t *testing.T) {
 	t.Parallel()
 
@@ -4516,6 +4558,38 @@ func TestWorkflowMediaIncrementalCaptureAddsFrameWithoutDuplicatingImportedImage
 	if err != nil || screenshots.captures != 2 || countMediaArtifacts(afterRestore.Artifacts, api.MediaArtifactScreenshot) != 2 ||
 		countMediaArtifacts(afterRestore.Artifacts, api.MediaArtifactHostedImage) != 1 {
 		t.Fatalf("capture after restoring imported image = %#v captures=%d err=%v", afterRestore.Artifacts, screenshots.captures, err)
+	}
+}
+
+func TestWorkflowMediaLocalOnlySelectionIgnoresExplicitImageHost(t *testing.T) {
+	t.Parallel()
+
+	sourceID := api.PublicResourceID("screen-1")
+	snapshot := api.MediaArtifactSet{
+		FailedHosts: []string{"imgbb"},
+		Artifacts: []api.MediaArtifact{{
+			ID:       sourceID,
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+		}},
+	}
+	capture := api.ScreenshotImage{Path: filepath.Join(t.TempDir(), "screen.png"), Purpose: api.ScreenshotPurposeFinal}
+	retained := workflowMediaPrivateArtifacts{ArtifactImages: map[api.PublicResourceID]api.ScreenshotImage{sourceID: capture}}
+	projections := api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+		TrackerID: "LOCAL",
+		Artifacts: api.TrackerArtifactRequirements{LocalScreenshotsOnly: true, ScreenshotCount: 1},
+	}}}
+	builder := workflowMediaBuilder{media: &mediaModule{}}
+	updated, privateMedia, attempts, err := builder.UploadImages(
+		t.Context(), api.ReleaseRef{}, projections, snapshot, retained, []api.PublicResourceID{sourceID}, "imgbb", false, nil, time.Now(),
+	)
+	if err != nil || len(attempts) != 0 || !reflect.DeepEqual(updated, snapshot) {
+		t.Fatalf("local images returned updated media %#v, hosting attempts %#v, error %v", updated, attempts, err)
+	}
+	resource, ok := privateMedia.(workflowMediaPrivateArtifacts)
+	if !ok || resource.ArtifactImages[sourceID].Path != capture.Path {
+		t.Fatalf("local capture was not retained: %#v", privateMedia)
 	}
 }
 

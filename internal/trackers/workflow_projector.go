@@ -419,6 +419,10 @@ func applyWorkflowProjectionRequirements(
 				}
 			}
 		}
+		if minimum := descriptor.WorkflowMedia.LocalScreenshotCount; minimum > 0 {
+			projection.Artifacts.LocalScreenshotsOnly = true
+			projection.Artifacts.ScreenshotCount = max(projection.Artifacts.ScreenshotCount, minimum)
+		}
 	}
 	projection.Artifacts.Description = descriptor.UploadContentMode.UsesDescription()
 	projection.Artifacts.AllowEmptyDescription = descriptor.UploadContentMode == UploadContentModeOptionalDescription

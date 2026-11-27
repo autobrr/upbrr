@@ -277,7 +277,7 @@ func TestConnectionWithoutStoredSecretsBypassesBlockedStorage(t *testing.T) {
 		code   string
 	}{
 		{target: api.ConnectionTestTarget{Kind: "tmdb"}, code: "missing_configuration"},
-		{target: api.ConnectionTestTarget{Kind: "tracker", Instance: "ASC"}, code: "unverified"},
+		{target: api.ConnectionTestTarget{Kind: "tracker", Instance: "TVC"}, code: "unverified"},
 		{target: api.ConnectionTestTarget{Kind: "image_host", Instance: "imgbb"}, code: "unsupported"},
 	} {
 		synctest.Test(t, func(t *testing.T) {

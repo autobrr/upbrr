@@ -3015,6 +3015,7 @@ export type TrackerArtifactRequirements = Readonly<{
   discScreenshots?: DiscScreenshotRequirement | null;
   dvdMenuCount: number;
   imageHosting: boolean;
+  localScreenshotsOnly?: boolean;
   mediaInfo: boolean;
   nfo: boolean;
   packScreenshots?: PackScreenshotRequirement | null;

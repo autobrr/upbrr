@@ -232,7 +232,7 @@ func (b workflowUploadPlanBuilder) Build(
 		if !releaseworkflow.ProjectionEligibleForPreparation(projection, dupe, exists, projections.ExecutionMode) {
 			continue
 		}
-		if failure, failed := releaseworkflow.TrackerImageHostFailure(media, projection.TrackerID); failed {
+		if failure, failed := releaseworkflow.ProjectionImageHostFailure(media, projection); failed {
 			trackerStatuses[projection.TrackerID] = api.StageStatusFailed
 			trackerReasons[projection.TrackerID] = strings.TrimSpace(failure.Failure.Message)
 			if trackerReasons[projection.TrackerID] == "" {

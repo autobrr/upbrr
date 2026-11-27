@@ -4511,6 +4511,103 @@ func TestRefreshMutatedMediaStatusRequiresHostedScreenshotsPerTracker(t *testing
 	}
 }
 
+func TestRefreshMutatedMediaStatusAcceptsLocalScreenshotsForLocalOnlyTrackers(t *testing.T) {
+	t.Parallel()
+
+	projections := make([]api.TrackerReleaseProjection, 1, 2)
+	projections[0] = api.TrackerReleaseProjection{
+		TrackerID: "LOCAL",
+		Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2, LocalScreenshotsOnly: true},
+	}
+	snapshot := api.MediaArtifactSet{
+		ImageRequirementsPrepared: true,
+		Artifacts: []api.MediaArtifact{
+			{
+				ID:       "screen-1",
+				Kind:     api.MediaArtifactScreenshot,
+				Purpose:  api.ScreenshotPurposeFinal,
+				Selected: true,
+			},
+			{
+				ID:       "screen-2",
+				Kind:     api.MediaArtifactScreenshot,
+				Purpose:  api.ScreenshotPurposeFinal,
+				Selected: true,
+			},
+		},
+	}
+	refreshMutatedMediaStatus(&snapshot, projections, projections)
+	if snapshot.Status != api.StageStatusCompleted || len(snapshot.RequiredActions) != 0 {
+		t.Fatalf("local screenshots did not satisfy local-only requirements: %#v", snapshot)
+	}
+	second := snapshot.Artifacts[1]
+	packCapture := second
+	packCapture.PackMemberID = "member-1"
+	additionalDiscCapture := second
+	additionalDiscCapture.AdditionalDisc = true
+	for _, scopedCapture := range []api.MediaArtifact{packCapture, additionalDiscCapture} {
+		snapshot.Artifacts[1] = scopedCapture
+		refreshMutatedMediaStatus(&snapshot, projections, projections)
+		if snapshot.Status != api.StageStatusBlocked {
+			t.Errorf("a tracker-scoped capture satisfied the local minimum: %#v", scopedCapture)
+		}
+	}
+	snapshot.Artifacts[1] = second
+	snapshot.Artifacts[1].Selected = false
+	refreshMutatedMediaStatus(&snapshot, projections, projections)
+	if snapshot.Status != api.StageStatusBlocked {
+		t.Fatalf("one selected screenshot satisfied the local minimum of two: %#v", snapshot)
+	}
+	const localPrompt = "Capture or select more local final screenshots before upload (1 of 2 required)."
+	if len(snapshot.RequiredActions) != 1 || snapshot.RequiredActions[0].Kind != api.RequiredActionProvideTrackerInput ||
+		snapshot.RequiredActions[0].Prompt != localPrompt {
+		t.Fatalf("local screenshot requirement returned actions %#v, want %q", snapshot.RequiredActions, localPrompt)
+	}
+	snapshot.Artifacts[1].Selected = true
+	snapshot.Artifacts[1].Purpose = api.ScreenshotPurposePreview
+	for _, prepared := range []bool{false, true} {
+		for _, skipped := range []bool{false, true} {
+			snapshot.ImageRequirementsPrepared = prepared
+			snapshot.ImageHostUploadSkipped = skipped
+			refreshMutatedMediaStatus(&snapshot, projections, projections)
+			if snapshot.Status != api.StageStatusBlocked {
+				t.Fatalf("preview satisfied local minimum with prepared=%t skipped=%t: %#v", prepared, skipped, snapshot)
+			}
+		}
+	}
+	snapshot.ImageHostUploadSkipped = false
+	snapshot.Artifacts[1].Purpose = api.ScreenshotPurposeFinal
+	snapshot.Artifacts[1].SourceUnavailable = true
+	refreshMutatedMediaStatus(&snapshot, projections, projections)
+	if snapshot.Status != api.StageStatusBlocked {
+		t.Fatalf("missing local screenshot satisfied the minimum: %#v", snapshot)
+	}
+	hosted := api.MediaArtifact{
+		ID:       "hosted-screen",
+		Kind:     api.MediaArtifactHostedImage,
+		Purpose:  api.ScreenshotPurposeFinal,
+		Source:   string(snapshot.Artifacts[1].ID),
+		Selected: true,
+	}
+	hostedProjection := api.TrackerReleaseProjection{
+		TrackerID: "HOSTED",
+		Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1},
+	}
+	snapshot.Artifacts = append(snapshot.Artifacts, hosted)
+	snapshot.HostAttempts = []api.HostedImageAttempt{{TrackerIDs: []api.TrackerID{"HOSTED"}, Results: []api.MediaArtifact{hosted}}}
+	refreshMutatedMediaStatus(&snapshot, []api.TrackerReleaseProjection{hostedProjection}, projections)
+	if snapshot.Status != api.StageStatusCompleted {
+		t.Fatalf("a usable hosted link was blocked by its missing local source: %#v", snapshot)
+	}
+	snapshot.Artifacts[1].SourceUnavailable = false
+	snapshot.HostAttempts = nil
+	projections = append(projections, hostedProjection)
+	refreshMutatedMediaStatus(&snapshot, projections, projections)
+	if snapshot.Status != api.StageStatusBlocked {
+		t.Fatalf("local-only selection waived another tracker's hosted minimum: %#v", snapshot)
+	}
+}
+
 func TestRefreshMutatedMediaStatusExcludesOnlyTrackerScopedHostFailures(t *testing.T) {
 	t.Parallel()
 
@@ -4702,6 +4799,49 @@ func TestRefreshMutatedMediaStatusExcludesOnlyTrackerScopedHostFailures(t *testi
 				t.Fatalf("blocked media actions = %#v", snapshot.RequiredActions)
 			}
 		})
+	}
+}
+
+func TestRefreshMutatedMediaStatusIgnoresObsoleteLocalImageHostFailure(t *testing.T) {
+	t.Parallel()
+
+	projections := []api.TrackerReleaseProjection{{
+		TrackerID: "LOCAL",
+		Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1, LocalScreenshotsOnly: true},
+	}}
+	retainedFailure := api.WorkflowFailure{
+		TrackerID: "local",
+		Failure: api.OperationFailure{
+			Operation: api.OperationKindImageHosting,
+			Code:      api.OperationFailureImageHostUnavailable,
+		},
+	}
+	snapshot := api.MediaArtifactSet{
+		ImageRequirementsPrepared: true,
+		Artifacts: []api.MediaArtifact{{
+			ID:       "local-screen",
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+		}},
+		Failures: []api.WorkflowFailure{retainedFailure},
+	}
+	refreshMutatedMediaStatus(&snapshot, projections, projections)
+	if snapshot.Status != api.StageStatusCompleted || len(snapshot.Failures) != 0 {
+		t.Fatalf("obsolete local image hosting failure blocked media readiness: %#v", snapshot)
+	}
+	retainedFailure.TrackerID = ""
+	snapshot.Failures = []api.WorkflowFailure{retainedFailure}
+	refreshMutatedMediaStatus(&snapshot, projections, projections)
+	if snapshot.Status != api.StageStatusBlocked {
+		t.Fatalf("unscoped hosting failure did not block media readiness: %#v", snapshot)
+	}
+	retainedFailure.TrackerID = "LOCAL"
+	retainedFailure.Failure.Code = api.OperationFailureUnknownOutcome
+	snapshot.Failures = []api.WorkflowFailure{retainedFailure}
+	refreshMutatedMediaStatus(&snapshot, projections, projections)
+	if snapshot.Status != api.StageStatusBlocked {
+		t.Fatalf("unknown local hosting outcome did not block media readiness: %#v", snapshot)
 	}
 }
 
