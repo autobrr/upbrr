@@ -2179,6 +2179,7 @@ func TestPrepareAnimeEpisodeMappingDisqualifiesTVDBIMDbVote(t *testing.T) {
 		independent    bool
 		directLink     bool
 		restart        bool
+		refresh        bool
 	}{
 		{name: "TVDB absolute fallback", filename: "Example.Series.S01E13.1080p.WEB-DL.H264-GRP.mkv"},
 		{name: "IMDb air date", filename: "Example.Series.2026.02.11.1080p.WEB-DL.H264-GRP.mkv"},
@@ -2191,6 +2192,11 @@ func TestPrepareAnimeEpisodeMappingDisqualifiesTVDBIMDbVote(t *testing.T) {
 			name:     "IMDb confirmed by TVDB before restart",
 			filename: "Example.Series.S01E01.1080p.WEB-DL.H264-GRP.mkv",
 			restart:  true,
+		},
+		{
+			name:     "refresh withdraws previously independent IMDb after episode replay",
+			filename: "Example.Series.2026.02.11.1080p.WEB-DL.H264-GRP.mkv",
+			refresh:  true,
 		},
 		{
 			name:        "independent IMDb confirmation before restart",
@@ -2260,6 +2266,11 @@ func TestPrepareAnimeEpisodeMappingDisqualifiesTVDBIMDbVote(t *testing.T) {
 			if test.directLink {
 				imdbClient.searchResult = imdb.SearchResult{}
 			}
+			tentativeSearch, episodes := imdbClient.searchResult, imdbClient.info.Episodes
+			if test.refresh {
+				imdbClient.searchResult = imdb.SearchResult{IMDbID: 555002, AutoSelected: true}
+				imdbClient.info.Episodes = nil
+			}
 			fixture.imdb = imdbClient
 			if test.independent {
 				fixture.tmdbExternalIDs = `{"imdb_id":"tt0555002"}`
@@ -2268,6 +2279,16 @@ func TestPrepareAnimeEpisodeMappingDisqualifiesTVDBIMDbVote(t *testing.T) {
 			input.Instructions.Identity = api.ExternalIDOverrides{}
 			module, repo := fixture.open(t)
 			result := prepareCorrectionEvidence(t, module, input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+			if test.refresh {
+				if ids := result.Release.Identity; ids.IMDBID != 555002 || ids.Dependencies.IMDB != (api.IdentityDependency{ID: 555002}) ||
+					result.Release.ProviderMetadata.IMDB == nil || ids.MALID != 444 {
+					t.Fatalf("setup did not persist an independent IMDb match and agreeing MAL: %+v", ids)
+				}
+				imdbClient.searchResult = tentativeSearch
+				imdbClient.info.Episodes = episodes
+				input.ExternalFreshness = api.ExternalFreshnessRefresh
+				result = prepareCorrectionEvidence(t, module, input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+			}
 			if test.restart {
 				assertPreparedAnime(t, result.Release, "S01", 444, "AKA Aoi Hoshi", "Shounen")
 				if result.Release.Identity.IMDBID != 555002 || result.Release.ProviderMetadata.IMDB == nil {
@@ -2304,6 +2325,9 @@ func TestPrepareAnimeEpisodeMappingDisqualifiesTVDBIMDbVote(t *testing.T) {
 			}
 			if test.name == "TVDB absolute fallback" {
 				wantInfoCalls = 0
+			}
+			if test.refresh {
+				wantInfoCalls = 2
 			}
 			if test.independent {
 				wantIMDb, wantSeason = 555002, "S02"

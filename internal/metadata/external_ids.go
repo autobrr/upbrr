@@ -1954,10 +1954,13 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	}
 	finalEpisodeIDs := episodeProviderIDs()
 	if hasFilteredSeason || downstreamIDs.IMDBID != finalEpisodeIDs.IMDBID || downstreamIDs.TVmazeID != finalEpisodeIDs.TVmazeID {
-		// Publish episode fields only after reconciling the providers that can
-		// contribute to them.
+		// Replay the original episode inputs with the reconciled identity decisions.
 		downstreamIDs = finalEpisodeIDs
 		episodeInput.LookupWarnings = meta.LookupWarnings
+		episodeInput.AuthoritativeIMDB = meta.AuthoritativeIMDB
+		episodeInput.AuthoritativeTVmaze = meta.AuthoritativeTVmaze
+		episodeInput.AuthoritativeMAL = meta.AuthoritativeMAL
+		episodeInput.WithdrawnStoredIDs = meta.WithdrawnStoredIDs
 		meta = s.applyTVEpisodeMetadata(ctx, episodeInput, &downstreamIDs, &metadata, tmdbClient, tvdbClient, tvmazeClient)
 		ids.Category = downstreamIDs.Category
 	}
