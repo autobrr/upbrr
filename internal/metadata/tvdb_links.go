@@ -4,9 +4,12 @@
 package metadata
 
 import (
+	"context"
+	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/metadata/tmdb"
 	"github.com/autobrr/upbrr/internal/metadata/tvdb"
@@ -50,6 +53,60 @@ func markTVDBLinkConflict(metadata *api.TVDBMetadata, provider api.IdentityProvi
 			metadata.RemoteLinks.Status = api.MetadataEvidenceStatusContradictory
 		}
 	}
+}
+
+func isUsableTVDBMALLink(link api.TVDBRemoteLink) bool {
+	return link.Provider == api.IdentityProviderMAL && (link.State == "valid" || link.State == "conflicting")
+}
+
+func hasTVDBMALConflict(links api.TVDBRemoteLinks) bool {
+	return slices.ContainsFunc(links.Links, func(link api.TVDBRemoteLink) bool {
+		return link.Provider == api.IdentityProviderMAL && link.State == "conflicting"
+	})
+}
+
+func replayTVDBMALLinks(ctx context.Context, client TVDBClient, id int) api.TVDBRemoteLinks {
+	if evidence.Enabled(ctx) {
+		// The extended record and the links-only response have distinct cache
+		// keys. Start with the extended evidence used to collect the series.
+		if series, err := client.GetSeriesMetadata(ctx, id); err == nil && series.TVDBID == id &&
+			slices.ContainsFunc(series.RemoteLinks.Links, isUsableTVDBMALLink) {
+			return series.RemoteLinks
+		}
+	}
+	links, err := client.GetSeriesRemoteLinks(ctx, id)
+	if err != nil {
+		return api.TVDBRemoteLinks{}
+	}
+	return links
+}
+
+func restoreAgreeingTVDBMALLinks(links, raw api.TVDBRemoteLinks, malID int) api.TVDBRemoteLinks {
+	if raw.Status != api.MetadataEvidenceStatusComplete && raw.Status != api.MetadataEvidenceStatusContradictory || hasTVDBMALConflict(raw) {
+		return links
+	}
+	var agreeing []api.TVDBRemoteLink
+	for _, link := range raw.Links {
+		if link.Provider == api.IdentityProviderMAL && link.State == "valid" {
+			if malID > 0 && link.ID != malID {
+				return links
+			}
+			agreeing = append(agreeing, link)
+		}
+	}
+	if len(agreeing) == 0 {
+		return links
+	}
+	for _, link := range links.Links {
+		if !isUsableTVDBMALLink(link) {
+			agreeing = append(agreeing, link)
+		}
+	}
+	links.Links = agreeing
+	if !slices.ContainsFunc(agreeing, func(link api.TVDBRemoteLink) bool { return link.State == "conflicting" }) {
+		links.Status = raw.Status
+	}
+	return links
 }
 
 func safeTVDBNameMatch(results []tvdb.SeriesSearchResult, title string, year int) int {

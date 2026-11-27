@@ -26,6 +26,8 @@ type Request struct {
 	Layout sourcelayout.Layout
 	// SourceFingerprint binds repository-backed selection to the inspected inventory.
 	SourceFingerprint string
+	// IdentitySourceFingerprint also binds the inventory to any verified content.
+	IdentitySourceFingerprint string
 	// IdentityResetFields suppresses legacy explicit pins after a persisted Auto reset.
 	IdentityResetFields []api.CorrectionField
 	// RetainedClientEvidence is compatible evidence from this process's current
@@ -177,6 +179,7 @@ type State struct {
 	MetadataRequirements       api.MetadataRequirementSet
 	ExternalFreshness          api.ExternalFreshness
 	SourceFingerprint          string
+	IdentitySourceFingerprint  string
 	SourcePath                 string
 	SourceLookupURL            string
 	SourceLookupActive         bool
@@ -282,6 +285,9 @@ type State struct {
 	EpisodeYear                          int
 	SelectedBDMVPlaylists                []api.PlaylistInfo
 	Identity                             api.ExternalIdentity
+	AuthoritativeIMDB                    bool
+	AuthoritativeTVmaze                  bool
+	AuthoritativeMAL                     bool
 	ExternalIdentityCandidates           []api.ExternalIdentityCandidate
 	ProviderMetadata                     api.SourceScopedMetadata
 	MediaFileFacts                       api.MediaFileFacts

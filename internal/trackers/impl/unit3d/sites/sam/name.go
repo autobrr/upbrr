@@ -9,5 +9,5 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return unit3d.LocalizedReleaseNamePolicy("unit3d/sam/v2")
+	return unit3d.LocalizedReleaseNamePolicy("unit3d/sam/v3")
 }

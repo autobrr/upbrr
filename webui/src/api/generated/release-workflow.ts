@@ -2802,6 +2802,8 @@ export type TMDBLocalizedData = Readonly<{
 
 export type TMDBMetadata = Readonly<{
   Anime: boolean;
+  AnimeLookupPending?: boolean;
+  AnimeSeason?: string;
   Backdrop: string;
   Cast: readonly string[];
   Category: string;

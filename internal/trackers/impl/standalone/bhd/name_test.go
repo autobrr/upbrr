@@ -185,7 +185,7 @@ func TestBHDStructuredNamePolicyKeepsTVYearWithoutDisambiguationEvidence(t *test
 func TestBHDNamingPolicyVersion(t *testing.T) {
 	t.Parallel()
 	policy := New().ReleaseNamePolicy()
-	if policy.ID != "standalone/bhd/v11" || policy.TitleProvider != api.IdentityProviderIMDB || policy.MovieYearProvider != api.IdentityProviderIMDB {
+	if policy.ID != "standalone/bhd/v12" || policy.TitleProvider != api.IdentityProviderIMDB || policy.MovieYearProvider != api.IdentityProviderIMDB {
 		t.Fatalf("BHD naming policy = %+v", policy)
 	}
 }
@@ -506,6 +506,14 @@ func TestBHDUsesOriginalTitleAfterProviderSwitch(t *testing.T) {
 	subject.NamePresentation = api.ReleaseNamePresentation{Version: api.ReleaseNamePresentationVersionV1, OmitAlternateTitle: true}
 	if got, want := bhdReviewedName(t, subject, nil), "IMDb Signal 2002 1080p WEB-DL-GRP"; got != want {
 		t.Fatalf("name with explicit omission = %q, want %q", got, want)
+	}
+
+	subject.NamePresentation = api.ReleaseNamePresentation{}
+	subject.ProviderMetadata.IMDB.Title = "Ox"
+	subject.ProviderMetadata.IMDB.AKA = "Ox (2002)"
+	subject.ProviderMetadata.TMDB.OriginalTitle = ""
+	if got, want := bhdReviewedName(t, subject, nil), "Ox AKA Ox (2002) 2002 1080p WEB-DL-GRP"; got != want {
+		t.Errorf("literal movie AKA year qualified name = %q, want %q", got, want)
 	}
 }
 

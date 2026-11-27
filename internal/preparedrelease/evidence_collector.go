@@ -79,9 +79,12 @@ func (c *EvidenceCollector) Collect(
 	}
 
 	candidate := externalidentity.CandidateEvidence{
-		Identity:   cloneCollectedIdentity(meta.Identity),
-		Metadata:   cloneCollectedProviderMetadata(meta.ProviderMetadata),
-		Candidates: cloneCollectedCandidates(meta.ExternalIdentityCandidates),
+		Identity:            cloneCollectedIdentity(meta.Identity),
+		Metadata:            cloneCollectedProviderMetadata(meta.ProviderMetadata),
+		Candidates:          cloneCollectedCandidates(meta.ExternalIdentityCandidates),
+		AuthoritativeIMDB:   meta.AuthoritativeIMDB,
+		AuthoritativeTVmaze: meta.AuthoritativeTVmaze,
+		AuthoritativeMAL:    meta.AuthoritativeMAL,
 	}
 	candidate.Identity.SourcePath = request.Manifest.SourcePath
 	candidate.Metadata.SourcePath = request.Manifest.SourcePath

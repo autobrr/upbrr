@@ -9,13 +9,14 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func releaseNamePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.NewReleaseNamePolicy("unit3d/otw/v16", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
+	return trackers.NewReleaseNamePolicy("unit3d/otw/v17", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
 		if input.RequestedName != nil {
 			return trackers.ResolvedReleaseNames{Upload: *input.RequestedName}, nil
 		}
@@ -39,7 +40,7 @@ func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 	if year > 0 {
 		parts = append(parts, strconv.Itoa(year))
 	}
-	parts = append(parts, otwSeasonEpisode(meta), meta.EpisodeCoverage.Part, otwEpisodeTitle(meta))
+	parts = append(parts, otwSeasonEpisode(meta), meta.EpisodeCoverage.Part, otwEpisodeTitle(meta, title))
 	parts = append(parts, otwNameModifiers(meta)...)
 	parts = append(parts, meta.Repack, meta.Release.Resolution)
 	if isOTWCompleteDisc(meta) {
@@ -127,11 +128,16 @@ func otwSeasonEpisode(meta api.UploadSubject) string {
 	}
 }
 
-func otwEpisodeTitle(meta api.UploadSubject) string {
+func otwEpisodeTitle(meta api.UploadSubject, title string) string {
 	if meta.TVPack || strings.TrimSpace(meta.DailyEpisodeDate) != "" || meta.EpisodeInt <= 0 && strings.TrimSpace(meta.EpisodeStr) == "" {
 		return ""
 	}
-	return strings.TrimSpace(meta.EpisodeTitle)
+	episode := strings.TrimSpace(meta.EpisodeTitle)
+	component, _ := meta.GeneratedName.Component(api.NameRoleEpisodeTitle)
+	if !component.Manual && meta.ReleaseNameOverrides.EpisodeTitle == nil && metautil.EpisodeTitleRepeatsName(episode, title, "") {
+		return ""
+	}
+	return episode
 }
 
 func otwTwoDigits(value int) string {

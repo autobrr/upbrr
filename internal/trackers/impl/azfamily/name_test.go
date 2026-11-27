@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/metadata"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -609,31 +610,83 @@ func TestCinemaZUsesBoundRomanizationForNativeTitle(t *testing.T) {
 func TestAZFamilyDeduplicatesEpisodeAgainstFinalTitle(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
-		site, want string
-		omitAKA    bool
+		name      string
+		site      string
+		mediaType string
+		discType  string
+		want      string
+		wantCount int
+		omitAKA   bool
 	}{
-		{site: "AZ", want: "Blue Sky S01E02 Sora no Ao"},
 		{
-			site:    "CZ",
-			omitAKA: true,
-			want:    "Sora no Ao S01E02",
+			name:      "AZ restores web episode when AKA omitted",
+			site:      "AZ",
+			mediaType: "WEBDL",
+			want:      "Blue Sky S01E02 Sora no Ao",
+			wantCount: 1,
+		},
+		{
+			name:      "CZ suppresses web episode matching final title",
+			site:      "CZ",
+			mediaType: "WEBDL",
+			omitAKA:   true,
+			want:      "Sora no Ao S01E02",
+			wantCount: 1,
+		},
+		{
+			name:      "AZ keeps BDMV episode omitted when matching original AKA",
+			site:      "AZ",
+			mediaType: "DISC",
+			discType:  "BDMV",
+			want:      "Blue Sky S01E02",
+			wantCount: 0,
+		},
+		{
+			name:      "CZ keeps BDMV episode omitted when matching original AKA",
+			site:      "CZ",
+			mediaType: "DISC",
+			discType:  "BDMV",
+			want:      "Sora no Ao S01E02",
+			wantCount: 1,
 		},
 	} {
-		t.Run(test.site, func(t *testing.T) {
+		t.Run(test.name, func(t *testing.T) {
 			subject := azFamilyGeneratedSubject(t, api.ReleaseNameRequest{
 				Category:     "TV",
-				Type:         "WEBDL",
+				Type:         test.mediaType,
+				DiscType:     test.discType,
 				Title:        "Blue Sky",
 				AltTitle:     "AKA Sora no Ao",
 				Season:       "S01",
 				Episode:      "E02",
 				EpisodeTitle: "Sora no Ao",
+				Resolution:   "1080p",
+				Source:       "BluRay",
 				NoAKA:        test.omitAKA,
 			})
 			subject.ProviderMetadata.TVDB = &api.TVDBMetadata{Name: "Sora no Ao", NameEnglish: "Blue Sky"}
-			if got := azFamilyReviewedName(t, test.site, subject, nil); !strings.HasPrefix(got, test.want) ||
-				strings.Count(got, "Sora no Ao") != 1 {
-				t.Errorf("projected name = %q, want the title and episode prefix %q with a single Sora no Ao", got, test.want)
+			if test.mediaType == "WEBDL" {
+				state := preparationstate.State{
+					Identity:               api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+					Release:                subject.Release,
+					Type:                   test.mediaType,
+					Source:                 "BluRay",
+					SeasonStr:              "S01",
+					EpisodeStr:             "E02",
+					EpisodeTitle:           "Sora no Ao",
+					AvailableGeneratedName: subject.GeneratedName,
+					ReleaseNameOverrides: api.ReleaseNameOverrides{
+						NoAKA:          new(test.omitAKA),
+						NoEpisodeTitle: new(false),
+					},
+				}
+				state.Release.Alt = "Sora no Ao"
+				metadata.RebuildReleaseName(&state, api.NopLogger{})
+				subject.GeneratedName, subject.ReleaseName = state.GeneratedName, state.ReleaseName
+			}
+			if got := azFamilyReviewedName(t, test.site, subject, nil); !strings.HasPrefix(got, test.want+" ") ||
+				strings.Count(got, "Sora no Ao") != test.wantCount {
+				t.Errorf("projected name = %q, want prefix %q with %d occurrences of Sora no Ao", got, test.want, test.wantCount)
 			}
 		})
 	}
@@ -645,8 +698,8 @@ func TestAZFamilyNamingPolicyVersions(t *testing.T) {
 		site, want string
 		provider   api.IdentityProvider
 	}{
-		{"AZ", "azfamily/az/v4", api.IdentityProviderTMDB},
-		{"CZ", "azfamily/cz/v9", api.IdentityProviderIMDB},
+		{"AZ", "azfamily/az/v5", api.IdentityProviderTMDB},
+		{"CZ", "azfamily/cz/v10", api.IdentityProviderIMDB},
 		{"PHD", "azfamily/phd/v6", api.IdentityProviderTMDB},
 	} {
 		t.Run(test.site, func(t *testing.T) {

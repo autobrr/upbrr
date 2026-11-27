@@ -1315,7 +1315,7 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 	}
 
 	title, altTitle, year := resolveReleaseNameTitle(category, meta)
-	if meta.ReleaseNameOverrides.ManualYear != nil && (!strings.EqualFold(category, "TV") || !matchingTVDBMetadataForNaming(meta)) {
+	if meta.ReleaseNameOverrides.ManualYear != nil && !strings.EqualFold(category, "TV") {
 		year = *meta.ReleaseNameOverrides.ManualYear
 	}
 	searchYear := ""
@@ -1472,7 +1472,7 @@ func resolvedGenre(meta preparationstate.State) string {
 
 // resolveReleaseNameTitle selects naming fields from current matching provider
 // metadata while preserving parsed values when no eligible snapshot exists.
-// TV year is zero unless matching TVDB metadata supplies a positive alias year.
+// TV year comes from matching TVDB metadata or a manual year fallback.
 func resolveReleaseNameTitle(category string, meta preparationstate.State) (string, string, int) {
 	title := strings.TrimSpace(meta.Release.Title)
 	altTitle := strings.TrimSpace(meta.Release.Alt)
@@ -1487,17 +1487,21 @@ func resolveReleaseNameTitle(category string, meta preparationstate.State) (stri
 		if matchingIMDBMetadataForNaming(meta) {
 			imdbAKA = meta.ProviderMetadata.IMDB.AKA
 		}
+		year = tvdbNamingYear(tvdb)
 		if englishTitle != "" {
 			title = englishTitle
-			altTitle = fillProviderAlternateTitle(altTitle, title, imdbAKA, nativeTitle)
+			altTitle = fillProviderAlternateTitle(altTitle, title, year, imdbAKA, nativeTitle)
 		} else {
 			title = tvdb.DisplayName()
-			altTitle = fillProviderAlternateTitle(altTitle, title, imdbAKA)
+			altTitle = fillProviderAlternateTitle(altTitle, title, year, imdbAKA)
 		}
-		year = tvdbNamingYear(tvdb)
 		return title, altTitle, year
 	}
 
+	tvYear := 0
+	if isTV && meta.ReleaseNameOverrides.ManualYear != nil && *meta.ReleaseNameOverrides.ManualYear > 0 {
+		tvYear = *meta.ReleaseNameOverrides.ManualYear
+	}
 	switch {
 	case matchingTMDBMetadataForNaming(meta):
 		tmdb := meta.ProviderMetadata.TMDB
@@ -1507,22 +1511,22 @@ func resolveReleaseNameTitle(category string, meta preparationstate.State) (stri
 			imdbAKA = meta.ProviderMetadata.IMDB.AKA
 		}
 		romaji := metautil.AnimeRomanizedTitle(meta.Identity, meta.ProviderMetadata)
-		altTitle = fillProviderAlternateTitle(altTitle, title, romaji, imdbAKA, tmdb.OriginalTitle)
+		altTitle = fillProviderAlternateTitle(altTitle, title, tvYear, romaji, imdbAKA, tmdb.OriginalTitle)
 		if year == 0 && tmdb.Year > 0 {
 			year = tmdb.Year
 		}
 	case matchingIMDBMetadataForNaming(meta):
 		imdb := meta.ProviderMetadata.IMDB
 		title = strings.TrimSpace(imdb.Title)
-		altTitle = fillProviderAlternateTitle(altTitle, title, imdb.AKA)
+		altTitle = fillProviderAlternateTitle(altTitle, title, tvYear, imdb.AKA)
 		if year == 0 && imdb.Year > 0 {
 			year = imdb.Year
 		}
 	default:
-		altTitle = fillProviderAlternateTitle(altTitle, title)
+		altTitle = fillProviderAlternateTitle(altTitle, title, tvYear)
 	}
 	if isTV {
-		year = 0
+		year = tvYear
 	}
 	return title, altTitle, year
 }
@@ -1576,9 +1580,10 @@ func namingSourceMatches(scopedPath, currentPath string) bool {
 
 // fillProviderAlternateTitle returns the first non-empty alternate that differs
 // from the primary, preferring the parsed value before provider candidates.
-func fillProviderAlternateTitle(current, primary string, candidates ...string) string {
+func fillProviderAlternateTitle(current, primary string, tvYear int, candidates ...string) string {
+	primary = metautil.TrimTrailingParentheticalYear(primary, tvYear)
 	for _, alternate := range append([]string{current}, candidates...) {
-		if metautil.DistinctTitle(primary, alternate) {
+		if metautil.DistinctTitle(primary, metautil.TrimTrailingParentheticalYear(alternate, tvYear)) {
 			return metautil.FormatOriginalAKA(alternate)
 		}
 	}

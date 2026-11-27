@@ -141,3 +141,16 @@ func TestParseReleaseRejectsUnsupportedSeasonCategory(t *testing.T) {
 		}
 	}
 }
+
+func TestTitleIdentityKeyPreservesCombiningMarks(t *testing.T) {
+	t.Parallel()
+	if EpisodeTitleRepeatsName("कि", "क", "") {
+		t.Fatal("combining vowel mark was stripped before exact comparison")
+	}
+	if TitleIdentityKey("कि") == TitleIdentityKey("क") {
+		t.Fatalf("distinct titles collapsed to %q", TitleIdentityKey("कि"))
+	}
+	if !EpisodeTitleRepeatsName("Cafe\u0301!", "Café", "") {
+		t.Fatal("canonically equivalent NFC titles with punctuation should still match")
+	}
+}

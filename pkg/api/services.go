@@ -2514,6 +2514,12 @@ type TMDBMetadata struct {
 	// It does not identify release tracks or override explicit corrections.
 	SpokenLanguages []string `json:",omitempty"`
 
+	// AnimeSeason records the completed AniList ranking scope. It holds a TV season
+	// label, "none" for seasonless TV, or "movie". An empty scope has no completed ranking.
+	AnimeSeason string `json:",omitempty"`
+	// AnimeLookupPending records a failed automatic anime search that ordinary preparation can retry.
+	AnimeLookupPending bool `json:",omitempty"`
+
 	// LogoLanguagePreference identifies the order used for the retained artwork.
 	LogoLanguagePreference string `json:",omitempty"`
 	// LogoLookupPending records a failed artwork lookup that ordinary preparation can retry.

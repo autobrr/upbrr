@@ -407,14 +407,15 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 	logger.Tracef("metadata: normalized path %s", primary)
 
 	meta = preparationstate.State{
-		MetadataRequirements: input.MetadataRequirements,
-		ExternalFreshness:    input.ExternalFreshness,
-		SourceFingerprint:    request.SourceFingerprint,
-		SourcePath:           primary,
-		SourceLookupURL:      strings.TrimSpace(input.Instructions.SourceLookup),
-		Bluray:               input.Instructions.Bluray,
-		BlurayDetails:        input.Controls.BlurayDetails,
-		Paths:                normalizedPaths,
+		MetadataRequirements:      input.MetadataRequirements,
+		ExternalFreshness:         input.ExternalFreshness,
+		SourceFingerprint:         request.SourceFingerprint,
+		IdentitySourceFingerprint: request.IdentitySourceFingerprint,
+		SourcePath:                primary,
+		SourceLookupURL:           strings.TrimSpace(input.Instructions.SourceLookup),
+		Bluray:                    input.Instructions.Bluray,
+		BlurayDetails:             input.Controls.BlurayDetails,
+		Paths:                     normalizedPaths,
 		Policy: preparationstate.CollectionPolicy{
 			OnlyID:          input.Policy.OnlyID,
 			KeepFolder:      input.Policy.KeepFolder,

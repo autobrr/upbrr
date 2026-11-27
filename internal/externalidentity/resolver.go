@@ -111,6 +111,10 @@ type CandidateEvidence struct {
 	Identity   api.ExternalIdentity
 	Metadata   api.SourceScopedMetadata
 	Candidates []api.ExternalIdentityCandidate
+	// These flags allow the candidate to withdraw stored automatic provider IDs.
+	AuthoritativeIMDB   bool
+	AuthoritativeTVmaze bool
+	AuthoritativeMAL    bool
 }
 
 // CandidateSource supplies provider evidence without persistence. It exists
@@ -300,7 +304,7 @@ func (r *Resolver) resolveCandidate(
 			return Result{}, err
 		}
 	}
-	if err := applyCandidateEvidence(&result, candidate, request.SourcePath, request.Generation, resolvedAt); err != nil {
+	if err := applyCandidateEvidence(&result, candidate, request, resolvedAt); err != nil {
 		return Result{}, err
 	}
 	if err := applyResolutionIntent(&result.Identity, request.Intent); err != nil {
@@ -316,8 +320,7 @@ func (r *Resolver) resolveCandidate(
 func applyCandidateEvidence(
 	result *Result,
 	candidate CandidateEvidence,
-	sourcePath string,
-	generation api.PreparedGeneration,
+	request Request,
 	resolvedAt time.Time,
 ) error {
 	if result == nil {
@@ -328,21 +331,21 @@ func applyCandidateEvidence(
 	categoryChanged := storedCategory != api.CanonicalCategoryUnknown && candidateCategory != api.CanonicalCategoryUnknown &&
 		storedCategory != candidateCategory
 	authoritativeProviders := hasExplicitProviderCorrection(candidate.Identity) || categoryChanged
-	candidateIdentityApplies := hasCandidateIdentity(candidate.Identity) && sourceEvidenceMatches(candidate.Identity.SourcePath, sourcePath)
+	candidateIdentityApplies := hasCandidateIdentity(candidate.Identity) && sourceEvidenceMatches(candidate.Identity.SourcePath, request.SourcePath)
 	if candidateIdentityApplies {
 		if authoritativeProviders || hasExplicitProviderCorrection(result.Identity) {
 			applyAuthoritativeCandidateProviders(&result.Identity, candidate.Identity)
 			applyCandidateCategory(&result.Identity, candidate.Identity)
 		} else {
-			applyCandidateIdentity(&result.Identity, candidate.Identity)
+			applyCandidateIdentity(&result.Identity, candidate, request.Intent.ProviderOverrides)
 		}
 		if err := appendEvidenceFingerprint(result, "provider_candidate", candidate.Identity); err != nil {
 			return err
 		}
 	}
 	if (hasCandidateMetadata(candidate.Metadata) || authoritativeProviders && candidateIdentityApplies) &&
-		sourceEvidenceMatches(candidate.Metadata.SourcePath, sourcePath) {
-		result.ProviderMetadata = sourceScopedMetadata(candidate.Metadata, sourcePath, generation, resolvedAt)
+		sourceEvidenceMatches(candidate.Metadata.SourcePath, request.SourcePath) {
+		result.ProviderMetadata = sourceScopedMetadata(candidate.Metadata, request.SourcePath, request.Generation, resolvedAt)
 		if err := appendEvidenceFingerprint(result, "provider_metadata_candidate", candidate.Metadata); err != nil {
 			return err
 		}
@@ -454,10 +457,11 @@ func hasCandidateMetadata(value api.SourceScopedMetadata) bool {
 	return value.TMDB != nil || value.IMDB != nil || value.TVDB != nil || value.TVmaze != nil || value.AniList != nil || value.Bluray != nil
 }
 
-func applyCandidateIdentity(identity *api.ExternalIdentity, candidate api.ExternalIdentity) {
+func applyCandidateIdentity(identity *api.ExternalIdentity, evidence CandidateEvidence, overrides api.ExternalIDOverrides) {
 	if identity == nil {
 		return
 	}
+	candidate := evidence.Identity
 	applyCandidateProvider(
 		&identity.TMDBID,
 		&identity.Dependencies.TMDB,
@@ -465,6 +469,7 @@ func applyCandidateIdentity(identity *api.ExternalIdentity, candidate api.Extern
 		candidate.TMDBID,
 		candidate.Dependencies.TMDB,
 		candidate.Provenance.TMDB,
+		false,
 	)
 	applyCandidateProvider(
 		&identity.IMDBID,
@@ -473,6 +478,7 @@ func applyCandidateIdentity(identity *api.ExternalIdentity, candidate api.Extern
 		candidate.IMDBID,
 		candidate.Dependencies.IMDB,
 		candidate.Provenance.IMDB,
+		evidence.AuthoritativeIMDB && !candidateProviderRetained(identity.Provenance.IMDB, overrides.KeepIMDB),
 	)
 	applyCandidateProvider(
 		&identity.TVDBID,
@@ -481,6 +487,7 @@ func applyCandidateIdentity(identity *api.ExternalIdentity, candidate api.Extern
 		candidate.TVDBID,
 		candidate.Dependencies.TVDB,
 		candidate.Provenance.TVDB,
+		false,
 	)
 	applyCandidateProvider(
 		&identity.TVmazeID,
@@ -489,6 +496,7 @@ func applyCandidateIdentity(identity *api.ExternalIdentity, candidate api.Extern
 		candidate.TVmazeID,
 		candidate.Dependencies.TVmaze,
 		candidate.Provenance.TVmaze,
+		evidence.AuthoritativeTVmaze && !candidateProviderRetained(identity.Provenance.TVmaze, overrides.KeepTVmaze),
 	)
 	applyCandidateProvider(
 		&identity.MALID,
@@ -497,8 +505,16 @@ func applyCandidateIdentity(identity *api.ExternalIdentity, candidate api.Extern
 		candidate.MALID,
 		candidate.Dependencies.MAL,
 		candidate.Provenance.MAL,
+		evidence.AuthoritativeMAL && !candidateProviderRetained(identity.Provenance.MAL, overrides.KeepMAL),
 	)
 	applyCandidateCategory(identity, candidate)
+}
+
+func candidateProviderRetained(provenance api.IdentityProvenance, keep *bool) bool {
+	if keep != nil {
+		return *keep
+	}
+	return provenance == api.IdentityProvenanceRetained
 }
 
 func applyCandidateCategory(identity *api.ExternalIdentity, candidate api.ExternalIdentity) {
@@ -518,8 +534,14 @@ func applyCandidateProvider(
 	value int,
 	candidateDependency api.IdentityDependency,
 	source api.IdentityProvenance,
+	withdraw bool,
 ) {
 	if value <= 0 {
+		if withdraw && value == 0 {
+			*target = 0
+			*dependency = api.IdentityDependency{}
+			*provenance = api.IdentityProvenanceUnknown
+		}
 		return
 	}
 	*target = value

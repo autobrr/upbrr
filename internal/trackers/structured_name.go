@@ -97,6 +97,7 @@ func (e *NameRuleError) Error() string {
 // or undeclared authority; unknown roles fail in either mode.
 type NameEditor struct {
 	document  *api.ReleaseNameDocument
+	separator string
 	mandatory bool
 	authority []NameAuthority
 	rule      string
@@ -471,6 +472,7 @@ func resolveStructuredNames(input ReleaseNameInput, binding ReleaseNamePolicyBin
 	}
 	editor := &NameEditor{
 		document:  document.Clone(),
+		separator: policy.Separator,
 		rule:      binding.ID,
 		authority: policy.Authority,
 	}
@@ -483,7 +485,7 @@ func resolveStructuredNames(input ReleaseNameInput, binding ReleaseNamePolicyBin
 			return ResolvedReleaseNames{}, err
 		}
 	} else {
-		restoreGeneratedEpisodeTitle(document, editor.document)
+		restoreGeneratedEpisodeTitle(document, editor.document, subject)
 	}
 	if policy.Defaults != nil {
 		if err := policy.Defaults(editor, subject, input.TrackerConfig); err != nil {
@@ -499,7 +501,7 @@ func resolveStructuredNames(input ReleaseNameInput, binding ReleaseNamePolicyBin
 			return ResolvedReleaseNames{}, err
 		}
 	}
-	omitRepeatedEpisodeTitle(editor.document)
+	editor.OmitRepeatedEpisodeTitle()
 	if err := editor.document.Validate(); err != nil {
 		return ResolvedReleaseNames{}, fmt.Errorf("tracker name: %w", err)
 	}
@@ -514,9 +516,12 @@ func resolveStructuredNames(input ReleaseNameInput, binding ReleaseNamePolicyBin
 	return resolved, nil
 }
 
-func restoreGeneratedEpisodeTitle(original, projected *api.ReleaseNameDocument) {
+func restoreGeneratedEpisodeTitle(original, projected *api.ReleaseNameDocument, subject api.UploadSubject) {
+	if !layoutSupportsEpisodeTitle(original, subject) {
+		return
+	}
 	episode, ok := original.Component(api.NameRoleEpisodeTitle)
-	if ok && !episode.Present && !episode.Manual && episodeTitleRepeatsDocument(original, episode.Value) {
+	if ok && !episode.Present && !episode.Manual && episodeTitleRepeatsDocument(original, episode.Value, "") {
 		for i := range projected.Components {
 			if projected.Components[i].Role == api.NameRoleEpisodeTitle {
 				projected.Components[i].Present = true
@@ -526,17 +531,35 @@ func restoreGeneratedEpisodeTitle(original, projected *api.ReleaseNameDocument) 
 	}
 }
 
-func omitRepeatedEpisodeTitle(document *api.ReleaseNameDocument) {
+func layoutSupportsEpisodeTitle(document *api.ReleaseNameDocument, subject api.UploadSubject) bool {
+	if subject.Identity.Category == api.CanonicalCategoryMovie {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(subject.Type), "DISC") || strings.EqualFold(strings.TrimSpace(subject.Type), "DVDRIP") {
+		return false
+	}
+	if format, ok := document.Component(api.NameRoleVideoFormat); ok {
+		value := firstProjectionValue(format.Value, format.AvailableValue)
+		if strings.EqualFold(value, "DISC") || strings.EqualFold(value, "DVDRip") {
+			return false
+		}
+	}
+	return true
+}
+
+// OmitRepeatedEpisodeTitle compares automatic episode titles to the visible titles.
+func (e *NameEditor) OmitRepeatedEpisodeTitle() {
+	document := e.document
 	for i := range document.Components {
 		component := &document.Components[i]
 		if component.Role == api.NameRoleEpisodeTitle && component.Present && !component.Manual {
-			component.Present = !episodeTitleRepeatsDocument(document, component.Value)
+			component.Present = !episodeTitleRepeatsDocument(document, component.Value, e.separator)
 			return
 		}
 	}
 }
 
-func episodeTitleRepeatsDocument(document *api.ReleaseNameDocument, episode string) bool {
+func episodeTitleRepeatsDocument(document *api.ReleaseNameDocument, episode, separator string) bool {
 	number, _ := document.Component(api.NameRoleEpisode)
 	dailyDate, _ := document.Component(api.NameRoleDailyDate)
 	if number.Value == "" || dailyDate.Present {
@@ -546,6 +569,11 @@ func episodeTitleRepeatsDocument(document *api.ReleaseNameDocument, episode stri
 	alternate, _ := document.Component(api.NameRoleAlternateTitle)
 	if !alternate.Present {
 		alternate.Value = ""
+	} else if separator == "." {
+		if marker, value, ok := strings.Cut(alternate.Value, "."); ok && strings.EqualFold(marker, "AKA") {
+			// Let the shared comparison strip the marker once, as it does before formatting.
+			alternate.Value = marker + " " + value
+		}
 	}
 	return title.Present && metautil.EpisodeTitleRepeatsName(episode, title.Value, alternate.Value)
 }

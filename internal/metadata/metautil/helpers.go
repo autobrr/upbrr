@@ -101,7 +101,7 @@ func FormatOriginalAKA(title string) string {
 func TitleIdentityKey(title string) string {
 	var key strings.Builder
 	for _, r := range norm.NFC.String(title) {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+		if unicode.IsLetter(r) || unicode.IsMark(r) || unicode.IsDigit(r) {
 			key.WriteRune(unicode.ToLower(r))
 		}
 	}

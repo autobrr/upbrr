@@ -419,7 +419,7 @@ Use `--keep-existing-ids` to keep existing provider matches and their data when 
 
 The Keep choices are saved for this release and also appear in the Web UI. A provider's explicit ID change or clear takes precedence. Use `--keep-existing-ids=false` to turn off these choices without removing manual ID corrections. Omitting the flag preserves saved choices. Changing Movie/TV can still clear incompatible automatic matches; a forced fresh preparation reloads data for kept IDs.
 
-During the **Metadata correct?** loop, correcting the same active input reuses provider lookups for unchanged inputs, including lookups that returned no result. A later run can retry those empty results. Completed fetch failures remain retained until the input is removed from **History**. Changing the source, provider ID, or lookup query requests its own result.
+During the **Metadata correct?** loop, correcting the same active input reuses provider lookups for unchanged inputs, including lookups that returned no result. A later run can retry those empty results. Failed TMDB logo lookups and AniList title searches for automatic anime matching retry on the next preparation. Other completed fetch failures, including AniList detail lookups by MAL ID, remain retained until the input is removed from **History**. Changing the source, provider ID, or lookup query requests its own result.
 
 ### Select a provider title
 

@@ -25,7 +25,7 @@
   },
   "internal/trackers/impl/azfamily/name.go:applyCinemaZNameDefaults": {
     "reason": "CinemaZ keeps current provider and manual title precedence. A missing Latin-safe title now tells users to check their selected provider records and refresh metadata.",
-    "sha256": "3a9baea2384da87cc894cfcbc4c3b2478bb01d6888ead904c23d5c76fc14b610"
+    "sha256": "4588c193cf43a0cdea56d317298833d25c175aca67adfff0bcf85079fab0f026"
   },
   "internal/trackers/impl/azfamily/name.go:avistaZEnglishTitle": {
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
@@ -53,7 +53,7 @@
   },
   "internal/trackers/impl/azfamily/name.go:releaseNamePolicy": {
     "reason": "Annotation-display review: CZ/PHD policy versions advance for equivalent formatting of the display replacement role. Provider identity/source guards, Latin-safe title selection, manual title and component precedence, and separate search naming are unchanged. Legacy/display equivalence and manual/full-name regressions cover the changed policy.",
-    "sha256": "528703ded0f74d4a32f22664b16f51df05b19c6ee71524ac1257dda4daace42e"
+    "sha256": "6fc31dc62039c9a4da0a7785c3f5f2ee24378e5e52e90a03df7f3e4fb8859729"
   },
   "internal/trackers/impl/azfamily/name.go:resolveSearchName": {
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
@@ -376,8 +376,8 @@
     "sha256": "6872b678427d185bf74b0a352c1b3b4a8f40a858fb9aac15a40eb2874ed853a4"
   },
   "internal/trackers/impl/standalone/bhd/name.go:applyBHDNameQualifiers": {
-    "reason": "BHD compares qualifiers with the projected IMDb primary and finalized year. Rendering a raw original adds one marker and preserves manual components and omissions.",
-    "sha256": "7b10f62e6156c9e677e11f8d3a3b7453d54851cccec4d082636e919cde86c164"
+    "reason": "Provider alternate titles retain literal movie year qualifiers. TV comparisons use the finalized year, and manual year and alternate title precedence still run through the reviewed helpers.",
+    "sha256": "f78a0cc2b4d93396326714633ef88ae609e0684730891b8e2715c09df3413ab9"
   },
   "internal/trackers/impl/standalone/bhd/name.go:applyBHDNameYear": {
     "reason": "The extracted year policy preserves manual years and uses current source, identity, and generation-bound TVDB disambiguation for automatic TV years.",
@@ -389,7 +389,7 @@
   },
   "internal/trackers/impl/standalone/bhd/profile.go:Profile": {
     "reason": "The BHD naming version advances for selecting a distinct original title. The title and year provider bindings, naming callback, validation and connection callbacks are preserved.",
-    "sha256": "93eb115913b96414fe1b9c7dd85a25f305faeaeadf23b8b8dcb22bb2cc2a3f96"
+    "sha256": "e9b134d3b7610c8fdf2285e6d441001ed4d12cc9b3764e60220fdef67086d8cd"
   },
   "internal/trackers/impl/standalone/bhd/rules.go:languageAssessment": {
     "reason": "Issue 905 uses canonical title-dialogue evidence and preserves manual genre selection. Owner confirmation of BHD sections 2.5.5 and 5.3.4 exempts an established English-only original soundtrack from extra English-dub guidance while retaining foreign-dialogue subtitle guidance and multilingual-original handling. Provider genre selectors and manual corrections are unchanged.",
@@ -656,8 +656,8 @@
     "sha256": "5144602664e824f0dd18448384e92a26c806fed4739aed7a458f9186a60e0062"
   },
   "internal/trackers/impl/standalone/btn/dupe.go:searchTitle": {
-    "reason": "TVDB display aliases are used only after the manual, canonical and projected search choices.",
-    "sha256": "02d084d0e15a7a4142a7908c130e28f5bd7eacfef1fc3d30be519e26f7db23f6"
+    "reason": "TVDB Name and NameEnglish precede untagged display aliases via shared btnTVDBSearchTitle and are used only after manual, canonical and projected search choices.",
+    "sha256": "27f98a2e0386e4a5b59a0d7bcda43af46eba1875aaf2a7e16cd3a78679ae3dab"
   },
   "internal/trackers/impl/standalone/btn/media.go:btnAutofillArtistAction": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -691,13 +691,17 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
     "sha256": "7797ecf3aa2dc4ae4925e9850dc73961b7cd97f85c1094a356a9632c9c821ca1"
   },
+  "internal/trackers/impl/standalone/btn/name.go:btnTVDBSearchTitle": {
+    "reason": "Shared BTN TVDB search-title selector prioritizing Name, NameEnglish, then DisplayName; callers apply manual, canonical, and source/generation guards before invoking it.",
+    "sha256": "70631a3e0d3665563468180138bd2da522c0bee8db0724ec8cc981434d8d2dad"
+  },
   "internal/trackers/impl/standalone/btn/name.go:resolveSearchName": {
-    "reason": "Tracker and provider IDs plus manual title choices still precede automatic search text. The TVDB display fallback remains scoped to the current source and generation.",
-    "sha256": "eba7a17249596104118c11cd7aedcccb7f98543a1de22a9febced2b97ea7e9ed"
+    "reason": "Tracker and provider IDs plus manual title choices still precede automatic search text. TVDB Name and NameEnglish precede untagged display aliases via shared btnTVDBSearchTitle and remain scoped to the current source and generation.",
+    "sha256": "56cd49ee261b8b16ecbaaa90b35eb6ec592e225d503304ffacf6eddddaeb5315"
   },
   "internal/trackers/impl/standalone/btn/profile.go:Profile": {
     "reason": "Wires the pure language assessment and primary-audio country questionnaire. Existing manual-aware name, title, tag and full-disc original-language selectors remain unchanged; payload regressions verify that corrected primary programme facts override conflicting provider language. External-ID cache refresh opt-in only; finalized provider/manual naming and payload selectors are unchanged. Settings connection checks add only an isolated probe binding and draft-credential selector; provider/manual metadata selectors and prepared-upload callbacks remain unchanged.",
-    "sha256": "a99cc07196c6b12b56362161d26dccfbc1a694edcdd969f70ea7123dd586794f"
+    "sha256": "f6a684d3bd8883105ae94d56caa9a1294784a3ad8bc5d12f184ae294799f43e7"
   },
   "internal/trackers/impl/standalone/btn/questionnaire.go:languageQuestionnaire": {
     "reason": "Reviewed with primary-country resolution: current agreeing origin evidence suppresses only an unanswered original-audio country question; explicit answers, including invalid or empty values, retain review precedence.",
@@ -1348,8 +1352,8 @@
     "sha256": "e153f74172d76689217aff458140caed24ec18176775cb05492f3c1b869f16e4"
   },
   "internal/trackers/impl/unit3d/sites/acm/name.go:acmOriginalTitle": {
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
-    "sha256": "442c4f0b0948a94bf00a8925eedd59845f81209efb18a40ec2f8f0de071067b5"
+    "reason": "Manual original titles and current raw TMDB and IMDb titles retain literal AKA text. Only rendered alternate-title fields remove the presentation marker.",
+    "sha256": "62b3f4f95a303c5f93cd5f4a52db2d20c7ee4928d21e1fc983d3aa2725be0828"
   },
   "internal/trackers/impl/unit3d/sites/acm/name.go:applyACMAlternateTitle": {
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",
@@ -1468,8 +1472,8 @@
     "sha256": "1d2e6c4777073ecc7d623f65cffda22c444db8a48442dd84a1282d2e5664d3e0"
   },
   "internal/trackers/impl/unit3d/sites/otw/name.go:buildName": {
-    "reason": "Preserves current TMDB identity/source/generation guards, explicit manual title/year and complete-name authority, and finalized modifier omissions. Effective generic/subtype 3D wording occupies the dedicated position before source, without changing language or technical evidence. Manual 3D component omissions are respected by the subject-level naming accessor; retained media/subtype facts and provider authority remain unchanged. Partial-season naming review: only the canonical part/range label and naming-policy version change; manual names and title/year precedence, provider fallback order, and source/identity/generation guards remain unchanged.",
-    "sha256": "221e109a0a28497513c1d038ca7aa75e3341121ebb4cfb7bb4ec18de67e6a7a1"
+    "reason": "Selects the current TMDB or manual primary title and suppresses a repeated automatic episode title. Explicit episode title corrections retain precedence.",
+    "sha256": "113e3b78d2ebf877564c44013fe10fc96250dc943d2f47fadf4db6b586c08a8a"
   },
   "internal/trackers/impl/unit3d/sites/otw/name.go:currentOTWTMDBTitleYear": {
     "reason": "OTW buildName applies PreferredTitle and PreferredYear; snapshot currentness remains an identity prerequisite.",
@@ -1481,7 +1485,7 @@
   },
   "internal/trackers/impl/unit3d/sites/otw/name.go:releaseNamePolicy": {
     "reason": "Partial-season review-fix audit: provider/manual title and year precedence and currentness guards remain unchanged; part placement and versioned naming omissions preserve canonical coverage.",
-    "sha256": "d77dde3ef5f4c29944bfab425b263510ed3ab458fffe98535b2afac84353d52b"
+    "sha256": "51a705e5e473e7c47466cdb9b0dc924baddbeb1021c51303971091e122021158"
   },
   "internal/trackers/impl/unit3d/sites/otw/profile.go:Profile": {
     "reason": "Wires the OTW v7 release-name policy that preserves explicit upload names and finalized manual title, year and edition corrections. Existing TMDB selection, required metadata, language validation, season-zero behavior and duplicate policy remain unchanged.",

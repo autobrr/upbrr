@@ -7,6 +7,7 @@ package preparedrelease
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -206,6 +207,10 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 		)
 		return api.PrepareResult{}, err
 	}
+	identitySourceFingerprint := sourceFingerprint
+	if verifiedSource.Digest != "" {
+		identitySourceFingerprint = fmt.Sprintf("%x", sha256.Sum256([]byte(sourceFingerprint+":"+verifiedSource.Digest)))
+	}
 	if sourceFingerprint != resolved.SourceFingerprint {
 		return api.PrepareResult{}, fmt.Errorf("prepared release: source changed after input resolution: %w", api.ErrCorrectionConflict)
 	}
@@ -247,14 +252,11 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 	// and WebUI calls carry their resolved selection directly and remain reusable.
 	reuseAllowed := layout.DiscType != "BDMV" || input.Instructions.Playlist.Set
 	forceClientRefresh := input.Controls.ForceRecheck != nil && *input.Controls.ForceRecheck
-	tmdb := current.ProviderMetadata.TMDB
-	// A failed logo lookup must not pin the fallback artwork in an otherwise
-	// compatible generation. Exact-generation consumers can still use it.
-	retryLogo := tmdb != nil && tmdb.LogoLookupPending && !input.RequirePrepared
-	if hasCurrent && reuseAllowed && !retryLogo && !input.Force && !input.ExternalFreshness.RequiresRefresh() && !forceClientRefresh &&
+	retryProviderLookup := !input.RequirePrepared && NeedsProviderLookupRetry(current, input.Instructions.Identity)
+	if hasCurrent && reuseAllowed && !retryProviderLookup && !input.Force && !input.ExternalFreshness.RequiresRefresh() && !forceClientRefresh &&
 		!input.Controls.CaptureHDRMetadata && input.Controls.BlurayDetails == nil &&
 		(input.ExternalFreshness != api.ExternalFreshnessLoad || input.RequirePrepared) &&
-		current.Compatibility == compatibility {
+		current.Compatibility == compatibility && (verifiedSource.Digest == "" || current.Identity.Resolution.SourceFingerprint == identitySourceFingerprint) {
 		// Public prepared rows omit private byte-verification evidence. Restore
 		// it only from the current active input's validated private manifest.
 		if verifiedSource.Version != "" {
@@ -343,12 +345,13 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 		}
 	}
 	collected, err := m.collector.Collect(ctx, preparationstate.Request{
-		Input:                  input,
-		Manifest:               manifest,
-		Layout:                 layout,
-		SourceFingerprint:      sourceFingerprint,
-		IdentityResetFields:    slices.Clone(resolved.Corrections.Corrections.IdentityResetFields),
-		RetainedClientEvidence: m.retainedClientEvidence(input, compatibility, current.Generation),
+		Input:                     input,
+		Manifest:                  manifest,
+		Layout:                    layout,
+		SourceFingerprint:         sourceFingerprint,
+		IdentitySourceFingerprint: identitySourceFingerprint,
+		IdentityResetFields:       slices.Clone(resolved.Corrections.Corrections.IdentityResetFields),
+		RetainedClientEvidence:    m.retainedClientEvidence(input, compatibility, current.Generation),
 	})
 	if err != nil {
 		return api.PrepareResult{}, fmt.Errorf("prepared release: collect facts: %w", err)
@@ -386,7 +389,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 	identityFinish := api.BeginPreparationProgress(ctx, api.PreparationPhaseCanonicalIdentity, "Resolving canonical identity.")
 	identityResult, err := m.identity.Resolve(ctx, externalidentity.Request{
 		SourcePath:        manifest.SourcePath,
-		SourceFingerprint: sourceFingerprint,
+		SourceFingerprint: identitySourceFingerprint,
 		Generation:        generation,
 		Intent:            identityIntent,
 	})
@@ -518,6 +521,15 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 // equivalentPreparedFacts excludes only generation and collection bookkeeping.
 // Identity provenance, overrides, dependencies, conflicts and resolution intent
 // remain authoritative, as do provider availability and all source samples.
+// NeedsProviderLookupRetry reports whether ordinary preparation can recover a pending provider lookup.
+func NeedsProviderLookupRetry(release api.PreparedRelease, overrides api.ExternalIDOverrides) bool {
+	tmdb := release.ProviderMetadata.TMDB
+	return tmdb != nil && (tmdb.LogoLookupPending ||
+		tmdb.Anime && (tmdb.AnimeLookupPending || tmdb.AnimeSeason == "") &&
+			overrides.MALID == nil && release.Identity.Provenance.MAL != api.IdentityProvenanceRetained &&
+			release.Identity.Overrides.MAL != api.OverrideStateValue && release.Identity.Overrides.MAL != api.OverrideStateClear)
+}
+
 func equivalentPreparedFacts(previous, candidate api.PreparedRelease) bool {
 	normalize := func(release api.PreparedRelease) api.PreparedRelease {
 		release.Generation = 0

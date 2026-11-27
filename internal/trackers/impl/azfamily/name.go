@@ -35,11 +35,11 @@ var (
 )
 
 func releaseNamePolicy(site siteDefinition) trackers.ReleaseNamePolicyBinding {
-	version := "v4"
+	version := "v5"
 	movieYearProvider := api.IdentityProviderTMDB
 	switch site.Name {
 	case "CZ":
-		version = "v9"
+		version = "v10"
 		movieYearProvider = api.IdentityProviderIMDB
 	case "PHD":
 		version = "v6"
@@ -114,7 +114,7 @@ func applyCinemaZNameDefaults(editor *trackers.NameEditor, meta api.UploadSubjec
 	title := cinemaZTitle(meta)
 	if title == "" {
 		return &trackers.NameRuleError{
-			Rule:   "azfamily/cz/v9",
+			Rule:   "azfamily/cz/v10",
 			Role:   api.NameRoleTitle,
 			Reason: "no Latin-safe title is available; check the selected provider records and refresh metadata",
 		}

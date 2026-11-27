@@ -59,7 +59,7 @@ func applyTitleProvider(editor *NameEditor, subject api.UploadSubject, provider 
 		return nil
 	}
 	// Recover a former primary only when a current provider corroborates it as an original.
-	for _, original := range currentProviderOriginalTitles(subject) {
+	for _, original := range currentProviderAlternateTitles(subject, false) {
 		if !sameAutomaticTitle(component.Value, original, year) || !distinctAutomaticTitle(title, original, year) {
 			continue
 		}
@@ -74,12 +74,7 @@ func applyTitleProvider(editor *NameEditor, subject api.UploadSubject, provider 
 
 // DistinctProviderAlternateTitle returns a bound original or anime romanization that differs from the primary.
 func DistinctProviderAlternateTitle(subject api.UploadSubject, primary string, year int) string {
-	originals := currentProviderOriginalTitles(subject)
-	romaji := ""
-	if currentNameProviderMetadata(subject) {
-		romaji = metautil.AnimeRomanizedTitle(subject.Identity, subject.ProviderMetadata)
-	}
-	for _, original := range []string{originals[0], romaji, originals[1], originals[2]} {
+	for _, original := range currentProviderAlternateTitles(subject, true) {
 		if distinctAutomaticTitle(primary, original, year) {
 			return metautil.TrimTrailingParentheticalYear(original, year)
 		}
@@ -87,24 +82,27 @@ func DistinctProviderAlternateTitle(subject api.UploadSubject, primary string, y
 	return ""
 }
 
-func currentProviderOriginalTitles(subject api.UploadSubject) [3]string {
-	var titles [3]string
+func currentProviderAlternateTitles(subject api.UploadSubject, includeRomaji bool) []string {
 	if !currentNameProviderMetadata(subject) {
-		return titles
+		return nil
 	}
+	titles := make([]string, 0, 4)
 	metadata := subject.ProviderMetadata
 	if imdb := metadata.IMDB; imdb != nil && subject.Identity.IMDBID > 0 && imdb.IMDBID == subject.Identity.IMDBID {
-		titles[0] = imdb.AKA
+		titles = append(titles, imdb.AKA)
+	}
+	if includeRomaji {
+		titles = append(titles, metautil.AnimeRomanizedTitle(subject.Identity, metadata))
 	}
 	if tmdb := metadata.TMDB; tmdb != nil && subject.Identity.TMDBID > 0 && tmdb.TMDBID == subject.Identity.TMDBID {
 		if category, err := api.NormalizeCanonicalCategory(tmdb.Category); err == nil && category == subject.Identity.Category {
-			titles[1] = tmdb.OriginalTitle
+			titles = append(titles, tmdb.OriginalTitle)
 		}
 	}
 	if subject.Identity.Category == api.CanonicalCategoryTV && metadata.TVDBNamingAvailable(subject.SourcePath, subject.Identity) {
 		tvdb := metadata.TVDB
 		if tvdb.OriginalLanguage != "" && !languageutil.SameLanguage(tvdb.OriginalLanguage, "en") {
-			titles[2] = tvdb.Name
+			titles = append(titles, tvdb.Name)
 		}
 	}
 	return titles
@@ -170,8 +168,8 @@ func applyLegacyTitleProvider(subject api.UploadSubject, requested *string, bind
 	if err := normalizeProviderName(editor, subject, binding.TitleProvider); err != nil {
 		return api.UploadSubject{}, err
 	}
-	restoreGeneratedEpisodeTitle(subject.GeneratedName, editor.document)
-	omitRepeatedEpisodeTitle(editor.document)
+	restoreGeneratedEpisodeTitle(subject.GeneratedName, editor.document, subject)
+	editor.OmitRepeatedEpisodeTitle()
 	subject.GeneratedName = editor.document
 	title, _ := editor.Component(api.NameRoleTitle)
 	subject.Release.Title = title.Value

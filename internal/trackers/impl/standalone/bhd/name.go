@@ -71,8 +71,11 @@ func applyBHDNameQualifiers(editor *trackers.NameEditor, meta api.UploadSubject)
 	}
 	title, _ := editor.Component(api.NameRoleTitle)
 	component, _ := editor.Component(api.NameRoleAlternateTitle)
-	yearComponent, _ := editor.Component(api.NameRoleYear)
-	year, _ := strconv.Atoi(metautil.FirstNonEmptyTrimmed(yearComponent.Value, yearComponent.AvailableValue))
+	year := 0
+	if isBHDTV(meta) {
+		yearComponent, _ := editor.Component(api.NameRoleYear)
+		year, _ = strconv.Atoi(metautil.FirstNonEmptyTrimmed(yearComponent.Value, yearComponent.AvailableValue))
+	}
 	if alternate := bhdAlternateTitle(meta, title.Value, year); alternate == "" {
 		if err := editor.Omit(api.NameRoleAlternateTitle); err != nil {
 			return bhdNameEditorError("omit alternate title", err)

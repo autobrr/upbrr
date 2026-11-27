@@ -96,16 +96,19 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 	}
 
 	results := make([]Candidate, 0)
+	var dependency api.IdentityDependency
 	if tvdbID != 0 {
 		cand, err := c.lookupShow(ctx, "thetvdb", strconv.Itoa(tvdbID))
 		if err == nil {
 			results = append(results, cand)
+			dependency.TVDBID = tvdbID
 		}
 	}
 	if len(results) == 0 && imdbID != 0 {
 		cand, err := c.lookupShow(ctx, "imdb", providerid.IMDb(imdbID).Prefixed())
 		if err == nil {
 			results = append(results, cand)
+			dependency.IMDBID = imdbID
 		}
 	}
 	allowNameFallback := !input.StrictIDOnly
@@ -143,11 +146,12 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 	}
 
 	return SearchResult{
-		SelectedID:   selectedID,
-		IMDBID:       selectedIMDB,
-		TVDBID:       selectedTVDB,
-		Candidates:   candidates,
-		AutoSelected: input.ManualDate == "" && selectedID != 0,
+		SelectedID:       selectedID,
+		IMDBID:           selectedIMDB,
+		TVDBID:           selectedTVDB,
+		Candidates:       candidates,
+		AutoSelected:     input.ManualDate == "" && selectedID != 0,
+		LookupDependency: dependency,
 	}, nil
 }
 
