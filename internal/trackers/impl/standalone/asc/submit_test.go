@@ -167,11 +167,12 @@ name: "ambiguous server error",
 						}
 					}
 				case "GET /torrents/42/download":
-					if tc.failDownload {
+					switch {
+					case tc.failDownload:
 						w.WriteHeader(http.StatusNotFound)
-					} else if tc.mismatched != nil {
+					case tc.mismatched != nil:
 						_, _ = w.Write(tc.mismatched)
-					} else {
+					default:
 						_, _ = w.Write(registered)
 					}
 				default:
