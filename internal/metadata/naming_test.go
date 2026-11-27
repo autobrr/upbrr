@@ -13,6 +13,7 @@ import (
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -984,26 +985,119 @@ func TestReleaseNameRequestFromMetaDefaultsToDailyWithoutEpisodeTitle(t *testing
 	}
 }
 
-func TestReleaseNameRequestFromMetaOmitsSeriesTitleEpisodeTitle(t *testing.T) {
+func TestRebuildReleaseNameDeduplicatesAutomaticEpisodeAgainstDisplayedTitles(t *testing.T) {
 	meta := preparationstate.State{
 		Identity: api.ExternalIdentity{Category: "TV", TVDBID: 2},
 		ProviderMetadata: api.SourceScopedMetadata{
-			TVDB: &api.TVDBMetadata{TVDBID: 2, NameEnglish: "Re: ZERO, Starting Life in Another World"},
+			TVDB: &api.TVDBMetadata{TVDBID: 2, NameEnglish: "Signal: The Quiet Sky"},
 		},
 		Type:         "ENCODE",
 		SeasonStr:    "S04",
 		EpisodeStr:   "E11",
-		EpisodeTitle: "Re:ZERO -Starting Life in Another World-",
+		EpisodeTitle: "Signal -The Quiet Sky-",
 	}
-
-	req := releaseNameRequestFromMeta(meta, api.NopLogger{})
-	if req.EpisodeTitle != "" {
-		t.Fatalf("expected duplicate series episode title omitted, got %q", req.EpisodeTitle)
+	RebuildReleaseName(&meta, api.NopLogger{})
+	if got, want := meta.ReleaseNameNoTag, "Signal: The Quiet Sky S04E11"; got != want {
+		t.Fatalf("release name = %q, want %q", got, want)
 	}
+	meta.ProviderMetadata.TVDB.NameEnglish = "Blue Sky"
+	meta.ProviderMetadata.TVDB.Name = "Sora no Ao"
+	meta.ProviderMetadata.TVDB.EpisodeNameEnglish = "Sora no Ao"
+	for _, test := range []struct {
+		name      string
+		alternate *string
+		noAKA     *bool
+		manual    *string
+		want      string
+	}{
+		{name: "visible AKA with explicit false episode omission", want: "Blue Sky AKA Sora no Ao S04E11"},
+		{
+			name:  "hidden AKA",
+			noAKA: new(true),
+			want:  "Blue Sky S04E11 Sora no Ao",
+		},
+		{
+			name:      "cleared AKA",
+			alternate: new(""),
+			want:      "Blue Sky S04E11 Sora no Ao",
+		},
+		{
+			name:      "replaced AKA",
+			alternate: new("Morning Blue"),
+			want:      "Blue Sky AKA Morning Blue S04E11 Sora no Ao",
+		},
+		{
+			name:   "manual episode",
+			manual: new("Sora no Ao"),
+			want:   "Blue Sky AKA Sora no Ao S04E11 Sora no Ao",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			meta := meta
+			meta.MetadataOverrides.AlternateTitle = test.alternate
+			meta.ReleaseNameOverrides.NoAKA = test.noAKA
+			meta.ReleaseNameOverrides.EpisodeTitle = test.manual
+			meta.ReleaseNameOverrides.NoEpisodeTitle = new(false)
+			captureAvailableGeneratedName(&meta, api.NopLogger{})
+			RebuildReleaseName(&meta, api.NopLogger{})
+			if meta.ReleaseName != test.want || meta.ResolvedNaming.EpisodeTitle != "Sora no Ao" {
+				t.Errorf("name=%q episode fact=%q, want %q with resolved episode preserved", meta.ReleaseName, meta.ResolvedNaming.EpisodeTitle, test.want)
+			}
+			if episode, _ := meta.GeneratedName.Component(api.NameRoleEpisodeTitle); episode.Manual != (test.manual != nil) {
+				t.Errorf("episode-title manual flag = %t with explicit episode title %v", episode.Manual, test.manual)
+			}
+			if variant := meta.GeneratedReleaseNames.IncludeEpisodeTitle.Name; variant != meta.ReleaseName {
+				t.Errorf("include variant=%q, want %q", variant, meta.ReleaseName)
+			}
+			if variant := meta.GeneratedReleaseNames.OmitEpisodeTitle.Name; (variant != meta.ReleaseName) != strings.HasSuffix(test.want, "E11 Sora no Ao") && test.manual == nil {
+				t.Errorf("omit variant=%q, include variant=%q", variant, meta.ReleaseName)
+			}
+		})
+	}
+}
 
-	result := BuildReleaseName(req, api.NopLogger{})
-	if strings.Contains(result.NameNoTag, "Re:ZERO -Starting Life in Another World-") {
-		t.Fatalf("expected release name to omit duplicate episode title, got %q", result.NameNoTag)
+func TestRebuildReleaseNameFormatsAndOmitsParsedAKA(t *testing.T) {
+	for _, test := range []struct {
+		marker    string
+		alternate *string
+		omit      bool
+		want      string
+	}{
+		{marker: "AKA", want: "Blue Sky AKA Sora no Ao 2024 1080p"},
+		{marker: "aKa", want: "Blue Sky AKA Sora no Ao 2024 1080p"},
+		{marker: "AKA.AKA", want: "Blue Sky AKA AKA Sora no Ao 2024 1080p"},
+		{
+			marker: "aka",
+			omit:   true,
+			want:   "Blue Sky 2024 1080p",
+		},
+		{
+			marker:    "AKA",
+			alternate: new("Manual Sky"),
+			want:      "Blue Sky AKA Manual Sky 2024 1080p",
+		},
+		{
+			marker:    "AKA",
+			alternate: new(""),
+			want:      "Blue Sky 2024 1080p",
+		},
+	} {
+		parsed := metautil.ParseRelease("Blue.Sky." + test.marker + ".Sora.no.Ao.2024.1080p.BluRay.x264-GRP.mkv")
+		meta := preparationstate.State{
+			Release: api.ReleaseInfo{
+				Title:      parsed.Title,
+				Alt:        parsed.Alt,
+				Year:       parsed.Year,
+				Category:   parsed.Category,
+				Resolution: "1080p",
+			},
+			MetadataOverrides:    api.MetadataOverrides{AlternateTitle: test.alternate},
+			ReleaseNameOverrides: api.ReleaseNameOverrides{NoAKA: new(test.omit)},
+		}
+		RebuildReleaseName(&meta, api.NopLogger{})
+		if meta.ReleaseName != test.want {
+			t.Errorf("marker %s, omit=%t -> %q, want %q", test.marker, test.omit, meta.ReleaseName, test.want)
+		}
 	}
 }
 
@@ -1420,9 +1514,9 @@ func TestResolveReleaseNameTitleProviderAlternateRules(t *testing.T) {
 	}{
 		{name: "same as title", imdbAKA: "IMDb Title"},
 		{
-			name:    "normalizes prefix",
+			name:    "preserves a literal AKA in a raw IMDb title",
 			imdbAKA: "AKA Original Title",
-			wantAlt: "AKA Original Title",
+			wantAlt: "AKA AKA Original Title",
 		},
 		{
 			name:       "adds prefix to parsed alternate",
@@ -1431,10 +1525,10 @@ func TestResolveReleaseNameTitleProviderAlternateRules(t *testing.T) {
 			wantAlt:    "AKA Parsed Alternate",
 		},
 		{
-			name:       "preserves parsed alternate",
+			name:       "preserves a literal AKA in a parsed alternate",
 			releaseAlt: "AKA Parsed Alternate",
 			imdbAKA:    "Original Title",
-			wantAlt:    "AKA Parsed Alternate",
+			wantAlt:    "AKA AKA Parsed Alternate",
 		},
 		{
 			name:       "duplicate parsed alternate uses provider fallback",
@@ -1506,13 +1600,16 @@ func TestResolveReleaseNameTitlePrefersTMDBForMovie(t *testing.T) {
 			Category: "MOVIE",
 			TMDBID:   1,
 			IMDBID:   1234567,
+			MALID:    10,
 		},
 		Release: api.ReleaseInfo{Title: "Parsed Title"},
 		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{
 				TMDBID:        1,
+				Category:      "MOVIE",
 				Title:         "TMDB Title",
 				OriginalTitle: "TMDB Original",
+				MALID:         10,
 				RetrievedAKA:  "AKA Rei No Sakuhin",
 				Year:          2025,
 			},
@@ -1560,6 +1657,60 @@ func TestResolveReleaseNameTitleTMDBUsesMatchingIMDbAKA(t *testing.T) {
 	_, alt, _ = resolveReleaseNameTitle("MOVIE", meta)
 	if alt != "AKA TMDB Original" {
 		t.Fatalf("mismatched IMDb alternate=%q", alt)
+	}
+}
+
+func TestResolveMovieAnimeAlternateWithTitleYear(t *testing.T) {
+	for _, test := range []struct {
+		name, retained, romaji, want string
+	}{
+		{
+			name:   "detail repeats title",
+			romaji: "Ox (2024)",
+			want:   "AKA Original Signal",
+		},
+		{
+			name:     "retained title was already stripped",
+			retained: "AKA Ox",
+			want:     "AKA Original Signal",
+		},
+		{
+			name:   "distinct detail cleans release year",
+			romaji: "Forest Signal (2024)",
+			want:   "AKA Forest Signal",
+		},
+		{
+			name:     "distinct retained title",
+			retained: "AKA Forest Signal",
+			want:     "AKA Forest Signal",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			meta := preparationstate.State{
+				Identity: api.ExternalIdentity{
+					Category: api.CanonicalCategoryMovie,
+					TMDBID:   1,
+					MALID:    10,
+				},
+				ProviderMetadata: api.SourceScopedMetadata{
+					TMDB: &api.TMDBMetadata{
+						TMDBID:        1,
+						Category:      "MOVIE",
+						Title:         "Ox (2024)",
+						OriginalTitle: "Original Signal",
+						Year:          2024,
+						Anime:         true,
+						MALID:         10,
+						RetrievedAKA:  test.retained,
+					},
+					AniList: &api.AniListMetadata{MALID: 10, TitleRomaji: test.romaji},
+				},
+			}
+			title, aka, year := resolveReleaseNameTitle("MOVIE", meta)
+			if title != "Ox (2024)" || aka != test.want || year != 2024 {
+				t.Fatalf("title=%q AKA=%q year=%d, want literal title, AKA %q and 2024", title, aka, year, test.want)
+			}
+		})
 	}
 }
 
@@ -1839,6 +1990,24 @@ func TestBuildReleaseNameTVStripsDuplicateParentheticalSearchYear(t *testing.T) 
 	}
 }
 
+func TestReleaseNameRequestFromMetaUsesManualTVYearForAKAComparison(t *testing.T) {
+	meta := preparationstate.State{
+		Identity:             api.ExternalIdentity{Category: api.CanonicalCategoryTV, TMDBID: 1},
+		ReleaseNameOverrides: api.ReleaseNameOverrides{ManualYear: new(2024)},
+		Release:              api.ReleaseInfo{Category: "TV", Title: "Parsed Ox"},
+		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{
+			TMDBID:        1,
+			Category:      "TV",
+			Title:         "Ox (2024)",
+			OriginalTitle: "Ox",
+		}},
+	}
+	request := releaseNameRequestFromMeta(meta, api.NopLogger{})
+	if request.Title != "Ox" || request.AltTitle != "" || request.SearchYear != "2024" {
+		t.Fatalf("manual year naming fields = %q / %q / %q", request.Title, request.AltTitle, request.SearchYear)
+	}
+}
+
 func TestReleaseNameRequestFromMetaMovieKeepsParsedYearWhenTVDBMetadataPresent(t *testing.T) {
 	meta := preparationstate.State{
 		SourcePath: `D:\Movies\Example.Movie.2026.720p.BluRay.x264-GRP.mkv`,
@@ -2101,5 +2270,31 @@ func TestSpecialNameRejectsUnmatchedTVDBEpisodeText(t *testing.T) {
 				t.Fatalf("special naming facts changed: %+v", request)
 			}
 		})
+	}
+}
+
+func TestTVNamingComparesAlternatesAgainstYearTrimmedPrimary(t *testing.T) {
+	meta := preparationstate.State{
+		Identity: api.ExternalIdentity{Category: api.CanonicalCategoryTV, TVDBID: 2},
+		ProviderMetadata: api.SourceScopedMetadata{TVDB: &api.TVDBMetadata{
+			TVDBID:        2,
+			NameEnglish:   "Ox (2024)",
+			Name:          "Ox",
+			Year:          2024,
+			YearFromAlias: true,
+		}},
+		Type:      "ENCODE",
+		SeasonStr: "S01",
+	}
+	RebuildReleaseName(&meta, api.NopLogger{})
+	if meta.ReleaseName != "Ox 2024 S01" {
+		t.Fatalf("name = %q, want the TV title once", meta.ReleaseName)
+	}
+
+	meta.Release.Alt = "Ox"
+	meta.ProviderMetadata.TVDB.Name = "The Long Road"
+	RebuildReleaseName(&meta, api.NopLogger{})
+	if meta.ReleaseName != "Ox 2024 AKA The Long Road S01" {
+		t.Fatalf("name = %q, want the later distinct AKA", meta.ReleaseName)
 	}
 }

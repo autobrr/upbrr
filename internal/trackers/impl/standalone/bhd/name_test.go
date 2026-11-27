@@ -185,7 +185,7 @@ func TestBHDStructuredNamePolicyKeepsTVYearWithoutDisambiguationEvidence(t *test
 func TestBHDNamingPolicyVersion(t *testing.T) {
 	t.Parallel()
 	policy := New().ReleaseNamePolicy()
-	if policy.ID != "standalone/bhd/v10" || policy.TitleProvider != api.IdentityProviderIMDB || policy.MovieYearProvider != api.IdentityProviderIMDB {
+	if policy.ID != "standalone/bhd/v12" || policy.TitleProvider != api.IdentityProviderIMDB || policy.MovieYearProvider != api.IdentityProviderIMDB {
 		t.Fatalf("BHD naming policy = %+v", policy)
 	}
 }
@@ -471,7 +471,7 @@ func TestBHDProviderTitleNormalizesAlternateTitle(t *testing.T) {
 	t.Parallel()
 	for _, manual := range []bool{false, true} {
 		subject := bhdProviderSubject(t, api.CanonicalCategoryMovie)
-		subject.AlternateTitle = "AKA IMDb Signal"
+		subject.AlternateTitle = "AKA IMDb: Signal"
 		for index := range subject.GeneratedName.Components {
 			component := &subject.GeneratedName.Components[index]
 			if component.Role == api.NameRoleAlternateTitle {
@@ -485,11 +485,125 @@ func TestBHDProviderTitleNormalizesAlternateTitle(t *testing.T) {
 		}
 		want := "IMDb Signal 2002 1080p WEB-DL-GRP"
 		if manual {
-			want = "IMDb Signal AKA IMDb Signal 2002 1080p WEB-DL-GRP"
+			want = "IMDb Signal AKA IMDb: Signal 2002 1080p WEB-DL-GRP"
 		}
 		if got := bhdReviewedName(t, subject, nil); got != want {
 			t.Fatalf("manual=%t: name = %q, want %q", manual, got, want)
 		}
+	}
+}
+
+func TestBHDUsesOriginalTitleAfterProviderSwitch(t *testing.T) {
+	t.Parallel()
+	subject := bhdProviderSubject(t, api.CanonicalCategoryMovie)
+	subject.ProviderMetadata.TMDB.Title = "Canonical Signal"
+	subject.ProviderMetadata.TMDB.OriginalTitle = "Canonical Signal"
+	subject.ProviderMetadata.IMDB.AKA = "Canonical Signal"
+	if got, want := bhdReviewedName(t, subject, nil), "IMDb Signal AKA Canonical Signal 2002 1080p WEB-DL-GRP"; got != want {
+		t.Fatalf("name = %q, want %q", got, want)
+	}
+
+	subject.NamePresentation = api.ReleaseNamePresentation{Version: api.ReleaseNamePresentationVersionV1, OmitAlternateTitle: true}
+	if got, want := bhdReviewedName(t, subject, nil), "IMDb Signal 2002 1080p WEB-DL-GRP"; got != want {
+		t.Fatalf("name with explicit omission = %q, want %q", got, want)
+	}
+
+	subject.NamePresentation = api.ReleaseNamePresentation{}
+	subject.ProviderMetadata.IMDB.Title = "Ox"
+	subject.ProviderMetadata.IMDB.AKA = "Ox (2002)"
+	subject.ProviderMetadata.TMDB.OriginalTitle = ""
+	if got, want := bhdReviewedName(t, subject, nil), "Ox AKA Ox (2002) 2002 1080p WEB-DL-GRP"; got != want {
+		t.Errorf("literal movie AKA year qualified name = %q, want %q", got, want)
+	}
+
+	subject.ProviderMetadata.IMDB.AKA = ""
+	subject.Identity.MALID = 10
+	tmdb := subject.ProviderMetadata.TMDB
+	tmdb.Title, tmdb.Year, tmdb.Anime, tmdb.MALID = "Ox (2024)", 2024, true, 10
+	subject.ProviderMetadata.AniList = &api.AniListMetadata{MALID: 10, TitleRomaji: "Ox (2024)"}
+	subject.ProviderMetadata.IMDB.Title = "Forest Signal"
+	if got, want := bhdReviewedName(t, subject, nil), "Forest Signal AKA Ox 2002 1080p WEB-DL-GRP"; got != want {
+		t.Errorf("romanization alongside independent IMDb title = %q, want %q", got, want)
+	}
+}
+
+func TestBHDChoosesBoundOriginalTitleEvidence(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, imdbTitle, imdbOriginal, tmdbOriginal, tvdbOriginal string
+		malID, storedMALID                                        int
+		malOverride                                               api.OverrideState
+		want                                                      string
+	}{
+		{
+			name:         "same raw title beginning with AKA",
+			imdbTitle:    "AKA Echo",
+			imdbOriginal: "AKA Echo",
+			want:         "AKA Echo",
+		},
+		{
+			name:         "literal AKA in alternate",
+			imdbTitle:    "Daybreak",
+			imdbOriginal: "AKA Echo",
+			want:         "Daybreak AKA AKA Echo",
+		},
+		{
+			name:         "actual TVDB original before display fallbacks",
+			imdbTitle:    "Daybreak",
+			tvdbOriginal: "朝空",
+			want:         "Daybreak AKA 朝空",
+		},
+		{
+			name:         "bound romanization before native TMDB title",
+			imdbTitle:    "Daybreak",
+			tmdbOriginal: "青い海",
+			malID:        10,
+			storedMALID:  10,
+			want:         "Daybreak AKA Aoi Umi",
+		},
+		{
+			name:         "distinct IMDb original before bound romanization",
+			imdbTitle:    "Daybreak",
+			imdbOriginal: "The Quiet Sea",
+			tmdbOriginal: "青い海",
+			malID:        10,
+			storedMALID:  10,
+			want:         "Daybreak AKA The Quiet Sea",
+		},
+		{
+			name:         "mismatched MAL",
+			imdbTitle:    "Daybreak",
+			tmdbOriginal: "青い海",
+			malID:        11,
+			storedMALID:  10,
+			want:         "Daybreak AKA 青い海",
+		},
+		{
+			name:         "cleared MAL",
+			imdbTitle:    "Daybreak",
+			tmdbOriginal: "青い海",
+			storedMALID:  10,
+			malOverride:  api.OverrideStateClear,
+			want:         "Daybreak AKA 青い海",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := bhdProviderSubject(t, api.CanonicalCategoryTV)
+			subject.Identity.MALID, subject.Identity.Overrides.MAL = test.malID, test.malOverride
+			imdb := subject.ProviderMetadata.IMDB
+			imdb.Title, imdb.AKA = test.imdbTitle, test.imdbOriginal
+			tmdb := subject.ProviderMetadata.TMDB
+			tmdb.Title, tmdb.OriginalTitle, tmdb.MALID = "Morning Light", test.tmdbOriginal, test.storedMALID
+			if test.storedMALID != 0 {
+				tmdb.Anime, tmdb.RetrievedAKA = true, "AKA Aoi Umi"
+			}
+			tvdb := subject.ProviderMetadata.TVDB
+			tvdb.Name, tvdb.OriginalLanguage = test.tvdbOriginal, "ja"
+			tvdb.Aliases = []string{"TVDB Display Alias"}
+			if got, want := bhdReviewedName(t, subject, nil), test.want+" S01E02 1080p WEB-DL-GRP"; got != want {
+				t.Fatalf("name = %q, want %q", got, want)
+			}
+		})
 	}
 }
 

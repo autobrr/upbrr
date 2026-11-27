@@ -61,4 +61,23 @@ func TestBTNTitleSearchPrefersManualFacts(t *testing.T) {
 	if got := searchTitle(duplicate); got != "" {
 		t.Fatalf("manual-empty duplicate search = %q", got)
 	}
+
+	tvdbEnglishOverAlias := &api.TVDBMetadata{
+		NameEnglish: "English Title",
+		Aliases:     []string{"Foreign Alias"},
+	}
+	if got := searchTitle(api.DuplicateSubject{ProviderMetadata: api.SourceScopedMetadata{TVDB: tvdbEnglishOverAlias}}); got != "English Title" {
+		t.Fatalf("duplicate search preferred alias over English title: %q", got)
+	}
+	if got := resolveSearchName(api.UploadSubject{ProviderMetadata: api.SourceScopedMetadata{TVDB: tvdbEnglishOverAlias}}); got != "English Title" {
+		t.Fatalf("upload search preferred alias over English title: %q", got)
+	}
+
+	tvdbAliasFallback := &api.TVDBMetadata{Aliases: []string{"Alias Fallback"}}
+	if got := searchTitle(api.DuplicateSubject{ProviderMetadata: api.SourceScopedMetadata{TVDB: tvdbAliasFallback}}); got != "Alias Fallback" {
+		t.Fatalf("duplicate search dropped alias fallback: %q", got)
+	}
+	if got := resolveSearchName(api.UploadSubject{ProviderMetadata: api.SourceScopedMetadata{TVDB: tvdbAliasFallback}}); got != "Alias Fallback" {
+		t.Fatalf("upload search dropped alias fallback: %q", got)
+	}
 }

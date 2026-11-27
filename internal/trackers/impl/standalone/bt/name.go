@@ -33,7 +33,7 @@ func resolveSearchName(meta api.UploadSubject) string {
 		candidates = append(candidates, strings.TrimSpace(meta.ProviderMetadata.IMDB.Title))
 	}
 	if meta.ProviderMetadata.TVDB != nil {
-		candidates = append(candidates, strings.TrimSpace(meta.ProviderMetadata.TVDB.Name))
+		candidates = append(candidates, meta.ProviderMetadata.TVDB.DisplayName())
 	}
 	if meta.ProviderMetadata.TMDB != nil {
 		candidates = append(candidates, strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalTitle))

@@ -12,7 +12,7 @@ import (
 func TestSAMUsesLocalizedStructuredNamePolicy(t *testing.T) {
 	t.Parallel()
 	policy := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if policy.ID != "unit3d/sam/v2" || policy.Structured == nil || policy.Resolver != nil {
+	if policy.ID != "unit3d/sam/v3" || policy.Structured == nil || policy.Resolver != nil {
 		t.Fatalf("SAM policy = %#v", policy)
 	}
 }

@@ -53,8 +53,8 @@ func (c *Client) SearchCandidates(ctx context.Context, query string, year int, c
 		})
 	}
 	err = metautil.EnrichCandidates(ctx, candidates, func(ctx context.Context, candidate *api.ExternalIdentityCandidate) error {
-		var response seriesExtendedResponse
-		if err := c.getJSON(ctx, fmt.Sprintf("/series/%d/extended", candidate.ID), nil, &response); err != nil {
+		response, err := c.getSeriesExtended(ctx, candidate.ID, nil, nil)
+		if err != nil {
 			return err
 		}
 		data := response.Data

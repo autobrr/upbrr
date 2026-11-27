@@ -38,7 +38,7 @@ func resolveDisplayTitle(meta api.UploadSubject) string {
 		if categoryOf(meta) == "TV" {
 			alt = strings.TrimSpace(metautil.FirstNonEmptyTrimmed(tmdb.Title, meta.Release.Title))
 		} else {
-			alt = strings.TrimSpace(tmdb.OriginalTitle)
+			alt = metautil.FirstNonEmptyTrimmed(tmdb.OriginalTitle, tmdb.Title)
 		}
 	}
 	if meta.EffectiveMetadata.TitleProvenance.IsManual() {

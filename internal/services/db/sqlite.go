@@ -837,7 +837,7 @@ func (r *SQLiteRepository) GetExternalMetadata(ctx context.Context, path string)
 	}
 
 	row := r.db.QueryRowContext(ctx, `
-		SELECT source_path, tmdb_json, imdb_json, tvdb_json, tvmaze_json, anilist_json, bluray_json, updated_at
+		SELECT source_path, generation, tmdb_json, imdb_json, tvdb_json, tvmaze_json, anilist_json, bluray_json, updated_at
 		FROM external_metadata
 		WHERE source_path = ?
 	`, path)
@@ -852,6 +852,7 @@ func (r *SQLiteRepository) GetExternalMetadata(ctx context.Context, path string)
 	var updatedAt string
 	if err := row.Scan(
 		&metadata.SourcePath,
+		&metadata.Generation,
 		&tmdbJSON,
 		&imdbJSON,
 		&tvdbJSON,

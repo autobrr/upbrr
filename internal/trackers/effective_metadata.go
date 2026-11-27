@@ -24,17 +24,6 @@ func PreferredTitle(meta api.UploadSubject, provider string) string {
 	return strings.TrimSpace(meta.Release.Title)
 }
 
-// PreferredAlternateTitle retains explicit manual authority.
-func PreferredAlternateTitle(meta api.UploadSubject, provider string) string {
-	if meta.EffectiveMetadata.AlternateTitleProvenance.IsManual() {
-		return meta.EffectiveMetadata.AlternateTitle
-	}
-	if provider = strings.TrimSpace(provider); provider != "" {
-		return provider
-	}
-	return strings.TrimSpace(meta.EffectiveMetadata.AlternateTitle)
-}
-
 // PreferredOriginalTitle retains explicit manual authority.
 func PreferredOriginalTitle(meta api.UploadSubject, provider string) string {
 	if meta.EffectiveMetadata.OriginalTitleProvenance.IsManual() {

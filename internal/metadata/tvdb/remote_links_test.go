@@ -5,14 +5,14 @@ package tvdb
 
 import (
 	"encoding/json"
-	"github.com/autobrr/upbrr/internal/metadata/evidence"
-	"github.com/autobrr/upbrr/internal/services/db"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/metadata/evidence"
+	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -22,7 +22,11 @@ func TestLegacySeriesEvidenceRefreshesRemoteLinksAndReusesThemAfterRestart(t *te
 		switch r.URL.Path {
 		case "/series/123/extended":
 			calls.Add(1)
-			_, _ = w.Write([]byte(`{"data":{"id":123,"name":"Provider title","remoteIds":[{"id":"456","sourceName":"TheMovieDB.com","type":12}]}}`))
+			if r.URL.Query().Get("lang") == "eng" {
+				_, _ = w.Write([]byte(`{"data":{"id":123,"name":"Localized title","remoteIds":[]}}`))
+			} else {
+				_, _ = w.Write([]byte(`{"data":{"id":123,"name":"Provider title","remoteIds":[{"id":"456","sourceName":"TheMovieDB.com","type":12}]}}`))
+			}
 		case "/series/123/translations/eng":
 			_, _ = w.Write([]byte(`{"data":{}}`))
 		case "/search":
@@ -72,9 +76,27 @@ func TestLegacySeriesEvidenceRefreshesRemoteLinksAndReusesThemAfterRestart(t *te
 	client = NewClient(server.Client(), nil, "synthetic", "")
 	client.baseURL = server.URL
 	client.authToken = "synthetic"
-	got, err = client.GetSeriesMetadataWithLanguage(ctx, 123, "")
-	if err != nil || len(got.RemoteLinks.Links) != 1 || calls.Load() != 1 {
-		t.Fatalf("remote links not reusable after restart: %+v %v calls=%d", got.RemoteLinks, err, calls.Load())
+	links, err := client.GetSeriesRemoteLinks(ctx, 123)
+	if err != nil || links.Status != api.MetadataEvidenceStatusComplete || len(links.Links) != 1 || links.Links[0].ID != 456 || calls.Load() != 1 {
+		t.Fatalf("remote links not reusable after restart: %+v %v calls=%d", links, err, calls.Load())
+	}
+	localized, err := client.GetSeriesMetadataWithLanguage(ctx, 123, "eng")
+	if err != nil || localized.Name != "Localized title" || localized.RemoteLinks.Status != api.MetadataEvidenceStatusComplete ||
+		len(localized.RemoteLinks.Links) != 0 || calls.Load() != 2 {
+		t.Fatalf("localized response shared default evidence or retried explicit empty links: %+v %v calls=%d", localized, err, calls.Load())
+	}
+	links, err = client.GetSeriesRemoteLinks(ctx, 123)
+	if err != nil || len(links.Links) != 1 || links.Links[0].ID != 456 || calls.Load() != 2 {
+		t.Fatalf("localized read changed the default record: %+v %v calls=%d", links, err, calls.Load())
+	}
+	other, _ := evidence.WithScope(t.Context(), repo, source, "replacement", api.ExternalFreshnessReuse, nil)
+	if _, err := client.GetSeriesRemoteLinks(other, 123); err != nil || calls.Load() != 3 {
+		t.Fatalf("verified source change reused old evidence: %v calls=%d", err, calls.Load())
+	}
+	otherClient := NewClient(server.Client(), nil, "another-synthetic-key", "")
+	otherClient.baseURL, otherClient.authToken = server.URL, "synthetic"
+	if _, err := otherClient.GetSeriesRemoteLinks(ctx, 123); err != nil || calls.Load() != 4 {
+		t.Fatalf("credential change reused old evidence: %v calls=%d", err, calls.Load())
 	}
 }
 

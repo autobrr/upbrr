@@ -746,7 +746,7 @@ func btnCandidateTitles(meta api.UploadSubject) map[string]struct{} {
 		pathutil.Base(meta.SourcePath),
 	}
 	if meta.ProviderMetadata.TVDB != nil {
-		candidates = append(candidates, meta.ProviderMetadata.TVDB.Name, meta.ProviderMetadata.TVDB.NameEnglish)
+		candidates = append(candidates, meta.ProviderMetadata.TVDB.DisplayName(), meta.ProviderMetadata.TVDB.NameEnglish)
 	}
 	if meta.ProviderMetadata.TMDB != nil {
 		candidates = append(candidates, meta.ProviderMetadata.TMDB.Title, meta.ProviderMetadata.TMDB.OriginalTitle)

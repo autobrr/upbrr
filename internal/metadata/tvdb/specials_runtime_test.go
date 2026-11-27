@@ -70,7 +70,7 @@ func TestExplicitSpecialReusesProvenEpisodeCache(t *testing.T) {
 	}
 }
 
-func TestSpecialEvidenceVersionPreservesSeriesResponses(t *testing.T) {
+func TestSpecialEvidenceVersionPreservesLocalizedSeriesResponses(t *testing.T) {
 	t.Parallel()
 	repo, err := db.OpenContext(t.Context(), filepath.Join(t.TempDir(), "metadata.sqlite"))
 	if err != nil {
@@ -87,12 +87,13 @@ func TestSpecialEvidenceVersionPreservesSeriesResponses(t *testing.T) {
 	})}, api.NopLogger{}, "synthetic-key", "")
 	path := "/series/555001/extended"
 	seeded := seriesExtendedResponse{Data: seriesExtendedDataResponse{ID: 555001, Name: "Example Series"}}
-	if err := evidence.JSON(ctx, "tvdb.response.v1", []any{client.baseURL, client.apiKey, path, map[string]string(nil)},
+	params := map[string]string{"lang": "eng"}
+	if err := evidence.JSON(ctx, "tvdb.response.v1", []any{client.baseURL, client.apiKey, path, params},
 		&seeded, errNotFound, nil, func() error { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	var result seriesExtendedResponse
-	if err := client.getJSON(ctx, path, nil, &result); err != nil {
+	result, err := client.getSeriesExtended(ctx, 555001, params, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Data.ID != seeded.Data.ID || result.Data.Name != seeded.Data.Name {

@@ -128,7 +128,6 @@ type MetadataInput struct {
 	Anime            bool
 	SkipAnimeLookup  bool
 	MALManual        int
-	AKA              string
 	OriginalLanguage string
 	Poster           string
 	QuickieSearch    bool

@@ -4,6 +4,7 @@
 package metadata
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -98,7 +99,7 @@ func importedScreenshotEvidenceFromResult(meta preparationstate.State, record ap
 		Tracker:                record.Tracker,
 		TrackerID:              record.TrackerID,
 		InfoHash:               record.InfoHash,
-		SourceFingerprint:      meta.SourceFingerprint,
+		SourceFingerprint:      cmp.Or(meta.IdentitySourceFingerprint, meta.SourceFingerprint),
 		PolicyVersion:          result.ImportedImagePolicyVersion,
 		DescriptionFingerprint: result.ImportedImageDescriptionFingerprint,
 		References:             slices.Clone(result.UninspectedImages),
