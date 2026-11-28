@@ -393,6 +393,9 @@ func resolvePublicPosterAddress(ctx context.Context, host string, port string) (
 		}
 		return net.JoinHostPort(addr.String(), port), nil
 	}
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("poster DNS lookup %q: %w", host, err)
+	}
 	resolved, err := net.DefaultResolver.LookupIPAddr(ctx, host)
 	if err != nil {
 		return "", fmt.Errorf("poster DNS lookup %q: %w", host, err)

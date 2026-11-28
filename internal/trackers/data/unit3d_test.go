@@ -6,9 +6,11 @@ package data
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/png"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -106,6 +108,20 @@ func TestImgBBFullImageURLUsesImageSourceFallback(t *testing.T) {
 	}
 }
 
+func noNetworkImgBBTestClient(t *testing.T) *http.Client {
+	t.Helper()
+	previousLookup := unit3DImageLookupIPAddrs
+	unit3DImageLookupIPAddrs = func(_ context.Context, host string) ([]net.IPAddr, error) {
+		t.Errorf("unexpected DNS lookup for %q", host)
+		return nil, errors.New("unexpected DNS lookup")
+	}
+	t.Cleanup(func() { unit3DImageLookupIPAddrs = previousLookup })
+	return &http.Client{Transport: imageReceiptRoundTripper(func(req *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected HTTP request for %q", req.URL)
+		return nil, errors.New("unexpected HTTP request")
+	})}
+}
+
 func TestResolveImgBBImagesSkipsThumbnailWhenPageLookupFails(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -115,7 +131,7 @@ func TestResolveImgBBImagesSkipsThumbnailWhenPageLookupFails(t *testing.T) {
 		{RawURL: "https://i.ibb.co/example/thumb.png", WebURL: "https://ibb.co/example"},
 		{RawURL: "https://93.184.216.34/third.png", WebURL: "https://93.184.216.34/third.png"},
 	}
-	resolved := resolveImgBBImages(ctx, nil, "AITHER", logger, images)
+	resolved := resolveImgBBImages(ctx, noNetworkImgBBTestClient(t), "AITHER", logger, images)
 	if len(resolved) != 3 || resolved[1] != (bbcode.Image{}) || resolved[2].RawURL != "https://93.184.216.34/third.png" {
 		t.Fatalf("failed ImgBB lookup shifted later screenshot or retained thumbnail: %#v", resolved)
 	}
@@ -150,7 +166,7 @@ func TestResolveImgBBImagesKeepsDirectImageWhenPageLookupFails(t *testing.T) {
 		RawURL: "https://i.ibb.co/example/full.png",
 		WebURL: "https://ibb.co/example",
 	}
-	resolved := resolveImgBBImages(ctx, nil, "BLU", logger, []bbcode.Image{image})
+	resolved := resolveImgBBImages(ctx, noNetworkImgBBTestClient(t), "BLU", logger, []bbcode.Image{image})
 	if len(resolved) != 1 || resolved[0] != image {
 		t.Fatalf("direct ImgBB image was lost when page lookup failed: %#v", resolved)
 	}
@@ -169,7 +185,7 @@ func TestResolveImgBBImagesFindsViewerInsideWsrvSource(t *testing.T) {
 		RawURL: "https://wsrv.nl/?url=https%3A%2F%2Fibb.co%2FExample",
 		WebURL: "https://wsrv.nl/?url=https%3A%2F%2Fibb.co%2FExample",
 	}
-	resolved := resolveImgBBImages(ctx, nil, "AITHER", logger, []bbcode.Image{image})
+	resolved := resolveImgBBImages(ctx, noNetworkImgBBTestClient(t), "AITHER", logger, []bbcode.Image{image})
 	if len(resolved) != 1 || resolved[0] != (bbcode.Image{}) {
 		t.Fatalf("ImgBB viewer in proxy was not resolved: %#v", resolved)
 	}
