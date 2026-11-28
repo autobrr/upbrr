@@ -4,9 +4,10 @@
 package impl
 
 import (
-	"context"
+	"errors"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -20,6 +21,8 @@ func TestEveryTrackerExposesOneStructuralDuplicateFactory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var cfg config.Config
+	cfg.MainSettings.DBPath = filepath.Join(t.TempDir(), "test.db")
 	for _, name := range registry.Names() {
 		t.Run(name, func(t *testing.T) {
 			definition, ok := registry.Lookup(name)
@@ -30,11 +33,15 @@ func TestEveryTrackerExposesOneStructuralDuplicateFactory(t *testing.T) {
 			if !ok {
 				t.Fatalf("%s does not expose dupe.Factory", name)
 			}
-			adapter := dupe.NewAdapter(factory, name, config.Config{}, http.DefaultClient, api.NopLogger{}, registry)
+			client := &http.Client{Transport: connectionRoundTripper(func(*http.Request) (*http.Response, error) {
+				t.Error("structural duplicate contract attempted an HTTP request")
+				return nil, errors.New("HTTP is disabled in the structural duplicate contract")
+			})}
+			adapter := dupe.NewAdapter(factory, name, cfg, client, api.NopLogger{}, registry)
 			if adapter == nil {
 				t.Fatal("factory returned nil adapter")
 			}
-			result := adapter.Search(context.Background(), api.DuplicateSubject{
+			result := adapter.Search(t.Context(), api.DuplicateSubject{
 				SourcePath:  "C:/media/Example.Release.2026.1080p-GRP.mkv",
 				ReleaseName: "Example.Release.2026.1080p-GRP",
 			})

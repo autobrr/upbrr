@@ -2893,7 +2893,7 @@ test("capture expanded frames, published images, menus, descriptions, and icon-o
     ).toBeVisible();
     for (const width of [1280, 390]) await capture("descriptions", "expanded", width);
     await page.getByRole("button", { name: "Settings", exact: true }).click();
-    const faviconOnly = page.getByRole("switch", { name: "Favicon only" });
+    const faviconOnly = page.getByRole("switch", { name: "Show icons without tracker names" });
     await faviconOnly.click();
     await expect(faviconOnly).toHaveAttribute("aria-checked", "true");
     await page.getByRole("button", { name: "Save", exact: true }).click();

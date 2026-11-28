@@ -112,10 +112,21 @@ jobs:
         working-directory: webui
         run: pnpm exec playwright install --with-deps --only-shell chromium
 
+      - name: Prepare Linux test network isolation
+        run: |
+          if ! command -v nft >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y nftables
+          fi
+
+      - name: Verify test network isolation
+        if: matrix.shard == 1
+        run: bash scripts/ci/test-loopback.test.sh
+
       - name: Run E2E
         env:
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/results.json
-        run: pnpm --dir webui exec playwright test --shard=${{ matrix.shard }}/4 --reporter=list,html,json
+        run: bash scripts/ci/test-loopback.sh pnpm --dir webui exec playwright test --shard=${{ matrix.shard }}/4 --reporter=list,html,json
 
       - name: Upload Playwright timings
         if: ${{ !cancelled() }}

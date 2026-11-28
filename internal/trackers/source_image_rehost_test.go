@@ -41,7 +41,17 @@ func (d nativeSourceImageTestDefinition) SourceOnlyImageReusable(rawURL string, 
 }
 
 func TestRehostSourceOnlyComparisonImagesPreservesMarkupAndReusesUploads(t *testing.T) {
-	t.Parallel()
+	// Force the preferred source lookup to fail so rehosting uses the cached image.
+	lookup := descriptionSlotImageLookupIPAddrs
+	descriptionSlotImageLookupIPAddrs = func(_ context.Context, host string) ([]net.IPAddr, error) {
+		return nil, &net.DNSError{
+			Err:        "source fixture unavailable",
+			Name:       host,
+			IsNotFound: true,
+		}
+	}
+	t.Cleanup(func() { descriptionSlotImageLookupIPAddrs = lookup })
+
 	root := t.TempDir()
 	source := filepath.Join(root, "Example.Release.2026-GRP.mkv")
 	urls := []string{

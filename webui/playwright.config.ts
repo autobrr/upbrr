@@ -11,9 +11,17 @@ export default defineConfig({
     timeout: 10_000,
   },
   fullyParallel: true,
+  // Playwright can fetch the PR base for diff metadata in a shallow CI checkout.
+  captureGitInfo: { diff: false },
   reporter: [["list"], ["html", { open: "never", outputFolder: "playwright-report" }]],
   use: {
     baseURL: "http://localhost:7480",
+    launchOptions: {
+      // Keep Chromium's background DNS local. Playwright can still fulfill mocked URLs.
+      args: [
+        "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1, EXCLUDE [::1]",
+      ],
+    },
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",

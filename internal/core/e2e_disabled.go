@@ -14,6 +14,9 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// E2EFakesEnabled reports whether this build is using fake E2E services.
+func E2EFakesEnabled() bool { return false }
+
 func maybeApplyE2EServices(context.Context, *api.ServiceSet, config.Config, api.RepositoryCapabilities, *trackers.Registry, api.Logger) error {
 	return nil
 }

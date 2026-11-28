@@ -7,7 +7,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test as base, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import type { ActiveInputSnapshot } from "../../src/api/generated/release-workflow";
 import { waitForHTTP } from "./appReadiness";
 
@@ -28,19 +28,9 @@ export const releaseWorkflowParityFixture = {
 } as const;
 
 const png1x1 = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAAD0lEQVR4nAACAP3/Av8DAAEFAQJnLD7dAAAAAElFTkSuQmCC",
   "base64",
 );
-
-/** Browser scenarios use synthetic icons instead of contacting real tracker sites. */
-export const test = base.extend({
-  context: async ({ context }, use) => {
-    await context.route("**/api/app/GetTrackerIcon", (route) =>
-      route.fulfill({ json: `data:image/png;base64,${png1x1.toString("base64")}` }),
-    );
-    await use(context);
-  },
-});
 
 const e2eTorrentFixture =
   "d8:announce13:http://e2e.ee4:infod6:lengthi0e4:name8:test.txt12:piece lengthi16384e6:pieces0:ee";
@@ -179,6 +169,14 @@ export async function createE2EWorkspace(options: E2EWorkspaceOptions = {}): Pro
   if (options.preparedMediaInfo) {
     await writeFile(mediaInfoPath, "General\nUnique ID : e2e-unique-id\nVideo\nFormat : AVC\n");
   }
+  // Preflight reads a fresh banned-group cache before refreshing from AITHER.
+  const bannedGroupCache = path.join(root, "cache", "banned");
+  await mkdir(bannedGroupCache, { recursive: true });
+  await writeFile(
+    path.join(bannedGroupCache, "AITHER_banned_groups.json"),
+    JSON.stringify({ banned_groups: "" }),
+    { mode: 0o600 },
+  );
   const fake = await startFakeServer();
   await writeFile(
     configPath,
