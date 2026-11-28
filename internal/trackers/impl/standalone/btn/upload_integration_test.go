@@ -862,6 +862,9 @@ func TestBTNExplicitDryRunRetriesExplicitTVDBAutofillFailureWithReleaseName(t *t
 	if !strings.Contains(entry.ReleaseName, "S00E80") {
 		t.Fatalf("release name lost the special numbering: %q", entry.ReleaseName)
 	}
+	if desc := entry.Payload["album_desc"]; !strings.Contains(desc, "\n[b]Season:[/b] 0\n[b]Episode:[/b] 80\n") {
+		t.Fatalf("fallback album description lost the special numbering: %q", desc)
+	}
 	if autofillCalls.Load() != 2 || uploadCalls.Load() != 0 || len(gotForms) != 2 ||
 		gotForms[0].Get("scene_yesno") != "No" || gotForms[0].Get("auto_series") != "12345" ||
 		gotForms[0].Get("type") != "Episode" || gotForms[0].Get("auto_title") != "S00E80" ||

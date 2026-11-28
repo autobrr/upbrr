@@ -624,8 +624,8 @@
     "sha256": "a4a7e1f398099bbaea96ccd78ec05e09ebf04a22925a1d1b3ca212e5aa38789f"
   },
   "internal/trackers/impl/standalone/btn/description.go:buildTVDBAlbumDesc": {
-    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
-    "sha256": "323ccc8322ba3088c7aa61f0ef1f201513e0c7458f071bf8da7a4d19c876fc9c"
+    "reason": "Formats TVDB episode details using the BTN resolver's coordinates, which preserve an explicit canonical S00. Matching episodes and season packs still use their selected TVDB entries.",
+    "sha256": "e7c86d5043b28a88c8d66c37dc4e1eb095e4698b5c3229e7e5fc58c6190cf41f"
   },
   "internal/trackers/impl/standalone/btn/description.go:formatBTNEpisodeAlbumDesc": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",

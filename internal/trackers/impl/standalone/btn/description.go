@@ -115,8 +115,8 @@ func buildTVDBAlbumDesc(meta api.UploadSubject) string {
 	}
 	if tvdb.EpisodeSeason > 0 || tvdb.EpisodeNumber > 0 || strings.TrimSpace(tvdb.EpisodeName) != "" || strings.TrimSpace(tvdb.EpisodeOverview) != "" {
 		return formatBTNEpisodeAlbumDesc([]api.TVDBEpisodeMetadata{{
-			SeasonNumber:           tvdb.EpisodeSeason,
-			EpisodeNumber:          tvdb.EpisodeNumber,
+			SeasonNumber:           season,
+			EpisodeNumber:          episode,
 			EpisodeName:            tvdb.EpisodeName,
 			EpisodeNameEnglish:     tvdb.EpisodeNameEnglish,
 			EpisodeOverview:        tvdb.EpisodeOverview,
