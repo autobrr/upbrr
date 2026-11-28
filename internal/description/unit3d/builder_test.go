@@ -189,7 +189,7 @@ func TestDVDVOBMediaInfoBlockIncludesEveryDiscOnce(t *testing.T) {
 		},
 		DVDVOBMediaInfoText: "VOB INFO ONE",
 	}
-	block := DVDVOBMediaInfoBlock(meta)
+	block := dvdVOBMediaInfoBlock(meta, "")
 	if strings.Count(block, "VOB INFO ONE") != 1 || strings.Count(block, "VOB INFO TWO") != 1 {
 		t.Fatalf("DVD VOB block = %q", block)
 	}

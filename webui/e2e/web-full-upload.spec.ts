@@ -21,6 +21,7 @@ import {
   createMultiDVDSourceFixture,
   expectSingleCollectionTorrentUpload,
   fetchMetadata,
+  releaseDescriptionsButton,
   readE2EAuthCounters,
   releaseWorkflowParityFixture,
   startApp,
@@ -1545,10 +1546,7 @@ for (const scenario of [
         page.getByRole("button", { name: "Upload Images", exact: true }),
         scenario.uploadImages,
       );
-      await expectEnabledState(
-        page.getByRole("button", { name: "Descriptions", exact: true }),
-        scenario.descriptions,
-      );
+      await expectEnabledState(releaseDescriptionsButton(page), scenario.descriptions);
       await expectEnabledState(
         page.getByRole("button", { name: "Upload", exact: true }),
         scenario.upload,
@@ -1614,15 +1612,13 @@ for (const { tracker, emptyDescription } of [
           await page.getByRole("button", { name: "Screenshots", exact: true }).click();
           await page.getByRole("button", { name: "Generate screenshots" }).click();
           await expect(page.getByText("1 retained screenshot(s)")).toBeVisible();
-          await expect(
-            page.getByRole("button", { name: "Descriptions", exact: true }),
-          ).toBeEnabled();
+          await expect(releaseDescriptionsButton(page)).toBeEnabled();
           await expect(page.getByRole("button", { name: "Upload", exact: true })).toBeDisabled();
           await page.getByRole("button", { name: "Upload Images", exact: true }).click();
           await page.getByRole("button", { name: "Prepare required hosts (1)" }).click();
           await expect(page.getByText("1 saved")).toBeVisible();
           expect(workspace.fake.counters.imageUploads).toBe(1);
-          await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+          await releaseDescriptionsButton(page).click();
           await page.getByRole("button", { name: "Refresh descriptions" }).click();
           await page.getByRole("button", { name: "Expand ANT", exact: true }).click();
           const editor = page.getByRole("textbox", { name: "Raw description for ANT" });
@@ -1659,7 +1655,7 @@ for (const { tracker, emptyDescription } of [
               .filter((artifact) => artifact.kind === "hosted_image")
               .map((artifact) => artifact.url),
           ).toEqual([`${workspace.fake.url}/image/1`]);
-          await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+          await releaseDescriptionsButton(page).click();
           await page.getByRole("button", { name: "Expand ANT", exact: true }).click();
           await expect(editor).toHaveValue(editedDescription);
           if (!emptyDescription) {
@@ -1668,9 +1664,7 @@ for (const { tracker, emptyDescription } of [
           await page.getByRole("button", { name: "Upload Images", exact: true }).click();
           await expect(page.getByText("1 saved")).toBeVisible();
         } else {
-          await expect(
-            page.getByRole("button", { name: "Descriptions", exact: true }),
-          ).toBeDisabled();
+          await expect(releaseDescriptionsButton(page)).toBeDisabled();
         }
         await page.getByRole("button", { name: "Upload", exact: true }).click();
         await page.getByRole("button", { name: action, exact: true }).click();
@@ -1689,7 +1683,7 @@ for (const { tracker, emptyDescription } of [
           expect(workspace.fake.counters.clientInjections).toBe(1);
         }
         await expectEnabledState(
-          page.getByRole("button", { name: "Descriptions", exact: true }),
+          releaseDescriptionsButton(page),
           tracker === "ANT" && action === "Run dry run",
         );
         expect(workspace.fake.counters.imageUploads).toBe(tracker === "ANT" ? 1 : 0);
@@ -3573,7 +3567,7 @@ for (const change of ["deselect", "delete"] as const) {
             artifact.selected &&
             artifact.source !== imported.id,
         )!.url!;
-        await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+        await releaseDescriptionsButton(page).click();
         await page.getByRole("button", { name: "Refresh descriptions", exact: true }).click();
         await expect
           .poll(async () => {
@@ -3604,7 +3598,7 @@ for (const change of ["deselect", "delete"] as const) {
           await expect(page.getByText("1 saved", { exact: true })).toBeVisible();
           await expect(page.getByRole("link", { name: removedURL, exact: true })).toHaveCount(0);
           await expect(page.getByRole("link", { name: keptURL, exact: true })).toBeVisible();
-          await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+          await releaseDescriptionsButton(page).click();
         }
         await page.getByRole("button", { name: "Refresh descriptions", exact: true }).click();
         await page.getByRole("button", { name: "Expand HDS", exact: true }).click();
@@ -3712,13 +3706,13 @@ test("embedded web runs image upload, direct tracker upload, and history", async
     await page.getByRole("button", { name: "Generate screenshots" }).click();
     await expect(page.getByAltText("Screenshot 1")).toBeVisible();
 
-    await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+    await releaseDescriptionsButton(page).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await page.getByRole("button", { name: "Expand" }).click();
     await expect(page.getByRole("textbox")).toHaveValue("E2E description fixture.");
     await expect(page.getByText("E2E description fixture.").first()).toBeVisible();
     await page.reload();
-    await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+    await releaseDescriptionsButton(page).click();
     await page.getByRole("button", { name: "Expand" }).click();
     await expect(page.getByRole("textbox")).toHaveValue("E2E description fixture.");
 
@@ -3992,7 +3986,7 @@ test("embedded rendered descriptions open HDR images and switch comparison sourc
     await page.getByRole("button", { name: "Upload Images", exact: true }).click();
     await page.getByRole("button", { name: "Prepare required hosts (1)" }).click();
     await expect(page.getByText("1 saved")).toBeVisible();
-    await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+    await releaseDescriptionsButton(page).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await page.getByRole("button", { name: "Expand" }).click();
     const url = "https://images.example.invalid/hdr.png";
@@ -4153,7 +4147,7 @@ test("embedded web restores edited descriptions after reopening an input", async
     await page.getByRole("button", { name: "Upload Images", exact: true }).click();
     await page.getByRole("button", { name: "Prepare required hosts (1)" }).click();
     await expect(page.getByText("1 saved")).toBeVisible();
-    await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+    await releaseDescriptionsButton(page).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await page.getByRole("button", { name: "Expand" }).click();
     await expect(page.getByRole("textbox")).toHaveValue("E2E description fixture.");
@@ -4234,7 +4228,7 @@ test("embedded web restores edited descriptions after reopening an input", async
     await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
     await page.getByRole("checkbox", { name: "HDS" }).check();
     await runDuplicateCheck(page);
-    await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+    await releaseDescriptionsButton(page).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await page.getByRole("button", { name: "Expand" }).click();
     await expect(page.getByRole("textbox")).toHaveValue(editedDescription);
@@ -4290,7 +4284,7 @@ for (const scenario of [
       await page.getByRole("button", { name: "Screenshots" }).click();
       await page.getByRole("button", { name: "Generate screenshots" }).click();
       await expect(page.getByText("1 retained screenshot(s)")).toBeVisible();
-      await page.getByRole("button", { name: "Descriptions" }).click();
+      await releaseDescriptionsButton(page).click();
       await page.getByRole("button", { name: "Refresh descriptions" }).click();
       await expect(page.getByRole("button", { name: "Upload", exact: true })).toBeEnabled();
       await page.getByRole("button", { name: "Upload", exact: true }).click();
@@ -4425,7 +4419,7 @@ test("embedded web reports an optional tracker dry run after a duplicate overrid
     await expect(
       page.getByRole("button", { name: "Generate screenshots", exact: true }),
     ).toBeDisabled();
-    await expect(page.getByRole("button", { name: "Descriptions", exact: true })).toBeDisabled();
+    await expect(releaseDescriptionsButton(page)).toBeDisabled();
     await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
     await page.getByLabel("Ignore dupes for HDS").click();
     await expect(page.getByText("1 potential dupe · acknowledged")).toBeVisible();
@@ -4441,7 +4435,7 @@ test("embedded web reports an optional tracker dry run after a duplicate overrid
     await page.getByRole("button", { name: "Screenshots", exact: true }).click();
     await page.getByRole("button", { name: "Generate screenshots" }).click();
     await expect(page.getByText("1 retained screenshot(s)")).toBeVisible();
-    await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+    await releaseDescriptionsButton(page).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await page.getByRole("button", { name: "Expand" }).click();
     await expect(page.getByRole("textbox")).toHaveValue("E2E description fixture.");
@@ -4630,7 +4624,7 @@ test("embedded DVD media keeps normal screenshots and optional menus independent
     await expect(page.getByRole("button", { name: "Capture DVD menus" })).toBeVisible();
     await expect(page.getByText("0 captured menu image(s)")).toBeVisible();
 
-    await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+    await releaseDescriptionsButton(page).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await expect(page.getByRole("button", { name: "Refresh descriptions" })).toBeEnabled();
     await page.getByRole("button", { name: "Expand" }).click();
@@ -4660,7 +4654,7 @@ test("embedded DVD media keeps normal screenshots and optional menus independent
     await expect.poll(() => workspace.fake.counters.imageUploads).toBe(6);
     await expect(page.getByText("6 saved")).toBeVisible();
 
-    await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+    await releaseDescriptionsButton(page).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await expect(page.getByRole("button", { name: "Refresh descriptions" })).toBeEnabled();
     await page.getByRole("button", { name: "Expand" }).click();
@@ -4913,7 +4907,7 @@ for (const stage of [
                 await page.getByRole("button", { name: "Upload Images", exact: true }).click();
                 start = () => page.getByRole("button", { name: /^Prepare required hosts/ }).click();
               } else {
-                await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+                await releaseDescriptionsButton(page).click();
                 start = () =>
                   page.getByRole("button", { name: "Refresh descriptions", exact: true }).click();
               }

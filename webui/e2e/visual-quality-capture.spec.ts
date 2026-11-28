@@ -5,6 +5,7 @@ import {
   createE2EWorkspace,
   createMultiDVDSourceFixture,
   fetchMetadata,
+  releaseDescriptionsButton,
   startApp,
   type AppServer,
 } from "./helpers/e2eHarness";
@@ -1537,7 +1538,7 @@ test("sweep populated routes across resolved palettes and widths", async ({ page
     await page.getByRole("button", { name: "Screenshots", exact: true }).click();
     await page.getByRole("button", { name: "Generate screenshots" }).click();
     await expect(page.getByAltText("Screenshot 1")).toBeVisible();
-    await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+    await releaseDescriptionsButton(page).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await page.getByRole("button", { name: "Expand" }).first().waitFor();
     await page.getByRole("button", { name: "Audio Analysis", exact: true }).click();
@@ -1925,7 +1926,7 @@ https://img.example/after.png[/comparison]
     await page.getByRole("button", { name: "Screenshots", exact: true }).click();
     await page.getByRole("button", { name: "Generate screenshots" }).click();
     await expect(page.getByAltText("Screenshot 1")).toBeVisible();
-    await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+    await releaseDescriptionsButton(page).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await page.getByRole("button", { name: "Expand" }).first().waitFor();
     const authStatus = await page.request.get(new URL("api/auth/status", app.url).toString());
@@ -2883,7 +2884,7 @@ test("capture expanded frames, published images, menus, descriptions, and icon-o
     await page.getByRole("button", { name: "Capture DVD menus" }).click();
     await expect(page.getByText("2 captured menu image(s)")).toBeVisible();
     for (const width of [1280, 390]) await capture("menu-images", "captured", width);
-    await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+    await releaseDescriptionsButton(page).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     const expand = page.getByRole("button", { name: /^Expand / }).first();
     await expect(expand).toBeVisible();
@@ -3314,7 +3315,7 @@ test("inspect populated routes at zoom-equivalent and tablet widths", async ({ p
         await page.getByRole("button", { name: "Screenshots", exact: true }).click();
         await page.getByRole("button", { name: "Generate screenshots" }).click();
         await expect(page.getByAltText("Screenshot 1")).toBeVisible();
-        await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+        await releaseDescriptionsButton(page).click();
         await page.getByRole("button", { name: "Refresh descriptions" }).click();
         await page.getByRole("button", { name: "Expand" }).first().waitFor();
         await page.getByRole("button", { name: "Audio Analysis", exact: true }).click();

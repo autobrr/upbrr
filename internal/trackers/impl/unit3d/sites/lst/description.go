@@ -40,8 +40,7 @@ func validateFinalDescription(meta api.UploadSubject, description, mediaInfo, bd
 		if !dvdIFOFormat.MatchString(mediaInfo) {
 			return errors.New("LST: the MediaInfo parser requires the main DVD IFO report")
 		}
-		block := descriptionunit3d.DVDVOBMediaInfoBlock(api.NewDescriptionSubject(meta))
-		if block == "" || !strings.Contains(description, block) {
+		if !descriptionunit3d.ContainsDVDVOBMediaInfoBlock(description, api.NewDescriptionSubject(meta)) {
 			return errors.New("LST: include the main DVD VOB MediaInfo inside its description spoiler")
 		}
 	}

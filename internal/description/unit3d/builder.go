@@ -616,16 +616,18 @@ func UppbrrSignatureLink() (string, string) {
 	return uaSignatureLink, uaSignatureText
 }
 
-// DVDVOBMediaInfoBlock renders MediaInfo for DVD VOB content.
-func DVDVOBMediaInfoBlock(meta api.DescriptionSubject) string {
-	return dvdVOBMediaInfoBlock(meta, "")
+func dvdVOBMediaInfoBlock(meta api.DescriptionSubject, label string) string {
+	return renderDVDVOBMediaInfoBlock(dvdVOBMediaInfoReport(meta), label)
 }
 
-func dvdVOBMediaInfoBlock(meta api.DescriptionSubject, label string) string {
+func dvdVOBMediaInfoReport(meta api.DescriptionSubject) string {
 	if !strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
 		return ""
 	}
-	vobText := api.AggregateDVDVOBMediaInfo(meta.Discs, meta.DVDVOBMediaInfoText)
+	return api.AggregateDVDVOBMediaInfo(meta.Discs, meta.DVDVOBMediaInfoText)
+}
+
+func renderDVDVOBMediaInfoBlock(vobText, label string) string {
 	if vobText == "" {
 		return ""
 	}
@@ -635,21 +637,38 @@ func dvdVOBMediaInfoBlock(meta api.DescriptionSubject, label string) string {
 	return dvdVOBMediaInfoHeader + vobText + dvdVOBMediaInfoFooter
 }
 
+var dvdVOBSpoiler = regexp.MustCompile(`(?s)\[spoiler=[^\[\]\r\n]+\]\[code\](.*?)\[/code\]\[/spoiler\]`)
+
+// ContainsDVDVOBMediaInfoBlock checks for the prepared VOB report in a
+// complete labelled spoiler without requiring a particular display heading.
+func ContainsDVDVOBMediaInfoBlock(value string, meta api.DescriptionSubject) bool {
+	return containsDVDVOBReport(value, dvdVOBMediaInfoReport(meta))
+}
+
+func containsDVDVOBReport(value, report string) bool {
+	if report == "" {
+		return false
+	}
+	for _, match := range dvdVOBSpoiler.FindAllStringSubmatch(value, -1) {
+		if match[1] == report {
+			return true
+		}
+	}
+	return false
+}
+
 // AppendDVDVOBMediaInfoBlock appends the DVD report unless it is already
-// included under the default or configured spoiler heading.
+// included under a spoiler heading.
 func AppendDVDVOBMediaInfoBlock(description string, meta api.DescriptionSubject, label string) string {
 	trimmedDescription := strings.TrimSpace(description)
-	block := dvdVOBMediaInfoBlock(meta, label)
-	if block == "" {
+	vobText := dvdVOBMediaInfoReport(meta)
+	if vobText == "" || containsDVDVOBReport(trimmedDescription, vobText) {
 		return trimmedDescription
 	}
+	block := renderDVDVOBMediaInfoBlock(vobText, label)
 	if trimmedDescription == "" {
 		return block
 	}
-	if strings.Contains(trimmedDescription, block) {
-		return trimmedDescription
-	}
-	vobText := api.AggregateDVDVOBMediaInfo(meta.Discs, meta.DVDVOBMediaInfoText)
 	if strings.Contains(trimmedDescription, dvdVOBMediaInfoHeader) && strings.Contains(trimmedDescription, vobText) {
 		return trimmedDescription
 	}
