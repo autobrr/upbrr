@@ -81,12 +81,12 @@ func collectCandidateFindings(
 ) []RuleFinding {
 	findings := make([]RuleFinding, 0, 12)
 	findings = append(findings, collectExactFindings(target, candidate)...)
-	targetTitleScope := parseBestTitle(target.Names).Content
-	candidateTitleScope := parseReleaseTitle(candidate.Name, FactOriginTrackerTitle).Content
+	targetTitle := parseBestTitle(target.Names)
+	candidateTitle := parseReleaseTitle(candidate.Name, FactOriginTrackerTitle)
 	if targetFacts.Content.Coverage.Status == api.MetadataEvidenceStatusContradictory ||
 		candidateFacts.Content.Coverage.Status == api.MetadataEvidenceStatusContradictory ||
-		contentScopesContradict(targetFacts.Content, targetTitleScope) ||
-		contentScopesContradict(candidateFacts.Content, candidateTitleScope) {
+		contentScopesContradict(targetFacts.Content, targetTitle.Content) ||
+		contentScopesContradict(candidateFacts.Content, candidateTitle.Content) {
 		findings = append(findings, RuleFinding{
 			RuleID:         GeneralPolicyID + "/content_scope",
 			Source:         "general",
@@ -114,28 +114,21 @@ func collectCandidateFindings(
 			ReasonCode: "ordinary_slot_unproven",
 			Priority:   findingPrioritySlotMissing,
 		}
-		contradictory := targetFacts.HDR.Status == api.HDREvidenceContradictory || candidateFacts.HDR.Status == api.HDREvidenceContradictory
-		for _, fact := range []Fact{
-			targetFacts.Resolution, candidateFacts.Resolution, targetFacts.Source, candidateFacts.Source,
-			targetFacts.Codec, candidateFacts.Codec,
-			dimensionFact(targetFacts, trackerspkg.DupeDimensionMediaClass), dimensionFact(candidateFacts, trackerspkg.DupeDimensionMediaClass),
-		} {
-			contradictory = contradictory || fact.Status == FactContradictory
+		evidence := nativeSlotEvidence(targetFacts, candidateFacts, targetTitle.MediaKind, candidateTitle.MediaKind)
+		if policy.CompareSlots != nil {
+			finding.Relation = policy.CompareSlots(target.TrackerSlot, candidate.TrackerSlot, target.Names, candidate.Name, evidence)
 		}
-		if contradictory {
+		if finding.Relation == api.DupeRelationCoexists || finding.Relation == api.DupeRelationSameSlot {
+			finding.Status = RuleFindingMatched
+			finding.Priority = findingPriorityTrackerMatched
+			finding.ReasonCode = "same_slot"
+			if finding.Relation == api.DupeRelationCoexists {
+				finding.ReasonCode = "distinct_ordinary_slot"
+			}
+		} else if evidence.Contradictory {
 			finding.ReasonCode = "native_slot_contradictory"
 			finding.Contradictions = []string{"native_slot"}
 			finding.Priority = findingPriorityTrackerMatched
-		} else if policy.CompareSlots != nil {
-			finding.Relation = policy.CompareSlots(target.TrackerSlot, candidate.TrackerSlot, target.Names, candidate.Name)
-			if finding.Relation == api.DupeRelationSameSlot || finding.Relation == api.DupeRelationCoexists {
-				finding.Status = RuleFindingMatched
-				finding.Priority = findingPriorityTrackerMatched
-				finding.ReasonCode = "same_slot"
-				if finding.Relation == api.DupeRelationCoexists {
-					finding.ReasonCode = "distinct_ordinary_slot"
-				}
-			}
 		}
 		findings = append(findings, finding)
 	}
@@ -267,6 +260,47 @@ func sameKnownContentScope(target contentScope, candidate contentScope) bool {
 	}
 	return target.Kind == candidate.Kind && target.Season == candidate.Season &&
 		target.EpisodeStart == candidate.EpisodeStart && target.EpisodeEnd == candidate.EpisodeEnd && target.Date == candidate.Date
+}
+
+func nativeSlotEvidence(target, candidate normalizedFacts, targetTitleKind, candidateTitleKind mediaKind) trackerspkg.DupeSlotEvidence {
+	targetClass := dimensionFact(target, trackerspkg.DupeDimensionMediaClass)
+	candidateClass := dimensionFact(candidate, trackerspkg.DupeDimensionMediaClass)
+	classConflict := false
+	for _, fact := range []Fact{targetClass, candidateClass, target.Source, candidate.Source, target.Codec, candidate.Codec} {
+		classConflict = classConflict || fact.Status == FactContradictory
+	}
+	resolutionDistinct := target.Resolution.Status == FactComplete && candidate.Resolution.Status == FactComplete &&
+		compareDimensionFacts(trackerspkg.DupeDimensionResolution, target.Resolution, candidate.Resolution) == DimensionDifferent
+	kindConflicts := target.ThreeD.Status == FactContradictory || candidate.ThreeD.Status == FactContradictory
+	classDistinct := !classConflict && !kindConflicts &&
+		targetClass.Status == FactComplete && candidateClass.Status == FactComplete &&
+		titleKindSupportsClass(targetTitleKind, target.MediaClass) && titleKindSupportsClass(candidateTitleKind, candidate.MediaClass) &&
+		compareFacts(targetClass, candidateClass) == DimensionDifferent
+	return trackerspkg.DupeSlotEvidence{
+		Contradictory: classConflict || target.Resolution.Status == FactContradictory || candidate.Resolution.Status == FactContradictory ||
+			target.HDR.Status == api.HDREvidenceContradictory || candidate.HDR.Status == api.HDREvidenceContradictory,
+		ResolutionDistinct: resolutionDistinct,
+		MediaClassDistinct: classDistinct,
+		DeclaredTypeDistinct: !kindConflicts && compareFacts(target.Type, candidate.Type) == DimensionDifferent &&
+			declaredTypeSupported(target, targetTitleKind) && declaredTypeSupported(candidate, candidateTitleKind),
+	}
+}
+
+// declaredTypeSupported establishes kind from complete type evidence alone,
+// while rejecting a conflicting title kind or container.
+func declaredTypeSupported(facts normalizedFacts, titleKind mediaKind) bool {
+	if facts.Type.Status != FactComplete || facts.Container.Status == FactContradictory {
+		return false
+	}
+	_, class, _ := deriveMediaFacts(facts.Type.Value, "", "", "", mediaKindUnknown)
+	return class != mediaClassUnknown && titleKindSupportsClass(titleKind, class)
+}
+
+// Title kind cannot prove a class on its own, but it can contradict a class
+// proved by structured evidence.
+func titleKindSupportsClass(kind mediaKind, class mediaClass) bool {
+	_, titleClass, _ := deriveMediaFacts("", "", "", "", kind)
+	return titleClass == mediaClassUnknown || titleClass == class
 }
 
 func collectGeneralFindings(target normalizedFacts, candidate normalizedFacts, policy trackerspkg.DupePolicy, workScope WorkScope) []RuleFinding {

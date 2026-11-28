@@ -1273,7 +1273,9 @@ behavior changes; never introduce tracker-name dispatch into the evaluator.
 For tracker-native slots, `TargetSlot` projects the proposed upload's resolved facts and
 `CompareSlots` compares them with the adapter's `DupeEntry.TrackerSlot` evidence. Keep both
 callbacks tracker-local and advance the duplicate policy version when their behavior changes.
-Do not infer equality or coexistence from missing facts, and preserve contradictory-evidence review.
+With contradictory evidence, use the independently proved resolution, media-class or declared-type differences
+in `DupeSlotEvidence` only if they establish distinct native slots. Otherwise retain manual review.
+Never infer equality or coexistence from a missing distinction.
 
 `StaffTokenOverride` requires explicit possession confirmation before overriding remote
 duplicates or incomplete search evidence. The confirmation is bound to the current assessment;
