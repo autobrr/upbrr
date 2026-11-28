@@ -131,6 +131,71 @@ func TestBTNValidationCleanEpisodeAndSeasonPackPass(t *testing.T) {
 	}
 }
 
+func TestBTNValidationSeasonZero(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name        string
+		season      string
+		episode     int
+		pack        bool
+		multiple    bool
+		tvdb        *api.TVDBMetadata
+		wantBlocked bool
+	}{
+		{
+			name:    "explicit single special",
+			season:  "S00",
+			episode: 80,
+		},
+		{
+			name:        "unknown season",
+			episode:     80,
+			wantBlocked: true,
+		},
+		{
+			name:        "specials pack with conflicting TVDB numbering",
+			season:      "S00",
+			episode:     80,
+			pack:        true,
+			tvdb:        &api.TVDBMetadata{EpisodeSeason: 1, EpisodeNumber: 80},
+			wantBlocked: true,
+		},
+		{
+			name:        "multiple specials",
+			season:      "S00",
+			episode:     80,
+			multiple:    true,
+			wantBlocked: true,
+		},
+		{
+			name:        "unknown episode",
+			season:      "S00",
+			wantBlocked: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			subject := api.NewTrackerValidationSubject(api.UploadSubject{
+				Identity:         api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+				ProviderMetadata: api.SourceScopedMetadata{TVDB: test.tvdb},
+				SeasonStr:        test.season,
+				EpisodeInt:       test.episode,
+				TVPack:           test.pack,
+				MultipleEpisodes: test.multiple,
+			}, "BTN")
+			failures, err := validationPolicy().Check(t.Context(), subject, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			failure, blocked := btnValidationFailure(failures, "canonical_tv_metadata")
+			if blocked != test.wantBlocked || blocked && failure.Disposition != api.RuleDispositionStrict {
+				t.Fatalf("canonical TV metadata failure = %#v, present = %t, want strict block = %t", failure, blocked, test.wantBlocked)
+			}
+		})
+	}
+}
+
 func TestBTNValidationPartialEvidenceNeverStrictlyBlocks(t *testing.T) {
 	t.Parallel()
 
