@@ -115,44 +115,53 @@ func TestANTNativeSlotsAllowOnlyIndependentlyProvenSeparation(t *testing.T) {
 	}
 }
 
-func TestANTFullDiscAndRemuxCoexistInBothDirectionsDespiteCodecConflict(t *testing.T) {
+func TestANTFullDiscAndDistinctKindsCoexistInBothDirectionsDespiteCodecConflict(t *testing.T) {
 	t.Parallel()
-	entries := antDupeEntries(map[string]any{"item": []any{
-		map[string]any{
-			"files":      []any{map[string]any{"name": "Example.Movie.2026.GBR.PAL.DVD9.DD.5.1-GRP"}},
-			"resolution": "576i",
-			"type":       "DISC",
-			"media":      "PAL DVD",
-			"codec":      "MPEG2",
-			"container":  "VOBIFO",
-		},
-		map[string]any{
-			"files":      []any{map[string]any{"name": "Example.Movie.2026.576i.PAL.DVD.REMUX.x264-OTHER.mkv"}},
-			"resolution": "576i",
-			"type":       "REMUX",
-			"media":      "PAL DVD",
-			"codec":      "H265",
-			"container":  "MKV",
-		},
-	}})
-	for i, raw := range entries {
-		proposed := dupe.NormalizeCandidate(raw, "ANT")
-		target := api.TrackerDuplicateTarget{
-			TrackerSlot: proposed.TrackerSlot,
-			Names:       []string{proposed.Name},
-			Type:        proposed.CanonicalType,
-			Source:      proposed.Source,
-			Resolution:  proposed.Resolution,
-			VideoCodec:  proposed.Codec,
-			Container:   proposed.Container,
-		}
-		existing := dupe.NormalizeCandidate(entries[1-i], "ANT")
-		result := dupe.Evaluate(target, []dupe.TrackerCandidate{existing},
-			*duplicatePolicy(), dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID})
-		if result.Candidates[0].Relation != api.DupeRelationCoexists || result.RequiresAction || result.Blocks {
-			t.Errorf("slot %q against %q: got %s, review=%t, blocked=%t",
-				target.TrackerSlot, existing.TrackerSlot, result.Candidates[0].Relation, result.RequiresAction, result.Blocks)
-		}
+	for _, tc := range []struct {
+		name, filename, kind, codec string
+	}{
+		{"remux", "Example.Movie.2026.576i.PAL.DVD.REMUX.x264-OTHER.mkv", "REMUX", "H265"},
+		{"AV1 encode", "Example.Movie.2026.576i.PAL.DVD.x264-OTHER.mkv", "ENCODE", "AV1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entries := antDupeEntries(map[string]any{"item": []any{
+				map[string]any{
+					"files":      []any{map[string]any{"name": "Example.Movie.2026.GBR.PAL.DVD9.DD.5.1-GRP"}},
+					"resolution": "576i",
+					"type":       "DISC",
+					"media":      "PAL DVD",
+					"codec":      "MPEG2",
+					"container":  "VOBIFO",
+				},
+				map[string]any{
+					"files":      []any{map[string]any{"name": tc.filename}},
+					"resolution": "576i",
+					"type":       tc.kind,
+					"media":      "PAL DVD",
+					"codec":      tc.codec,
+					"container":  "MKV",
+				},
+			}})
+			for i, raw := range entries {
+				proposed := dupe.NormalizeCandidate(raw, "ANT")
+				target := api.TrackerDuplicateTarget{
+					TrackerSlot: proposed.TrackerSlot,
+					Names:       []string{proposed.Name},
+					Type:        proposed.CanonicalType,
+					Source:      proposed.Source,
+					Resolution:  proposed.Resolution,
+					VideoCodec:  proposed.Codec,
+					Container:   proposed.Container,
+				}
+				existing := dupe.NormalizeCandidate(entries[1-i], "ANT")
+				result := dupe.Evaluate(target, []dupe.TrackerCandidate{existing},
+					*duplicatePolicy(), dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID})
+				if result.Candidates[0].Relation != api.DupeRelationCoexists || result.RequiresAction || result.Blocks {
+					t.Errorf("slot %q against %q: got %s, review=%t, blocked=%t",
+						target.TrackerSlot, existing.TrackerSlot, result.Candidates[0].Relation, result.RequiresAction, result.Blocks)
+				}
+			}
+		})
 	}
 }
 

@@ -18,7 +18,7 @@ import (
 
 func duplicatePolicy() *trackers.DupePolicy {
 	return &trackers.DupePolicy{
-		ID:                         "ant/duplicate/v9",
+		ID:                         "ant/duplicate/v10",
 		EvidenceID:                 "ant-slots-staff-overrides",
 		SearchScope:                trackers.DupeSearchScope{MaxPages: 100},
 		TargetSlot:                 resolveTargetSlot,
@@ -178,7 +178,8 @@ func compareSlots(target, candidate string, targetNames []string, candidateName 
 		// structurally confirmed encode or remux a full disc.
 		discAndRemux := proposed[0] == "FullDisc" && existing[0] == "Remux" || proposed[0] == "Remux" && existing[0] == "FullDisc"
 		sameTierDiscAndEncode := proposed[1] != "?" && proposed[1] == existing[1] &&
-			(proposed[0] == "FullDisc" && existing[0] == "Encode" || proposed[0] == "Encode" && existing[0] == "FullDisc")
+			(proposed[0] == "FullDisc" && (existing[0] == "Encode" || existing[0] == "AV1") ||
+				(proposed[0] == "Encode" || proposed[0] == "AV1") && existing[0] == "FullDisc")
 		if discAndRemux || sameTierDiscAndEncode {
 			if evidence.DeclaredTypeDistinct {
 				return api.DupeRelationCoexists
