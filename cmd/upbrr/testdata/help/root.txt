@@ -198,8 +198,6 @@ Tracker Overrides:
       Skip dupe check
   -skip-dupe-asking, --skip-dupe-asking, -sda
       Skip trackers with duplicate evidence without asking
-  -double-dupe-check, --double-dupe-check, -ddc
-      Double dupe check
   -foreign, --foreign
       Mark TIK release as foreign
   -opera, --opera

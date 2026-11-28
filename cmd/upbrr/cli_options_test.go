@@ -19,17 +19,17 @@ import (
 )
 
 func TestParseCLIOptionsCompatibilityFlags(t *testing.T) {
-	opts, visited, paths, err := parseCLIOptions([]string{"-ua", "-uac", "-sdc", "-sda", "-ddc", "--tmdb", "123", "--imdb", "tt456", "movie.mkv"})
+	opts, visited, paths, err := parseCLIOptions([]string{"-ua", "-uac", "-sdc", "-sda", "--tmdb", "123", "--imdb", "tt456", "movie.mkv"})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if !opts.Unattended || !opts.UnattendedConfirm || !opts.SkipDupeCheck || !opts.SkipDupeAsActual || !opts.DoubleDupeCheck {
+	if !opts.Unattended || !opts.UnattendedConfirm || !opts.SkipDupeCheck || !opts.SkipDupeAsActual {
 		t.Fatalf("expected compatibility flags parsed: %#v", opts)
 	}
 	if len(paths) != 1 || paths[0] != "movie.mkv" {
 		t.Fatalf("unexpected paths: %#v", paths)
 	}
-	if !visited["unattended"] || !visited["unattended_confirm"] || !visited["skip-dupe-check"] || !visited["skip-dupe-asking"] || !visited["double-dupe-check"] {
+	if !visited["unattended"] || !visited["unattended_confirm"] || !visited["skip-dupe-check"] || !visited["skip-dupe-asking"] {
 		t.Fatalf("unexpected visited flags: %#v", visited)
 	}
 	req, err := buildCLIRequest(opts, visited, paths, 4)
@@ -39,7 +39,7 @@ func TestParseCLIOptionsCompatibilityFlags(t *testing.T) {
 	if req.Options.InteractionMode != api.InteractionModeUnattendedConfirm {
 		t.Fatalf("expected unattended confirm interaction mode, got %q", req.Options.InteractionMode)
 	}
-	if !req.SkipDupeCheck || !req.SkipDupeAsActual || !req.DoubleDupeCheck {
+	if !req.SkipDupeCheck || !req.SkipDupeAsActual {
 		t.Fatalf("expected dupe flags to propagate into request, got %#v", req)
 	}
 	if req.ExternalIDOverrides.TMDBID == nil || *req.ExternalIDOverrides.TMDBID != 123 {
@@ -47,6 +47,17 @@ func TestParseCLIOptionsCompatibilityFlags(t *testing.T) {
 	}
 	if req.ExternalIDOverrides.IMDBID == nil || *req.ExternalIDOverrides.IMDBID != 456 {
 		t.Fatalf("expected imdb override 456, got %#v", req.ExternalIDOverrides.IMDBID)
+	}
+}
+
+func TestParseCLIOptionsRejectsRemovedDoubleDupeFlags(t *testing.T) {
+	for _, flag := range []string{"--double-dupe-check", "-double-dupe-check", "-ddc", "--ddc"} {
+		t.Run(flag, func(t *testing.T) {
+			_, _, _, err := parseCLIOptions([]string{flag, "Example.Release.2026.mkv"})
+			if err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+				t.Fatalf("parse = %v, want unknown flag for %s", err, flag)
+			}
+		})
 	}
 }
 

@@ -96,7 +96,6 @@ type cliOptions struct {
 	UnattendedConfirm          bool
 	SkipDupeCheck              bool
 	SkipDupeAsActual           bool
-	DoubleDupeCheck            bool
 	Commentary                 bool
 	PersonalRelease            bool
 	StreamOptimized            bool
@@ -386,8 +385,6 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.BoolVar(&opts.SkipDupeCheck, "skip-dupe-check", false, "Skip dupe check")
 	fs.BoolVar(&opts.SkipDupeAsActual, "sda", false, "Skip trackers with duplicate evidence without asking")
 	fs.BoolVar(&opts.SkipDupeAsActual, "skip-dupe-asking", false, "Skip trackers with duplicate evidence without asking")
-	fs.BoolVar(&opts.DoubleDupeCheck, "ddc", false, "Double dupe check")
-	fs.BoolVar(&opts.DoubleDupeCheck, "double-dupe-check", false, "Double dupe check")
 	fs.BoolVar(&opts.Commentary, "mc", false, "Mark release as containing commentary")
 	fs.BoolVar(&opts.Commentary, "commentary", false, "Mark release as containing commentary")
 	fs.BoolVar(&opts.PersonalRelease, "pr", false, "Mark release as personal")
@@ -787,7 +784,6 @@ func cliFlagAliases() map[string]string {
 		"uac":                  "unattended_confirm",
 		"sdc":                  "skip-dupe-check",
 		"sda":                  "skip-dupe-asking",
-		"ddc":                  "double-dupe-check",
 		"mc":                   "commentary",
 		"pr":                   "personalrelease",
 		"st":                   "stream",
@@ -973,7 +969,7 @@ func cliHelpSections(name string) []helpSection {
 		},
 		{title: "Metadata IDs", names: []string{"tmdb", "imdb", "mal", "tvdb", "tvmaze", "keep-existing-ids"}},
 		{title: "Tracker Overrides", names: []string{
-			"skip-dupe-check", "skip-dupe-asking", "double-dupe-check", "foreign", "opera", "asian", "disctype",
+			"skip-dupe-check", "skip-dupe-asking", "foreign", "opera", "asian", "disctype",
 			"commentary", "personalrelease", "stream", "webdv", "anime", "anon", "draft", "modq", "channel",
 		}},
 		{title: "Screenshots and Images", names: []string{
@@ -1156,7 +1152,6 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, d
 		}),
 		SkipDupeCheck:               opts.SkipDupeCheck,
 		SkipDupeAsActual:            opts.SkipDupeAsActual,
-		DoubleDupeCheck:             opts.DoubleDupeCheck,
 		DescriptionOverrideURL:      strings.TrimSpace(opts.DescriptionLink),
 		MetadataOverrides:           buildMetadataOverrides(opts, visited),
 		TrackerQuestionnaireAnswers: mustBuildCLITrackerInput(opts.TrackerInput),

@@ -469,19 +469,18 @@ Trackers that require the cleared provider can remain blocked. Continue with tra
 
 ## Tracker overrides
 
-| Option                | Aliases                      | Purpose                                                                 |
-| --------------------- | ---------------------------- | ----------------------------------------------------------------------- |
-| `--skip-dupe-check`   | `-skip-dupe-check`, `-sdc`   | Skip remote tracker duplicate searches.                                 |
-| `--skip-dupe-asking`  | `-skip-dupe-asking`, `-sda`  | Skip trackers with duplicate evidence without asking.                   |
-| `--double-dupe-check` | `-double-dupe-check`, `-ddc` | Request two duplicate checks instead of one.                            |
-| `--commentary`        | `-commentary`, `-mc`         | Mark release as containing commentary.                                  |
-| `--personalrelease`   | `-personalrelease`, `-pr`    | Explicitly set personal-release handling.                               |
-| `--stream`            | `-stream`, `-st`             | Mark release as stream optimized.                                       |
-| `--webdv`             | `-webdv`                     | Mark release as WEB-DV.                                                 |
-| `--anime`             | `-anime`                     | Explicitly set anime handling; `false` clears the anime classification. |
-| `--anon`              | `-anon`, `-a`                | Request anonymous attribution where the tracker adapter supports it.    |
-| `--draft`             | `-draft`, `-dr`              | Send to drafts where supported.                                         |
-| `--modq`              | `-modq`, `-mq`               | Opt into mod queue where supported.                                     |
+| Option               | Aliases                     | Purpose                                                                 |
+| -------------------- | --------------------------- | ----------------------------------------------------------------------- |
+| `--skip-dupe-check`  | `-skip-dupe-check`, `-sdc`  | Skip remote tracker duplicate searches.                                 |
+| `--skip-dupe-asking` | `-skip-dupe-asking`, `-sda` | Skip trackers with duplicate evidence without asking.                   |
+| `--commentary`       | `-commentary`, `-mc`        | Mark release as containing commentary.                                  |
+| `--personalrelease`  | `-personalrelease`, `-pr`   | Explicitly set personal-release handling.                               |
+| `--stream`           | `-stream`, `-st`            | Mark release as stream optimized.                                       |
+| `--webdv`            | `-webdv`                    | Mark release as WEB-DV.                                                 |
+| `--anime`            | `-anime`                    | Explicitly set anime handling; `false` clears the anime classification. |
+| `--anon`             | `-anon`, `-a`               | Request anonymous attribution where the tracker adapter supports it.    |
+| `--draft`            | `-draft`, `-dr`             | Send to drafts where supported.                                         |
+| `--modq`             | `-modq`, `-mq`              | Opt into mod queue where supported.                                     |
 
 `--personalrelease=true` and `--personalrelease=false` are both explicit choices and override tracker group defaults. Omitting the option preserves any saved correction. Use `--reset-input metadata.personal_release` to return **Personal Release** to **Auto**, where each tracker's configured personal-release groups can supply the default.
 
