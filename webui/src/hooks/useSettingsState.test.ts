@@ -634,15 +634,8 @@ function SettingsVisibilityHarness() {
 it("omits retired settings controls and preserves their saved values", async () => {
   let persisted: ConfigMap = {
     Metadata: { BTNAPI: "synthetic-legacy-key", OnlyID: false },
-    Description: {
-      MultiScreens: 7,
-      PackThumbSize: 173,
-      CharLimit: 91,
-      FileLimit: 13,
-      ProcessLimit: 5,
-      BlurayImageSize: 125,
-    },
-    ArrIntegration: { EmbyDir: "/synthetic/movies", EmbyTVDir: "/synthetic/tv", UseSonarr: false },
+    Description: { BlurayImageSize: 125 },
+    ArrIntegration: { UseSonarr: false },
     ScreenshotHandling: { UseLibplacebo: true, ProcessLimit: 11 },
   };
   const original = structuredClone(persisted);
@@ -666,8 +659,6 @@ it("omits retired settings controls and preserves their saved values", async () 
   const onlyIDs = await screen.findByLabelText("Limit tracker lookup to only metadata ids");
   expect(screen.queryByLabelText(/^(Legacy BTN API key|BTNAPI)$/)).not.toBeInTheDocument();
   expect(screen.getAllByRole("spinbutton")).toHaveLength(2);
-  expect(screen.queryByDisplayValue("/synthetic/movies")).not.toBeInTheDocument();
-  expect(screen.queryByDisplayValue("/synthetic/tv")).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "Limits and processing" })).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "Media paths" })).not.toBeInTheDocument();
   expect(screen.getByLabelText("Concurrent capture processes")).toHaveValue(11);
@@ -731,14 +722,7 @@ describe("settings advanced fields", () => {
       "ProcessLimit",
       "TonemapAlgorithm",
     ]);
-    expect(advancedBySection.Description).toEqual([
-      "CharLimit",
-      "CustomSignature",
-      "FileLimit",
-      "LogoLanguage",
-      "LogoSize",
-      "ProcessLimit",
-    ]);
+    expect(advancedBySection.Description).toEqual(["CustomSignature", "LogoLanguage", "LogoSize"]);
     expect(advancedBySection.PostUpload).toEqual(["InjectDelay", "MaxConcurrentTrackers"]);
     expect(advancedBySection.TorrentCreation).toEqual([]);
     expect(advancedBySection.TorrentClients).toEqual(["VerifyWebUICertificate"]);

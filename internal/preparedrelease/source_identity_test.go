@@ -37,7 +37,10 @@ func TestVerifyInputSourceRehashesSameStatReplacement(t *testing.T) {
 	if err := os.Chtimes(source, modified, modified); err != nil {
 		t.Fatalf("restore replacement times: %v", err)
 	}
-	second, err := VerifyInputSource(context.Background(), api.PrepareInput{SourcePath: source})
+	var progress []SourceIdentityProgress
+	second, err := VerifyInputSourceWithProgress(t.Context(), api.PrepareInput{SourcePath: source}, func(update SourceIdentityProgress) {
+		progress = append(progress, update)
+	})
 	if err != nil {
 		t.Fatalf("verify replaced source: %v", err)
 	}
@@ -45,13 +48,6 @@ func TestVerifyInputSourceRehashesSameStatReplacement(t *testing.T) {
 		t.Fatalf("source identities = %#v and %#v", first, second)
 	}
 
-	var progress []SourceIdentityProgress
-	_, err = VerifySourceContentIdentity(context.Background(), second.Manifest, func(update SourceIdentityProgress) {
-		progress = append(progress, update)
-	})
-	if err != nil {
-		t.Fatalf("verify with progress: %v", err)
-	}
 	if len(progress) == 0 || progress[len(progress)-1].CompletedBytes != int64(len("other")) ||
 		progress[len(progress)-1].TotalBytes != int64(len("other")) {
 		t.Fatalf("verification progress = %#v", progress)
@@ -66,7 +62,10 @@ func TestVerifyInputSourceSamplesLargeFiles(t *testing.T) {
 	prefix = append(prefix, bytes.Repeat([]byte("x"), int(api.SourceContentIdentitySampleBytes)-len(prefix))...)
 	firstContents := append(append([]byte(nil), prefix...), []byte("first")...)
 	writeSourceIdentityBytes(t, source, firstContents)
-	first, err := VerifyInputSource(t.Context(), api.PrepareInput{SourcePath: source})
+	var progress []SourceIdentityProgress
+	first, err := VerifyInputSourceWithProgress(t.Context(), api.PrepareInput{SourcePath: source}, func(update SourceIdentityProgress) {
+		progress = append(progress, update)
+	})
 	if err != nil {
 		t.Fatalf("verify first source: %v", err)
 	}
@@ -78,13 +77,6 @@ func TestVerifyInputSourceSamplesLargeFiles(t *testing.T) {
 		t.Fatalf("sample digest = %q, want prefix digest", got)
 	}
 
-	var progress []SourceIdentityProgress
-	_, err = VerifySourceContentIdentity(t.Context(), first.Manifest, func(update SourceIdentityProgress) {
-		progress = append(progress, update)
-	})
-	if err != nil {
-		t.Fatalf("verify sampled source with progress: %v", err)
-	}
 	if len(progress) == 0 || progress[len(progress)-1].CompletedBytes != api.SourceContentIdentitySampleBytes ||
 		progress[len(progress)-1].TotalBytes != api.SourceContentIdentitySampleBytes {
 		t.Fatalf("sample progress = %#v", progress)
@@ -142,6 +134,22 @@ func TestVerifySourceManifestStabilityRejectsSameSizeModifiedFile(t *testing.T) 
 	}
 	if err := VerifySourceManifestStability(context.Background(), verified.Manifest); !errors.Is(err, ErrSourceChanged) {
 		t.Fatalf("stability error = %v, want source changed", err)
+	}
+}
+
+func TestVerifyInputSourceRejectsInventoryChangeDuringSampling(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeSourceIdentityFile(t, filepath.Join(root, "Example.mkv"), "synthetic media")
+	changed := false
+	_, err := VerifyInputSourceWithProgress(t.Context(), api.PrepareInput{SourcePath: root}, func(update SourceIdentityProgress) {
+		if update.CompletedBytes == update.TotalBytes && !changed {
+			changed = true
+			writeSourceIdentityFile(t, filepath.Join(root, "new.nfo"), "synthetic sidecar")
+		}
+	})
+	if !changed || !errors.Is(err, ErrSourceChanged) {
+		t.Fatalf("verification after an inventory change: changed=%t err=%v", changed, err)
 	}
 }
 
@@ -292,6 +300,53 @@ func TestRestartHydrationRestoresPrivateVerifiedIdentity(t *testing.T) {
 		len(upload.SourceIdentity.Files) != 1 || upload.SourceManifest.SourcePath != source ||
 		collector.collectCount() != 0 || collector.hydrateCount() != 1 {
 		t.Fatal("restart did not restore the same verified generation without collection")
+	}
+}
+
+func TestPrepareWithoutVerificationCannotReuseVerifiedGeneration(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "release.mkv")
+	writeSourceIdentityFile(t, path, "first")
+	modified := time.Date(2026, time.September, 19, 1, 2, 3, 0, time.UTC)
+	if err := os.Chtimes(path, modified, modified); err != nil {
+		t.Fatal(err)
+	}
+	input := api.PrepareInput{SourcePath: path}
+	verified, err := VerifyInputSource(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newMemoryStore()
+	initial := newTestModule(t, store, &recordingCollector{})
+	verifiedInput := input
+	verifiedInput.VerifiedSource = &verified
+	first, err := initial.Prepare(t.Context(), verifiedInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSourceIdentityFile(t, path, "other")
+	if err := os.Chtimes(path, modified, modified); err != nil {
+		t.Fatal(err)
+	}
+	required := input
+	required.RequirePrepared = true
+	var incompatible *IncompatiblePreparationError
+	if _, err := initial.Prepare(t.Context(), required); !errors.As(err, &incompatible) {
+		t.Fatalf("RequirePrepared accepted an unverified source: %v", err)
+	}
+	// Simulate a restart without the private verification, as with a SQLite row.
+	persisted := store.current[canonicalSourceKey(path)]
+	persisted.SourceIdentity = api.SourceContentIdentity{}
+	store.current[canonicalSourceKey(path)] = persisted
+	restarted := newTestModule(t, store, &recordingCollector{})
+	second, err := restarted.Prepare(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Release.Compatibility.SourceFingerprint != first.Release.Compatibility.SourceFingerprint ||
+		second.Release.Generation <= first.Release.Generation || second.Release.SourceIdentity.Digest != "" {
+		t.Fatalf("same-stat replacement reused the verified generation: previous=%d current=%d",
+			first.Release.Generation, second.Release.Generation)
 	}
 }
 

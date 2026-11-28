@@ -28,7 +28,7 @@ func resolveMediaInfo(req trackers.PreparationInput, meta api.UploadSubject) (st
 
 func resolveMedia(req trackers.PreparationInput, meta api.UploadSubject) string {
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
-		bdinfo, _ := trackers.ReadBDInfo(req.Runtime.DBPath, meta)
+		bdinfo, _ := trackers.ReadBDInfoForDescription(req.Runtime.DBPath, meta)
 		return strings.TrimSpace(bdinfo)
 	}
 	return metautil.FirstNonEmptyTrimmed(trackers.ReadDVDVOBMediaInfo(meta), commonhttp.ReadOptionalFile(meta.MediaInfoTextPath))

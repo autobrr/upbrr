@@ -9,6 +9,12 @@ import (
 	"unicode/utf8"
 )
 
+// EpisodeTitleRepeatsName compares an automatic episode title to the visible name titles.
+func EpisodeTitleRepeatsName(episode, title, alternate string) bool {
+	key := TitleIdentityKey(episode)
+	return key != "" && (key == TitleIdentityKey(title) || key == TitleIdentityKey(TrimAKAPrefix(alternate)))
+}
+
 // releaseNameToken stores a normalized alphanumeric token with byte offsets
 // into the original release name so removals can preserve untouched text.
 type releaseNameToken struct {

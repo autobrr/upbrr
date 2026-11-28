@@ -46,6 +46,18 @@ func renderBBCode(value string) string {
 	return replaceHTMLTagPlaceholders(rendered, htmlLiteralBlocks)
 }
 
+var leadingDiscReports = regexp.MustCompile(`(?is)^(?:\[spoiler=BDInfo - Disc [0-9]+\]\[code\].*?\[/code\]\[/spoiler\]\s*)+`)
+
+// SplitLeadingDiscReports separates the generated report prefix from retained
+// description text so builders can place it before their normal gallery.
+func SplitLeadingDiscReports(value string) (body, reports string) {
+	trimmed := strings.TrimSpace(value)
+	if match := leadingDiscReports.FindStringIndex(trimmed); match != nil {
+		return trimmed[match[1]:], strings.TrimSpace(trimmed[:match[1]])
+	}
+	return value, ""
+}
+
 var analysisSpoilerTagPattern = regexp.MustCompile(`(?i)\[(?:spoiler(?:\s*=\s*[^\]]*)?|/spoiler)\]`)
 
 // SplitTrailingSourceAudioSpoiler separates complete top-level audio and HDR markup so

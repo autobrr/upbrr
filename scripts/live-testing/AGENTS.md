@@ -10,7 +10,10 @@ installation; do not add dependencies.
   playlists, or invent pack completeness. Preserve current configured defaults
   unless the operator explicitly selects one tracker.
 - Start only an identified production live-test binary. Remove E2E substitutions
-  from child environments. Stop only owned processes, then use `live-test cleanup`.
+  from child environments. Stop only owned processes. Use `live-test cleanup`
+  when the run is finished. Pending typed feedback or a failed resume defers cleanup
+  and preserves the run for reconciliation. Use `-ResumeRun` to continue an eligible
+  retained run or `-CleanupRun` to abandon feedback and reconcile image effects.
 - Image hosting requires explicit bounded permission. Never call providers from
   the runner. Prefer supported, configured Lostimg in isolated profiles; other
   compatible hosts are allowed and confirmed non-deletable uploads are retained.

@@ -40,5 +40,7 @@ Focused `go test`: include touched service/tracker/internal packages.
 
 ## Parity
 
+- `--keep-folder` retains the supplied folder around one selected movie or episode video and excludes sidecars. Pass the shared layout choice through preparation, torrent reuse and creation, and client injection. See the root [torrent structure and content-name rules](../../AGENTS.md#torrent-structure-and-content-names).
+
 - CLI request/options behavior shares WebUI workflow contracts. Provider flags preserve the root manual-provider authority rule; do not reject independent selections because provider cross-links disagree. Use the shared metadata reconciliation boundary.
 - Request-shape changes usually require checking `pkg/api`, `internal/core`, `internal/webserver`, and `webui/src`.

@@ -591,3 +591,29 @@ func TestUnit3DProviderNamesOmitRedundantAutomaticAlias(t *testing.T) {
 		}
 	}
 }
+
+func TestUnit3DProviderNameRecoversOriginalFromPriorTitle(t *testing.T) {
+	t.Parallel()
+	registry := MustNewRegistry()
+	for _, test := range []struct {
+		name, prior, original, final, wantPrefix string
+	}{
+		{"verified original", "雪原", "雪原", "The Silent Fields", "The Silent Fields AKA 雪原 1998 "},
+		{"literal AKA and provider primary equal to its original", "AKA Echo", "AKA Echo", "Daybreak", "Daybreak AKA AKA Echo 1998 "},
+		{"near duplicate", "Léon: The Last Light", "Léon: The Last Light", "Leon: The Last Light", "Leon: The Last Light 1998 "},
+		{"requires exact corroboration", "The Snow Fields", "Snow Fields", "Daybreak", "Daybreak 1998 "},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := providerNameSubject(api.CanonicalCategoryTV)
+			subject.ProviderMetadata.IMDB.Title = test.final
+			subject.ProviderMetadata.TMDB.Title = test.original
+			subject.ProviderMetadata.TMDB.OriginalTitle = test.original
+			subject.GeneratedName.Components[0].Value = test.prior
+			subject.ReleaseName = subject.GeneratedName.Render().Name
+			prepared := prepareProviderName(t, registry, "HHD", subject, nil)
+			if !strings.HasPrefix(prepared.Projection.UploadReleaseName, test.wantPrefix) || !strings.HasPrefix(prepared.Projection.DuplicateCriteria.Name, test.wantPrefix) {
+				t.Fatalf("upload=%q search=%q, want prefix %q", prepared.Projection.UploadReleaseName, prepared.Projection.DuplicateCriteria.Name, test.wantPrefix)
+			}
+		})
+	}
+}

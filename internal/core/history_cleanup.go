@@ -60,7 +60,7 @@ func (h *historyModule) Delete(ctx context.Context, sourcePath string) error {
 
 func (h *historyModule) deleteStoredRelease(ctx context.Context, sourcePath string) error {
 	err := h.repo.WithHistoryDeletion(ctx, func(workCtx context.Context) error {
-		return h.deleteStoredReleaseInTransaction(workCtx, sourcePath)
+		return h.deleteStoredReleaseInTransaction(workCtx, sourcePath, h.repo.PurgeContentData)
 	})
 	if err != nil {
 		return fmt.Errorf("core: delete history release transaction: %w", err)
@@ -86,7 +86,7 @@ func (h *historyModule) cleanupOrphanedHistory(ctx context.Context, repo *db.SQL
 			h.logger.Infof("history: orphan cleanup started sources=%d empty_workflows=%d", len(paths), workflows)
 		}
 		for _, sourcePath := range paths {
-			if err := h.deleteStoredReleaseInTransaction(workCtx, sourcePath); err != nil {
+			if err := h.deleteStoredReleaseInTransaction(workCtx, sourcePath, repo.PurgeOrphanContentData); err != nil {
 				if errors.Is(err, api.ErrActiveInputBusy) {
 					// Legacy temp names can collide across otherwise unrelated
 					// sources. Leave that orphan for a later idle startup.
@@ -118,12 +118,12 @@ func (h *historyModule) cleanupOrphanedHistory(ctx context.Context, repo *db.SQL
 	return nil
 }
 
-func (h *historyModule) deleteStoredReleaseInTransaction(ctx context.Context, sourcePath string) error {
+func (h *historyModule) deleteStoredReleaseInTransaction(ctx context.Context, sourcePath string, purge func(context.Context, string) error) error {
 	cleanupPaths, err := h.releaseCleanupPaths(ctx, sourcePath)
 	if err != nil {
 		return err
 	}
-	if err := h.deleteStoredReleaseData(ctx, sourcePath, cleanupPaths); err != nil {
+	if err := h.deleteStoredReleaseData(ctx, sourcePath, cleanupPaths, purge); err != nil {
 		return err
 	}
 	if h.preparedFacts != nil {
@@ -134,7 +134,12 @@ func (h *historyModule) deleteStoredReleaseInTransaction(ctx context.Context, so
 	return nil
 }
 
-func (h *historyModule) deleteStoredReleaseData(ctx context.Context, sourcePath string, cleanupPaths []string) error {
+func (h *historyModule) deleteStoredReleaseData(
+	ctx context.Context,
+	sourcePath string,
+	cleanupPaths []string,
+	purge func(context.Context, string) error,
+) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("core: delete stored release canceled: %w", err)
 	}
@@ -217,7 +222,7 @@ func (h *historyModule) deleteStoredReleaseData(ctx context.Context, sourcePath 
 		return err
 	}
 	for _, cleanupPath := range cleanupPaths {
-		if err := h.repo.PurgeContentData(ctx, cleanupPath); err != nil {
+		if err := purge(ctx, cleanupPath); err != nil {
 			return fmt.Errorf("core: delete history release: %w", err)
 		}
 	}
@@ -368,6 +373,13 @@ func (h *historyModule) collectReleaseCleanupTargets(
 		return nil, nil, nil, fmt.Errorf("core: delete history release resolve release root: %w", err)
 	}
 	tmpDirs[fallbackDir] = struct{}{}
+	// A shared screenshot can keep the release directory alive. Clean the
+	// comparison subtree separately, without descending through a linked owner.
+	if info, statErr := h.fs.Lstat(fallbackDir); statErr == nil && info.IsDir() {
+		tmpDirs[filepath.Join(fallbackDir, "comparisons")] = struct{}{}
+	} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return nil, nil, nil, fmt.Errorf("core: delete history release inspect release root: %w", statErr)
+	}
 
 	if snapshot.Metadata != nil {
 		stored := *snapshot.Metadata

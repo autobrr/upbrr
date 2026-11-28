@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -163,9 +165,9 @@ func TestInjectQbitClient(t *testing.T) {
 				fileCount = len(files)
 			}
 			mu.Unlock()
-			w.Header().Set("Content-Type", "text/plain")
+			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("Ok."))
+			_, _ = w.Write([]byte(`{"success_count":1,"pending_count":2,"failure_count":3,"added_torrent_ids":["synthetic-private-id"]}`))
 			return
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -197,8 +199,17 @@ func TestInjectQbitClient(t *testing.T) {
 		},
 	}, nil)
 
-	if err := svc.Inject(context.Background(), api.ClientSubject{SourcePath: sourcePath}, api.TorrentResult{Path: torrentPath}); err != nil {
+	logger := &captureLogger{}
+	ctx := logging.WithOperationLogger(t.Context(), logger)
+	if err := svc.Inject(ctx, api.ClientSubject{SourcePath: sourcePath}, api.TorrentResult{Path: torrentPath}); err != nil {
 		t.Fatalf("inject: %v", err)
+	}
+	if !slices.ContainsFunc(logger.debug, func(entry string) bool {
+		return strings.Contains(entry, "qbit add response client=qbit") &&
+			strings.Contains(entry, "success_count=1 pending_count=2 failure_count=3") &&
+			!strings.Contains(entry, "synthetic-private-id")
+	}) {
+		t.Fatalf("missing safe qbit add response in %v", logger.debug)
 	}
 
 	select {

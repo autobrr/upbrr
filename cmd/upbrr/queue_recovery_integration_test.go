@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/core"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -275,28 +276,8 @@ func TestNamedQueueIsolatesUnknownSubmissionAcrossDatabaseRestart(t *testing.T) 
 	}); !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
 		t.Fatalf("A reopened without reconciliation: %v", err)
 	}
-	if _, err := module.RecoverLegacyInput(ctx, cliWorkflowOwnerID, originalA.WorkflowID); err != nil {
-		t.Fatal(err)
-	}
-	current, err := module.Current(ctx, cliWorkflowOwnerID, originalA.WorkflowID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	action := pendingCLIWorkflowAction(current.Workflow.RequiredActions, api.RequiredActionReconcileSubmission)
-	if action == nil || action.TrackerID != "ALPHA" || action.EffectScopeID != originalA.ScopeID {
-		t.Fatalf("wrong A recovery action: %+v", action)
-	}
-	if _, err := module.Execute(ctx, cliWorkflowOwnerID, releaseworkflow.ResolveActionCommand{
-		WorkflowID:       originalA.WorkflowID,
-		ExpectedRevision: current.Workflow.Revision,
-		IdempotencyKey:   "confirm-A-not-completed",
-		Answer: api.RequiredActionAnswer{
-			ActionID:         action.ID,
-			WorkflowRevision: current.Workflow.Revision,
-			SelectedValues:   []string{api.RequiredActionReconcileNotCompleted},
-		},
-	}); err != nil {
-		t.Fatal(err)
+	if err := core.RecoverInterruptedWorkflows(ctx, repo, api.NopLogger{}); err != nil {
+		t.Fatalf("automatic queue restart recovery: %v", err)
 	}
 	if len(queue.paths(false, 0)) != 0 {
 		t.Fatal("reconciliation automatically queued another submission")

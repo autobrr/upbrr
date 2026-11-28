@@ -218,6 +218,27 @@ func TestHDRNativeCaptureRetiredAfterSourceCancellation(t *testing.T) {
 	}
 }
 
+func TestBDInfoCancellationDoesNotClaimDiscReady(t *testing.T) {
+	fixture := newHDRNativePreparationFixture(t, 0x24)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var latest api.PreparationProgressUpdate
+	ctx = api.WithPreparationProgressReporter(ctx, func(update api.PreparationProgressUpdate) {
+		if update.Phase == api.PreparationPhaseBDInfo {
+			latest = update
+			if update.Substep != "" {
+				cancel()
+			}
+		}
+	})
+	request := testCollectionRequest(t, api.Request{SourcePath: fixture.input.SourcePath})
+	request.Input, request.SourceFingerprint = fixture.input, "source"
+	_, err := fixture.service.collectSourceEvidence(ctx, request)
+	if !errors.Is(err, context.Canceled) || latest.Status != api.PreparationProgressCanceled || latest.CompletedItems != 0 {
+		t.Fatalf("canceled scan reported completion or left progress active: %+v, error=%v", latest, err)
+	}
+}
+
 type hdrCancelClient struct {
 	cancel context.CancelFunc
 }

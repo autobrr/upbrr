@@ -1352,7 +1352,7 @@ func TestResetIdleInputOnStartupInterruptsLegacyOperationAfterClaimCrash(t *test
 			}); err != nil {
 				t.Fatal(err)
 			}
-			claimed, err := first.claimLegacyRecoverySlot(ctx, testOwnerID, created.Workflow.ID)
+			claimed, err := first.claimLegacyRecoverySlot(ctx, testOwnerID, created.Workflow.ID, nil)
 			if err != nil || !IsLegacyRecoverySlot(claimed) {
 				t.Fatalf("claim legacy recovery before crash = %#v, err=%v", claimed, err)
 			}

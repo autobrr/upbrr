@@ -2380,11 +2380,26 @@ func TestCompositeUploadSelectedScreenshotExcessRespectsTrackerMinimumAndOrder(t
 			Order:    0,
 		},
 	}
-	if actual, expected := compositeUploadSelectedScreenshotExcess(artifacts, 2), []api.PublicResourceID{"third"}; !slices.Equal(actual, expected) {
+	projections := []api.TrackerReleaseProjection{{TrackerID: "PTP", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}}}
+	if actual, expected := compositeUploadSelectedScreenshotExcess(artifacts, projections), []api.PublicResourceID{"third"}; !slices.Equal(actual, expected) {
 		t.Fatalf("minimum-preserving screenshot excess = %#v, want %#v", actual, expected)
 	}
-	if actual, expected := compositeUploadSelectedScreenshotExcess(artifacts, 0), []api.PublicResourceID{"first", "second", "third"}; !slices.Equal(actual, expected) {
+	if actual, expected := compositeUploadSelectedScreenshotExcess(artifacts, nil), []api.PublicResourceID{"first", "second", "third"}; !slices.Equal(actual, expected) {
 		t.Fatalf("zero-count screenshot excess = %#v, want %#v", actual, expected)
+	}
+	projections[0].Artifacts.DiscScreenshots = &api.DiscScreenshotRequirement{DiscIDs: []string{"disc-a", "disc-b"}, AdditionalCount: 2}
+	discArtifacts := make([]api.MediaArtifact, len(artifacts), len(artifacts)+3)
+	copy(discArtifacts, artifacts)
+	for _, i := range []int{1, 2, 3} {
+		discArtifacts[i].DiscID = "disc-a"
+		extra := discArtifacts[i]
+		extra.ID += "-disc-b"
+		extra.DiscID = "disc-b"
+		discArtifacts = append(discArtifacts, extra)
+	}
+	if actual, expected := compositeUploadSelectedScreenshotExcess(discArtifacts, projections),
+		[]api.PublicResourceID{"third", "third-disc-b"}; !slices.Equal(actual, expected) {
+		t.Fatalf("disc-quota-preserving screenshot excess = %#v, want %#v", actual, expected)
 	}
 }
 

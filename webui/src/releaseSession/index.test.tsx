@@ -23,6 +23,7 @@ import type {
   HDRAnalysisInstructions,
   DupeDecision,
   MediaCaptureInstructions,
+  OpenActiveInputRequest,
   Operation as WorkflowOperationStatus,
   ReleaseWorkflowCurrent,
   TrackerProjectionInstructions,
@@ -2250,7 +2251,7 @@ describe("useReleaseSession", () => {
           descriptions: {
             questionnaireAnswers: {},
             options: {
-              RunLogLevel: "info",
+              RunLogLevel: "",
               Screens: 0,
               NoSeed: liveTest,
               AudioAnalysis: false,
@@ -5343,7 +5344,7 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
-  it("reopens and re-verifies the same source for explicit refresh and reset", async () => {
+  it("requests verification reuse only for active metadata corrections", async () => {
     const sourcePath = "C:\\media\\Refresh.Release.2026.mkv";
     let slotRevision = 1;
     let workflowRevision = 2;
@@ -5356,7 +5357,7 @@ describe("useReleaseSession", () => {
       current: async () => serverCurrent,
       continue: continueWorkflow,
     });
-    const open = vi.fn(async (_request) => {
+    const open = vi.fn(async (_request: OpenActiveInputRequest) => {
       slotRevision += 1;
       workflowRevision += 1;
       serverCurrent = workflowCurrentFromPreview(
@@ -5425,6 +5426,24 @@ describe("useReleaseSession", () => {
         }),
       }),
     );
+    expect(open.mock.calls.map(([request]) => request.reuseVerifiedSource)).toEqual([
+      undefined,
+      undefined,
+    ]);
+
+    act(() => result.current.input.changeMetadata({ OriginalLanguage: "fr" }));
+    await act(() => result.current.input.prepare());
+    expect(open.mock.calls[2]?.[0]).toMatchObject({
+      reuseVerifiedSource: true,
+      request: { intent: { correctionPatch: expect.anything() } },
+    });
+
+    act(() => result.current.input.changeMetadata({ OriginalLanguage: "ja" }));
+    await act(() => result.current.input.openSource(sourcePath));
+    expect(open.mock.calls[3]?.[0]).toMatchObject({
+      request: { intent: { correctionPatch: expect.anything() } },
+    });
+    expect(open.mock.calls[3]?.[0].reuseVerifiedSource).toBeUndefined();
     unmount();
   });
 
@@ -7978,7 +7997,7 @@ describe("useReleaseSession", () => {
     await act(() => result.current.input.prepare());
     expect(result.current.upload.view.selectedTrackers).toEqual([]);
     expect(result.current.upload.view.options.noSeed).toBe(false);
-    expect(result.current.upload.view.options.runLogLevel).toBe("info");
+    expect(result.current.upload.view.options.runLogLevel).toBe("");
     expect(result.current.duplicates.view.questionnaireAnswers).toEqual({});
   });
 

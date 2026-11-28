@@ -546,10 +546,10 @@ func hdbCandidateTitles(meta api.UploadSubject) map[string]struct{} {
 	addAlternate(meta.AlternateTitle, meta.Release.Year)
 	if imdb := meta.ProviderMetadata.IMDB; imdb != nil {
 		add(imdb.Title, imdb.Year)
-		addAlternate(imdb.AKA, imdb.Year)
+		add(imdb.AKA, imdb.Year)
 	}
 	if tvdb := meta.ProviderMetadata.TVDB; tvdb != nil {
-		add(tvdb.Name, tvdb.Year)
+		add(tvdb.DisplayName(), tvdb.Year)
 		add(tvdb.NameEnglish, tvdb.Year)
 	}
 	if tmdb := meta.ProviderMetadata.TMDB; tmdb != nil {

@@ -4,12 +4,16 @@
 package tl
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -47,11 +51,24 @@ func TestUploadRequiresAcceptedIdentity(t *testing.T) {
 			defer server.Close()
 			client := server.Client()
 			client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-			summary, err := submitPreparedUpload(t.Context(), trackers.PreparationInput{
+			logger, err := logging.New(config.LoggingConfig{Level: "warn"}, filepath.Join(t.TempDir(), "upbrr.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = logger.Close() })
+			logger.SetConsoleOutput(io.Discard, io.Discard)
+			ctx := logging.WithOperationLogger(t.Context(), logger)
+			summary, err := submitPreparedUpload(ctx, trackers.PreparationInput{
 				Logger: api.NopLogger{}, TrackerConfig: config.TrackerConfig{APIUpload: test.api},
 			}, uploadState{endpoint: server.URL}, client, nil, "application/octet-stream", nil, "")
 			if (err == nil) != test.accepted || (summary.Uploaded == 1) != test.accepted || requests.Load() != 1 {
 				t.Fatalf("uploaded=%d requests=%d error=%v", summary.Uploaded, requests.Load(), err)
+			}
+			if test.accepted {
+				entries := logger.Recent(1)
+				if len(entries) != 1 || !strings.Contains(entries[0].Message, "registered artifact unavailable tracker=TL") {
+					t.Fatalf("execution logger missed registered artifact outcome: %#v", entries)
+				}
 			}
 		})
 	}

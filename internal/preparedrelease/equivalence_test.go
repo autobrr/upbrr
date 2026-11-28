@@ -11,7 +11,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/externalidentity"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
-	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -152,14 +152,8 @@ func TestPrepareEquivalentMetadataUsesCompletePublishedPredecessor(t *testing.T)
 		"hydrated missing availability", "transferred complete", "transferred incomplete",
 	} {
 		t.Run(name, func(t *testing.T) {
-			repo, err := db.OpenContext(t.Context(), filepath.Join(t.TempDir(), "prepared.sqlite"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = repo.Close() })
-			if err := repo.MigrateContext(t.Context()); err != nil {
-				t.Fatal(err)
-			}
+			dbPath := filepath.Join(t.TempDir(), "prepared.sqlite")
+			repo := dbfixture.OpenMigrated(t, dbPath)
 			resolver := &availabilityIdentityResolver{source: "original"}
 			module, err := New(repo, resolver, sourceCorrectionCollector{})
 			if err != nil {

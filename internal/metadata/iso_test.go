@@ -104,7 +104,7 @@ func TestISOCollectionPreservesSourceAndRevalidatesReplacedEvidence(t *testing.T
 			Paths:      []string{source},
 			DiscType:   "BDMV",
 		}
-		err := s.collectDiscEvidence(t.Context(), request, &meta, func(api.PreparationProgressStatus, string) {})
+		err := s.collectDiscEvidence(t.Context(), request, &meta)
 		return meta, err
 	}
 	meta, err := collect(newService())

@@ -27,7 +27,7 @@ The left navigation follows the release workflow. Some pages appear or unlock on
 
 The database owns one active input. Tabs in the same session follow its current state, including after reconnecting. Use **Close input** to release it before another session or CLI process starts work. Selecting another input waits for safe cleanup; an unfinished submission or unknown outcome must be resolved first. See [input lifecycle and reuse](../workflow/index.md#1-select-the-source).
 
-If **Legacy workflow recovery** appears, choose **Recover workflow** and check the tracker or torrent client for the interrupted operation. Use **Confirmed not completed; allow a fresh exact attempt** only after verifying that it did not complete. Recovery does not resubmit anything, and unresolved outcomes keep new inputs blocked.
+Startup and reopening an affected input recover interrupted attempts automatically without submitting anything. Check [restart recovery](../troubleshooting/index.md#an-operation-was-interrupted-by-restart) if a remote action might have completed or recovery reports an error.
 
 | Page               | Purpose                                                                  |
 | ------------------ | ------------------------------------------------------------------------ |
@@ -66,6 +66,8 @@ Existing description images are marked with unknown capture timestamps and prove
 Unselected or deleted screenshots are excluded from the links shown on **Upload Images** and from generated descriptions. You can select an unselected screenshot again to include it.
 
 Review the final screenshot selection and order before continuing. Existing URLs are reused only when the destination tracker and chosen image host allow them; other images need rehosting. Existing comparison blocks remain part of the description. Structured comparison sets can optionally supply their main column as ordinary screenshots; other columns never count toward screenshot requirements. See [image-host requirements](./settings/image-hosting.md).
+
+When you reopen the same input, compatible tracker-specific screenshots and their saved upload links are reused only for destinations that require those images. Other trackers keep the ordinary screenshot set.
 
 ### Comparison sets
 
@@ -170,7 +172,7 @@ Under **Provider IDs**, each provider has a **Keep existing data** checkbox. Ena
 
 Corrections survive metadata refresh, history reload, and restart. Explicit values take precedence over saved values and provider results. An empty list, an empty string, a removed provider ID, or explicit **No** remains a manual value until you choose **Auto**.
 
-**Refresh metadata** verifies the source again and applies your corrections, reusing provider lookups for unchanged inputs. It does not repeat lookups that returned no result while the same input remains active. Loading the input again after closing it can retry those empty results; completed fetch failures remain retained until you remove the input from **History**, except that failed TMDB logo lookups retry on the next preparation. A changed source, provider ID, or lookup query requests its own result. Compatible screenshot content, selection, order, and hosted links can be reused when media preparation runs again. Refreshing the same verified input can preserve a still-valid duplicate acknowledgement when the backend verifies unchanged finalized facts and compatible tracker policy. This includes normalized no-op edits and saved corrections that resolve to the same finalized facts. Changed metadata, changed source content, forced fresh preparation, or unavailable or expired evidence requires renewed review. A new prepared generation still rebuilds tracker projections and preflight; staff-token attestations require fresh confirmation when evidence is rebound. The acknowledgement switch reflects the current backend decision; an earlier acknowledgement cannot keep it checked for a result that requires review. Refreshing a successfully completed workflow reopens preparation; confirmed uploads remain excluded from resubmission.
+**Refresh metadata** verifies the source again and applies your corrections, reusing provider lookups for unchanged inputs. It does not repeat lookups that returned no result while the same input remains active. Loading the input again after closing it can retry those empty results. Failed TMDB logo lookups and AniList title searches for automatic anime matching retry on the next preparation. Other completed fetch failures, including AniList detail lookups by MAL ID, remain retained until you remove the input from **History**. A changed source, provider ID, or lookup query requests its own result. Compatible screenshot content, selection, order, and hosted links can be reused when media preparation runs again. Refreshing the same verified input can preserve a still-valid duplicate acknowledgement when the backend verifies unchanged finalized facts and compatible tracker policy. This includes normalized no-op edits and saved corrections that resolve to the same finalized facts. Changed metadata, changed source content, forced fresh preparation, or unavailable or expired evidence requires renewed review. A new prepared generation still rebuilds tracker projections and preflight; staff-token attestations require fresh confirmation when evidence is rebound. The acknowledgement switch reflects the current backend decision; an earlier acknowledgement cannot keep it checked for a result that requires review. Refreshing a successfully completed workflow reopens preparation; confirmed uploads remain excluded from resubmission.
 
 Tracker naming policies can declare mandatory rules for specific name components. Those rules take precedence over manual naming choices for that tracker only; they do not change the saved Input facts. When a rule overrides a choice or replaces a complete manual name, the review shows an explanation beside the effective tracker name. This authority is part of the tracker implementation, not a user setting.
 
@@ -230,7 +232,7 @@ Use [Appearance](./settings/appearance.md) to choose a bundled theme and light o
 
 ## History
 
-**History** shows retained releases and lets you reopen their overview. Deleting a release from History removes its stored release state; it does not delete the source media.
+**History** shows retained releases and lets you reopen their overview. Deleting a release from History removes its stored release state and local comparison images that are not retained by another input. It does not delete the source media.
 
 Opening a historical input checks its local source before adopting reusable content. Deleting an idle active release closes its input automatically; running work still prevents deletion. Deletion removes associated workflow, effect, reusable-media, and submission records, plus generated files managed by upbrr, even if the original source folder is missing. Local repeat-submission protection is removed with those records. Shared generated files and their directories are kept while another retained release still references them. Remote uploads and source media are unchanged.
 
@@ -238,7 +240,7 @@ Restarting the application leaves the previous idle input closed. Its History an
 
 ## Logging
 
-**Logging** shows recent sanitized application logs, a live stream, runtime verbosity, and file-rotation settings.
+**Logging** shows recent sanitized application logs, a live stream, display filters, and file-rotation settings.
 
 Logs are designed for safer sharing, but inspect them before posting. Never include configuration exports, cookies, credentials, announce URLs, or private API payloads.
 

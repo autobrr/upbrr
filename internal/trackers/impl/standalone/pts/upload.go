@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
@@ -83,6 +84,7 @@ func submitPreparedUpload(
 	announceURL string,
 	artifactPath string,
 ) (api.UploadSummary, error) {
+	req.Logger = logging.FromContext(ctx, req.Logger)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, bytes.NewReader(body))
 	if err != nil {
 		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("trackers: PTS request build: %w", err))
@@ -98,6 +100,7 @@ func submitPreparedUpload(
 		return api.UploadSummary{}, fmt.Errorf("trackers: PTS upload request: %w", err)
 	}
 	defer resp.Body.Close()
+	commonhttp.LogUploadResponse(ctx, "PTS", resp)
 	responseBody, responsePreview, err := commonhttp.ReadUploadResponseBody(
 		resp,
 		resp.StatusCode == http.StatusFound || resp.StatusCode == http.StatusSeeOther,

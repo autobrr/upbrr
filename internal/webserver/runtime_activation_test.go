@@ -273,7 +273,6 @@ func TestRuntimeActivatorPersistsStoredOnlyChangeWithoutBuilding(t *testing.T) {
 			if compatibilityOnly {
 				candidate.Metadata.UserOverrides = true
 				candidate.ScreenshotHandling.CutoffScreens = 4
-				candidate.Description.CharLimit = 100
 			} else {
 				candidate.MainSettings.TMDBAPI = "saved-value"
 			}
@@ -310,7 +309,7 @@ func TestRuntimeActivatorPersistsStoredOnlyChangeWithoutBuilding(t *testing.T) {
 				t.Fatal(err)
 			}
 			if compatibilityOnly {
-				if !persisted.Metadata.UserOverrides || persisted.ScreenshotHandling.CutoffScreens != 4 || persisted.Description.CharLimit != 100 {
+				if !persisted.Metadata.UserOverrides || persisted.ScreenshotHandling.CutoffScreens != 4 {
 					t.Fatal("compatibility-only values were not persisted")
 				}
 			} else if persisted.MainSettings.TMDBAPI != "saved-value" {

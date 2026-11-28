@@ -368,8 +368,34 @@ func (r *SQLiteRepository) CompleteReleaseWorkflowEffect(
 		if err := requireWorkflowInputMutation(ctx, tx, record.OwnerID, record.WorkflowID, true); err != nil {
 			return err
 		}
-		return completeReleaseWorkflowEffect(ctx, tx, status, record, "effect")
+		if err := completeReleaseWorkflowEffect(ctx, tx, status, record, "effect"); err != nil {
+			return err
+		}
+		if status == api.WorkflowEffectStatusSucceeded && record.Kind == string(api.WorkflowExternalEffectTrackerSubmission) {
+			return retainConfirmedRecoveryFences(ctx, tx, record.OwnerID, record.WorkflowID, record.UpdatedAt)
+		}
+		return nil
 	})
+}
+
+// retainConfirmedRecoveryFences preserves the exact global submission guard
+// when a recovered receipt confirms an effect without its original live fence authority.
+func retainConfirmedRecoveryFences(ctx context.Context, tx *sql.Tx, ownerID string, workflowID api.WorkflowID, now time.Time) error {
+	stamp := formatWorkflowStateTime(now)
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE submission_fences AS fence
+		SET status = 'succeeded', updated_at = ?, confirmed_at = COALESCE(confirmed_at, ?)
+		WHERE fence.owner_id = ? AND fence.workflow_id = ? AND fence.status = 'unknown'
+			AND EXISTS (
+				SELECT 1 FROM release_workflow_effects AS effect
+				WHERE effect.owner_id = fence.owner_id AND effect.workflow_id = fence.workflow_id
+					AND effect.operation_id = fence.operation_id AND effect.effect_id = fence.effect_id
+					AND effect.kind = 'tracker_submission' AND effect.status = 'succeeded'
+			)
+	`, stamp, stamp, ownerID, workflowID); err != nil {
+		return fmt.Errorf("db retain confirmed recovery submission fences: %w", err)
+	}
+	return nil
 }
 
 // completeSubmissionFence atomically records confirmed remote success with its
@@ -530,6 +556,9 @@ func (r *SQLiteRepository) RecoverLegacyReleaseWorkflowEffects(
 			ownerID, workflowID, api.WorkflowEffectStatusStarted); err != nil {
 			return fmt.Errorf("db recover legacy release workflow effects: %w", err)
 		}
+		if err := retainConfirmedRecoveryFences(ctx, tx, ownerID, workflowID, now); err != nil {
+			return err
+		}
 		rows, err := tx.QueryContext(ctx, `
 			SELECT owner_id, workflow_id, operation_id, effect_id, kind, scope_id,
 				semantic_fingerprint, status, started_at, updated_at, completed_at
@@ -560,13 +589,33 @@ func (r *SQLiteRepository) RecoverLegacyReleaseWorkflowEffects(
 	return effects, nil
 }
 
-// ListReleaseWorkflowRecoveryScopes lists uncertain workflows for local database
+// Match the exact successful effect so orphaned or unrelated actions cannot
+// claim the recovery slot.
+const completedEffectPendingActions = `
+		SELECT state.owner_id, state.workflow_id
+		FROM release_workflow_effects AS effect
+		JOIN release_workflow_states AS state USING (owner_id, workflow_id)
+		JOIN json_each(coalesce(
+			json_extract(state.state_json, '$.state.Workflow.requiredActions'),
+			json_extract(state.state_json, '$.Workflow.requiredActions')
+		)) AS action
+		WHERE effect.status = 'succeeded'
+			AND action.value ->> 'kind' = 'reconcile_submission'
+			AND action.value ->> 'status' = 'pending'
+			AND action.value ->> 'effectId' = effect.effect_id
+			AND action.value ->> 'effectOperationId' = effect.operation_id
+			AND action.value ->> 'effectKind' = effect.kind
+			AND action.value ->> 'effectScopeId' = effect.scope_id`
+
+// ListReleaseWorkflowRecoveryScopes lists interrupted effects or leftover reconciliation actions for local database
 // maintenance. Browser and ordinary workflow reads remain owner-scoped.
 func (r *SQLiteRepository) ListReleaseWorkflowRecoveryScopes(ctx context.Context) ([]api.WorkflowScope, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT owner_id, workflow_id FROM release_workflow_effects WHERE status IN ('started', 'unknown')
 		UNION
 		SELECT owner_id, workflow_id FROM submission_fences WHERE status IN ('started', 'unknown')
+		UNION
+	`+completedEffectPendingActions+`
 		ORDER BY owner_id, workflow_id
 	`)
 	if err != nil {
@@ -775,6 +824,8 @@ type workflowEffectScanner interface {
 	Scan(...any) error
 }
 
+// Receipt timestamps are stored as UTC RFC3339Nano. Drop the trailing Z when
+// sorting so a shorter fractional-second prefix sorts before its extensions.
 func loadLatestReleaseWorkflowEffect(
 	ctx context.Context,
 	queryer workflowStateQueryer,
@@ -788,7 +839,7 @@ func loadLatestReleaseWorkflowEffect(
 			semantic_fingerprint, status, started_at, updated_at, completed_at
 		FROM release_workflow_effects
 		WHERE owner_id = ? AND workflow_id = ? AND kind = ? AND scope_id = ?
-		ORDER BY started_at DESC, effect_id DESC
+		ORDER BY rtrim(started_at, 'Z') DESC, effect_id DESC
 		LIMIT 1
 	`, ownerID, workflowID, kind, scopeID))
 }

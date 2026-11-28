@@ -108,50 +108,50 @@ func TestHDRCLISetupDiagnostics(t *testing.T) {
 		want   string
 	}{
 		{
-name: "missing source",
- source: missing,
- output: t.TempDir(),
- code: 1,
- want: "HDR source",
-},
+			name:   "missing source",
+			source: missing,
+			output: t.TempDir(),
+			code:   1,
+			want:   "HDR source",
+		},
 		{
-name: "output is a file",
- source: source,
- output: outputFile,
- code: 1,
- want: "--hdr-output-dir",
-},
+			name:   "output is a file",
+			source: source,
+			output: outputFile,
+			code:   1,
+			want:   "--hdr-output-dir",
+		},
 		{
-name: "output below a file",
- source: source,
- output: filepath.Join(outputFile, "reports"),
- code: 1,
- want: "--hdr-output-dir",
-},
+			name:   "output below a file",
+			source: source,
+			output: filepath.Join(outputFile, "reports"),
+			code:   1,
+			want:   "--hdr-output-dir",
+		},
 		{
-name: "invalid peak option",
- source: source,
- output: t.TempDir(),
- flags: []string{"--hdr-peak-source=unknown"},
- code: 2,
- want: "invalid --hdr-peak-source; choose histogram, histogram99, max-scl, or max-scl-luminance",
-},
+			name:   "invalid peak option",
+			source: source,
+			output: t.TempDir(),
+			flags:  []string{"--hdr-peak-source=unknown"},
+			code:   2,
+			want:   "invalid --hdr-peak-source; choose histogram, histogram99, max-scl, or max-scl-luminance",
+		},
 		{
-name: "invalid playlist option",
- source: source,
- output: t.TempDir(),
- flags: []string{"--hdr-playlist=unknown"},
- code: 2,
- want: "--hdr-playlist",
-},
+			name:   "invalid playlist option",
+			source: source,
+			output: t.TempDir(),
+			flags:  []string{"--hdr-playlist=unknown"},
+			code:   2,
+			want:   "--hdr-playlist",
+		},
 		{
-name: "invalid formats option",
- source: source,
- output: t.TempDir(),
- flags: []string{"--hdr-formats=unknown"},
- code: 2,
- want: "invalid --hdr-formats; choose auto, hdr10plus, dolby-vision, or both",
-},
+			name:   "invalid formats option",
+			source: source,
+			output: t.TempDir(),
+			flags:  []string{"--hdr-formats=unknown"},
+			code:   2,
+			want:   "invalid --hdr-formats; choose auto, hdr10plus, dolby-vision, or both",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			args := []string{"--hdr-analysis-only", "--hdr-metadata-only", "--hdr-output-dir", test.output}
@@ -273,6 +273,7 @@ type hdrCLIProgressWriter func([]byte) (int, error)
 func (w hdrCLIProgressWriter) Write(data []byte) (int, error) { return w(data) }
 
 func TestHDRCLIRetainsCompletedImagesOnReportFailure(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name        string
 		failSummary bool
@@ -294,6 +295,7 @@ func TestHDRCLIRetainsCompletedImagesOnReportFailure(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			if test.prepared && !test.failSummary {
 				if _, err := hdranalysis.CurrentDecoderFingerprint(t.Context()); err != nil {
 					t.Skip("requires a working FFmpeg version probe for complete prepared audio analysis")
@@ -376,6 +378,7 @@ func TestHDRCLIRetainsCompletedImagesOnReportFailure(t *testing.T) {
 }
 
 func TestHDRCLIRenderCancellationRetainsMetadataReport(t *testing.T) {
+	t.Parallel()
 	parent := t.TempDir()
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

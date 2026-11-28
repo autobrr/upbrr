@@ -161,7 +161,15 @@ func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count in
 		if index < remainder {
 			discCount++
 		}
-		discPlan, err := s.planDisc(ctx, screenshotSubjectForDisc(meta, disc), discCount)
+		discSubject := screenshotSubjectForDisc(meta, disc)
+		if meta.AdditionalDiscCount > 0 {
+			discCount = count
+			if index > 0 {
+				discCount = meta.AdditionalDiscCount
+				discSubject.ManualFrames = nil
+			}
+		}
+		discPlan, err := s.planDisc(ctx, discSubject, discCount)
 		if err != nil {
 			if len(discs) == 1 {
 				return api.ScreenshotPlan{}, err
@@ -194,7 +202,7 @@ func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count in
 			SuggestedSelections: append([]api.ScreenshotSelection(nil), discPlan.SuggestedSelections...),
 		})
 	}
-	if tmpDir, _, err := paths.ReleaseTempDirFor(s.tmpRoot, meta.SourcePath, meta.Release); err == nil {
+	if tmpDir, _, err := paths.ReleaseTempDirFor(s.tmpRoot, meta.SourcePath, meta.Release); err == nil && meta.PackMemberID == "" {
 		trackerRecords := s.loadTrackerMetadata(ctx, meta.SourcePath)
 		trackerLinks := buildTrackerImageLinks(
 			trackerRecords,
@@ -348,7 +356,8 @@ func (s *Service) planDisc(ctx context.Context, meta api.ScreenshotSubject, coun
 					continue
 				}
 				pathValue := strings.TrimSpace(shot.ImagePath)
-				if pathValue == "" || !isAllowedImageExt(pathValue) || !isPathWithinDir(tmpDir, pathValue) {
+				if pathValue == "" || !isAllowedImageExt(pathValue) || !isPathWithinDir(tmpDir, pathValue) ||
+					!screenshotPathMatchesScope(meta, pathValue, base) {
 					continue
 				}
 				if info, statErr := os.Stat(pathValue); statErr != nil || info.IsDir() {
@@ -419,10 +428,16 @@ func (s *Service) planDisc(ctx context.Context, meta api.ScreenshotSubject, coun
 
 	plan.ExistingScreenshots = filterScreenshotsMatchingSelections(listExistingScreens(tmpDir, base), baselineSelections, plan.FrameRate)
 	stampScreenshotImages(plan.ExistingScreenshots, meta.DiscID, meta.DiscName)
-	plan.FinalSelections = filterScreenshotsMatchingSelections(s.loadFinalSelections(ctx, meta, tmpDir), baselineSelections, plan.FrameRate)
+	final := slices.DeleteFunc(s.loadFinalSelections(ctx, meta, tmpDir), func(image api.ScreenshotImage) bool {
+		return !screenshotPathMatchesScope(meta, image.Path, base)
+	})
+	plan.FinalSelections = filterScreenshotsMatchingSelections(final, baselineSelections, plan.FrameRate)
 
 	for _, images := range [][]api.ScreenshotImage{plan.ExistingScreenshots, plan.FinalSelections} {
 		restoreScreenshotTonemapping(images, storedScreenshots)
+		for index := range images {
+			images[index].AdditionalDisc = meta.AdditionalDisc
+		}
 	}
 
 	return plan, nil
@@ -541,6 +556,9 @@ func (s *Service) captureDisc(
 
 	base := screenshotBaseName(meta)
 	tonemap := shouldTonemap(meta, s.cfg)
+	if meta.PackMemberID != "" && info.HDRFacts.Status == api.HDREvidenceComplete {
+		tonemap = s.cfg.ScreenshotHandling.ToneMap && info.HDRFacts.SupportsToneMapping()
+	}
 
 	type captureJob struct {
 		selection api.ScreenshotSelection
@@ -697,6 +715,8 @@ func (s *Service) captureDisc(
 			}
 
 			img := api.ScreenshotImage{
+				AdditionalDisc:   meta.AdditionalDisc,
+				PackMemberID:     meta.PackMemberID,
 				DiscID:           meta.DiscID,
 				DiscName:         meta.DiscName,
 				Index:            selection.Index,
@@ -1340,11 +1360,39 @@ func (s *Service) SaveFinalSelections(ctx context.Context, meta api.ScreenshotSu
 	return nil
 }
 
+const extraDiscScreenshotSuffix = "-extra-disc-"
+
+// screenshotPathMatchesScope prevents tracker-only captures from satisfying
+// ordinary slots or captures for a different source.
+func screenshotPathMatchesScope(meta api.ScreenshotSubject, path, base string) bool {
+	name := strings.ToLower(filepath.Base(path))
+	prefix := strings.ToLower(base)
+	if meta.PackMemberID != "" || meta.AdditionalDisc {
+		return strings.HasPrefix(name, prefix+"-")
+	}
+	return !strings.HasPrefix(name, prefix+"-pack-member-") && !strings.HasPrefix(name, prefix+extraDiscScreenshotSuffix)
+}
+
 func screenshotBaseName(meta api.ScreenshotSubject) string {
 	base := paths.ReleaseTempBaseFor(meta.SourcePath, meta.Release)
 	base = sanitizeFilename(base)
+	if memberID := strings.TrimSpace(meta.PackMemberID); memberID != "" {
+		base += "-pack-member-" + sanitizeFilename(memberID)
+		if key := meta.MediaBinding.CompatibilityKey; key.Valid() {
+			base += "-" + string(key[:24])
+		}
+		return base
+	}
 	if discID := strings.TrimSpace(meta.DiscID); discID != "" {
-		return base + "-disc-" + sanitizeFilename(discID)
+		base += "-disc-" + sanitizeFilename(discID)
+		if meta.AdditionalDisc {
+			key := meta.MediaBinding.CompatibilityKey
+			suffix := "current"
+			if key.Valid() {
+				suffix = string(key[:24])
+			}
+			base += extraDiscScreenshotSuffix + suffix
+		}
 	}
 	return base
 }
@@ -1367,6 +1415,9 @@ func screenshotDiscs(meta api.ScreenshotSubject) []api.ScreenshotDiscSubject {
 }
 
 func screenshotSubjectForDisc(meta api.ScreenshotSubject, disc api.ScreenshotDiscSubject) api.ScreenshotSubject {
+	if len(meta.Discs) > 1 {
+		meta.AdditionalDisc = meta.AdditionalDiscCount > 0 && disc.ID != meta.Discs[0].ID
+	}
 	meta.BluRayISO = disc.BluRayISO
 	meta.BDInfoSummary = disc.BDInfoSummary
 	meta.DiscID = strings.TrimSpace(disc.ID)
@@ -1506,7 +1557,9 @@ func listExistingScreens(tmpDir, base string) []api.ScreenshotImage {
 		if base != "" && strings.HasPrefix(name, strings.ToLower(base)+"-preview-") {
 			continue
 		}
-		if base != "" && strings.HasPrefix(name, strings.ToLower(base)+"-dvd-menu-") {
+		if base != "" && (strings.HasPrefix(name, strings.ToLower(base)+"-dvd-menu-") ||
+			strings.HasPrefix(name, strings.ToLower(base)+"-pack-member-") ||
+			strings.HasPrefix(name, strings.ToLower(base)+extraDiscScreenshotSuffix)) {
 			continue
 		}
 		stat, err := os.Stat(match)

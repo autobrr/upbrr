@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/metadata"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -34,7 +35,7 @@ func TestCinemaZMissingTitleExplainsProjectionFailure(t *testing.T) {
 		Meta:    subject,
 	}, fingerprint, fingerprint, fingerprint)
 	if failure == nil || failure.Code() != "name_rule_unsatisfied" ||
-		!strings.Contains(failure.Message(), "Latin-safe manual original title") || projection.UploadReady {
+		!strings.Contains(failure.Message(), "check the selected provider records and refresh metadata") || projection.UploadReady {
 		t.Fatalf("missing CinemaZ title projection=%+v failure=%v", projection, failure)
 	}
 }
@@ -528,14 +529,201 @@ func TestCinemaZStructuredPolicyUsesCurrentIMDbYear(t *testing.T) {
 	}
 }
 
+func TestCinemaZUsesBoundRomanizationForNativeTitle(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name      string
+		mutate    func(*api.UploadSubject)
+		wantTitle string
+	}{
+		{name: "matching MAL without a rendered AKA", wantTitle: "Aoi Umi"},
+		{
+			name:      "romanization identical to TMDB title still eligible for CinemaZ",
+			wantTitle: "Aoi Umi",
+			mutate: func(subject *api.UploadSubject) {
+				subject.ProviderMetadata.TMDB.Title = "Aoi Umi (2024)"
+				subject.ProviderMetadata.TMDB.Year = 2024
+				subject.ProviderMetadata.AniList.TitleRomaji = "Aoi Umi (2024)"
+				subject.Identity.IMDBID = 40
+				subject.ProviderMetadata.IMDB = &api.IMDBMetadata{IMDBID: 40, Title: "Different Latin Title"}
+			},
+		},
+		{
+			name: "manual MAL replaces retained evidence",
+			mutate: func(subject *api.UploadSubject) {
+				subject.Identity.Overrides.MAL = api.OverrideStateValue
+				subject.ProviderMetadata.TMDB.MALID = 30
+				subject.ProviderMetadata.TMDB.RetrievedAKA = "AKA Old Romaji"
+			},
+			wantTitle: "Aoi Umi",
+		},
+		{name: "unbound TMDB", mutate: func(subject *api.UploadSubject) { subject.Identity.TMDBID++ }},
+		{
+			name:      "display title does not preempt romanization",
+			wantTitle: "Aoi Umi",
+			mutate: func(subject *api.UploadSubject) {
+				subject.ProviderMetadata.TMDB.Title = "Blue Sea"
+				subject.ProviderMetadata.TMDB.OriginalTitle = ""
+				subject.EffectiveMetadata.OriginalTitle = "Blue Sea"
+			},
+		},
+		{name: "mismatched automatic MAL", mutate: func(subject *api.UploadSubject) { subject.ProviderMetadata.TMDB.MALID++ }},
+		{name: "stale AniList", mutate: func(subject *api.UploadSubject) { subject.ProviderMetadata.AniList.MALID++ }},
+		{name: "explicit MAL clear", mutate: func(subject *api.UploadSubject) { subject.Identity.Overrides.MAL = api.OverrideStateClear }},
+		{name: "stale generation", mutate: func(subject *api.UploadSubject) { subject.ProviderMetadata.Generation-- }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := azFamilyGeneratedSubject(t, api.ReleaseNameRequest{
+				Category:   "MOVIE",
+				Type:       "WEBDL",
+				Title:      "青い海",
+				Resolution: "1080p",
+			})
+			subject.SourcePath = "prepared/source"
+			subject.Identity = api.ExternalIdentity{
+				Category:   api.CanonicalCategoryMovie,
+				SourcePath: subject.SourcePath,
+				Generation: 1,
+				TMDBID:     10,
+				MALID:      20,
+			}
+			subject.ProviderMetadata = api.SourceScopedMetadata{
+				SourcePath: subject.SourcePath,
+				Generation: 1,
+				TMDB: &api.TMDBMetadata{
+					TMDBID:        10,
+					Category:      "MOVIE",
+					Title:         "青い海",
+					OriginalTitle: "青い海",
+					Anime:         true,
+					MALID:         20,
+				},
+				AniList: &api.AniListMetadata{MALID: 20, TitleRomaji: "Aoi Umi"},
+			}
+			if test.mutate != nil {
+				test.mutate(&subject)
+			}
+			prepared, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{Tracker: "CZ", Meta: subject}, New("CZ").ReleaseNamePolicy())
+			if test.wantTitle == "" {
+				if failure == nil {
+					t.Errorf("unbound evidence supplied the CinemaZ title %q", prepared.Projection.UploadReleaseName)
+				}
+				return
+			}
+			if failure != nil || !strings.HasPrefix(prepared.Projection.UploadReleaseName, test.wantTitle+" ") || prepared.Projection.DuplicateCriteria.Name != "青い海" {
+				t.Fatalf("upload=%q search=%q failure=%v, want upload with %q and canonical search", prepared.Projection.UploadReleaseName,
+					prepared.Projection.DuplicateCriteria.Name, failure, test.wantTitle)
+			}
+		})
+	}
+}
+
+func TestAZFamilyDeduplicatesEpisodeAgainstFinalTitle(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name      string
+		site      string
+		mediaType string
+		discType  string
+		want      string
+		wantCount int
+		omitAKA   bool
+	}{
+		{
+			name:      "AZ restores web episode when AKA omitted",
+			site:      "AZ",
+			mediaType: "WEBDL",
+			want:      "Blue Sky S01E02 Sora no Ao",
+			wantCount: 1,
+		},
+		{
+			name:      "CZ suppresses web episode matching final title",
+			site:      "CZ",
+			mediaType: "WEBDL",
+			omitAKA:   true,
+			want:      "Sora no Ao S01E02",
+			wantCount: 1,
+		},
+		{
+			name:      "AZ keeps BDMV episode omitted when matching original AKA",
+			site:      "AZ",
+			mediaType: "DISC",
+			discType:  "BDMV",
+			want:      "Blue Sky S01E02",
+			wantCount: 0,
+		},
+		{
+			name:      "CZ keeps BDMV episode omitted when matching original AKA",
+			site:      "CZ",
+			mediaType: "DISC",
+			discType:  "BDMV",
+			want:      "Sora no Ao S01E02",
+			wantCount: 1,
+		},
+		{
+			name:      "AZ keeps TV DVDRip episode title omitted when matching original AKA",
+			site:      "AZ",
+			mediaType: "DVDRIP",
+			want:      "Blue Sky S01",
+			wantCount: 0,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := azFamilyGeneratedSubject(t, api.ReleaseNameRequest{
+				Category:     "TV",
+				Type:         test.mediaType,
+				DiscType:     test.discType,
+				Title:        "Blue Sky",
+				AltTitle:     "AKA Sora no Ao",
+				Season:       "S01",
+				Episode:      "E02",
+				EpisodeTitle: "Sora no Ao",
+				Resolution:   "1080p",
+				Source:       "BluRay",
+				NoAKA:        test.omitAKA,
+			})
+			subject.ProviderMetadata.TVDB = &api.TVDBMetadata{Name: "Sora no Ao", NameEnglish: "Blue Sky"}
+			if test.mediaType == "WEBDL" || test.mediaType == "DVDRIP" {
+				state := preparationstate.State{
+					Identity:               api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+					Release:                subject.Release,
+					Type:                   test.mediaType,
+					Source:                 "BluRay",
+					SeasonStr:              "S01",
+					EpisodeStr:             "E02",
+					EpisodeTitle:           "Sora no Ao",
+					AvailableGeneratedName: subject.GeneratedName,
+					ReleaseNameOverrides: api.ReleaseNameOverrides{
+						NoAKA:          new(test.omitAKA),
+						NoEpisodeTitle: new(false),
+					},
+				}
+				state.Release.Alt = "Sora no Ao"
+				metadata.RebuildReleaseName(&state, api.NopLogger{})
+				subject.GeneratedName, subject.ReleaseName = state.GeneratedName, state.ReleaseName
+			}
+			if test.mediaType == "DVDRIP" {
+				episode, ok := subject.GeneratedName.Component(api.NameRoleEpisodeTitle)
+				if !ok || episode.Present || episode.Value != "Sora no Ao" {
+					t.Fatalf("want retained, omitted episode title, got %+v", episode)
+				}
+			}
+			if got := azFamilyReviewedName(t, test.site, subject, nil); !strings.HasPrefix(got, test.want+" ") ||
+				strings.Count(got, "Sora no Ao") != test.wantCount {
+				t.Errorf("projected name = %q, want prefix %q with %d occurrences of Sora no Ao", got, test.want, test.wantCount)
+			}
+		})
+	}
+}
+
 func TestAZFamilyNamingPolicyVersions(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		site, want string
 		provider   api.IdentityProvider
 	}{
-		{"AZ", "azfamily/az/v4", api.IdentityProviderTMDB},
-		{"CZ", "azfamily/cz/v9", api.IdentityProviderIMDB},
+		{"AZ", "azfamily/az/v5", api.IdentityProviderTMDB},
+		{"CZ", "azfamily/cz/v10", api.IdentityProviderIMDB},
 		{"PHD", "azfamily/phd/v6", api.IdentityProviderTMDB},
 	} {
 		t.Run(test.site, func(t *testing.T) {

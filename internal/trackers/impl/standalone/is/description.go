@@ -17,14 +17,15 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 		return strings.TrimSpace(assets.Description)
 	}
 	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
-	baseDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(assets.Description)
+	baseDescription, discReports := description.SplitLeadingDiscReports(assets.Description)
+	baseDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(baseDescription)
 	assets.Description = baseDescription
 	meta := req.Meta
 	parts := make([]string, 0, 8)
 	if strings.TrimSpace(meta.EpisodeOverview) != "" {
 		parts = append(parts, "Title: "+strings.TrimSpace(meta.EpisodeTitle), "Overview: "+strings.TrimSpace(meta.EpisodeOverview))
 	}
-	if media := trackers.ReadBDinfoOrMediaInfo(req.Runtime.DBPath, meta); media != "" {
+	if media := trackers.ReadMediaInfoForDescription(req.Runtime.DBPath, meta); media != "" {
 		parts = append(parts, media)
 	}
 	if strings.TrimSpace(assets.Description) != "" {
@@ -46,6 +47,9 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 	}
 	if audioAnalysis != "" {
 		parts = append(parts, audioAnalysis)
+	}
+	if discReports != "" {
+		parts = append(parts, discReports)
 	}
 	if len(assets.Screenshots) > 0 {
 		var shotLines []string

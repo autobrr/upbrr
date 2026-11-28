@@ -18,6 +18,12 @@ import (
 // and reconcile effects created before active-input fencing existed. It never
 // verifies source bytes, starts an operation, or resumes an external attempt.
 func (m *Module) RecoverLegacyInput(ctx context.Context, ownerID string, workflowID api.WorkflowID) (api.ActiveInputRecord, error) {
+	return m.recoverLegacyInput(ctx, ownerID, workflowID, nil)
+}
+
+func (m *Module) recoverLegacyInput(
+	ctx context.Context, ownerID string, workflowID api.WorkflowID, expectedEmptyRevision *uint64,
+) (api.ActiveInputRecord, error) {
 	if err := m.requireActiveConfig(ctx); err != nil {
 		return api.ActiveInputRecord{}, err
 	}
@@ -31,7 +37,7 @@ func (m *Module) RecoverLegacyInput(ctx context.Context, ownerID string, workflo
 	if _, err := m.repository.Load(ctx, ownerID, workflowID); err != nil {
 		return api.ActiveInputRecord{}, fmt.Errorf("release workflow load legacy recovery workflow: %w", err)
 	}
-	slot, err := m.claimLegacyRecoverySlot(ctx, ownerID, workflowID)
+	slot, err := m.claimLegacyRecoverySlot(ctx, ownerID, workflowID, expectedEmptyRevision)
 	if err != nil {
 		return api.ActiveInputRecord{}, err
 	}
@@ -40,21 +46,21 @@ func (m *Module) RecoverLegacyInput(ctx context.Context, ownerID string, workflo
 		Fence:         slot.Fence,
 	})
 	if err := m.interruptLegacyRecoveryOperations(recoveryCtx, ownerID, workflowID); err != nil {
-		return api.ActiveInputRecord{}, err
+		return slot, err
 	}
 	effects, err := m.durability.RecoverLegacyEffects(recoveryCtx, ownerID, workflowID, m.clock.Now().UTC())
 	if err != nil {
-		return api.ActiveInputRecord{}, fmt.Errorf("release workflow recover legacy effects: %w", err)
+		return slot, fmt.Errorf("release workflow recover legacy effects: %w", err)
 	}
 	if err := m.publishLegacyRecoveryActions(recoveryCtx, ownerID, workflowID, effects); err != nil {
-		return api.ActiveInputRecord{}, err
+		return slot, err
 	}
 	if err := m.finishLegacyInputRecoveryLocked(recoveryCtx, ownerID, workflowID); err != nil {
-		return api.ActiveInputRecord{}, err
+		return slot, err
 	}
 	result, err := m.activeInputs.LoadActiveInput(ctx)
 	if err != nil {
-		return api.ActiveInputRecord{}, fmt.Errorf("release workflow read recovered input: %w", err)
+		return slot, fmt.Errorf("release workflow read recovered input: %w", err)
 	}
 	return result, nil
 }
@@ -149,11 +155,15 @@ func (m *Module) claimLegacyRecoverySlot(
 	ctx context.Context,
 	ownerID string,
 	workflowID api.WorkflowID,
+	expectedEmptyRevision *uint64,
 ) (api.ActiveInputRecord, error) {
 	now := m.clock.Now().UTC()
 	slot, err := m.activeInputs.LoadActiveInput(ctx)
 	if err != nil {
 		return api.ActiveInputRecord{}, fmt.Errorf("release workflow read legacy recovery input: %w", err)
+	}
+	if expectedEmptyRevision != nil && (slot.State != api.ActiveInputEmpty || slot.Revision != *expectedEmptyRevision) {
+		return api.ActiveInputRecord{}, api.ErrActiveInputChanged
 	}
 	if slot.State == api.ActiveInputRecovering && IsLegacyRecoverySlot(slot) &&
 		slot.OwnerID == ownerID && slot.WorkflowID == workflowID && slot.CoordinatorID == m.processEpoch && slot.LeaseExpiresAt.After(now) {

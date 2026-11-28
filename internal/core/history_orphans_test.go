@@ -14,6 +14,7 @@ import (
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -23,14 +24,8 @@ func TestHistoryOrphanCleanupRemovesLegacyUIOnlySources(t *testing.T) {
 		t.Run(schema, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			repo, err := db.Open(filepath.Join(root, "history.sqlite"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = repo.Close() })
-			if err := repo.Migrate(); err != nil {
-				t.Fatal(err)
-			}
+			dbPath := filepath.Join(root, "history.sqlite")
+			repo := dbfixture.OpenMigrated(t, dbPath)
 			retained := filepath.Join(root, "Retained.Release.mkv")
 			orphan := filepath.Join(root, "Deleted.Release.mkv")
 			if err := repo.Save(t.Context(), db.FileMetadata{
@@ -48,6 +43,7 @@ func TestHistoryOrphanCleanupRemovesLegacyUIOnlySources(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, source := range []string{retained, orphan} {
+				var err error
 				if schema == "source_path" {
 					_, err = repo.RawDB().ExecContext(t.Context(), `INSERT INTO ui_states(source_path) VALUES (?)`, source)
 				} else {
@@ -88,17 +84,54 @@ func TestHistoryOrphanCleanupRemovesLegacyUIOnlySources(t *testing.T) {
 	}
 }
 
+func TestHistoryOrphanCleanupPreservesFailedInputLog(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "history.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
+	source := filepath.Join(root, "Failed.Release.mkv")
+	if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO input_records (id, canonical_path, source_version, manifest, updated_at)
+		VALUES ('fixture', ?, 'fixture', '{}', '2026-01-01T00:00:00Z')`, source); err != nil {
+		t.Fatal(err)
+	}
+	attempt := db.InputLogAttempt{
+		ID:         "input-log",
+		SourcePath: source,
+		Kind:       "preparation",
+		StartedAt:  time.Now().UTC(),
+	}
+	if err := repo.BeginInputLog(ctx, attempt); err != nil {
+		t.Fatal(err)
+	}
+	attempt.Outcome = "failed"
+	if err := repo.FinishInputLog(ctx, attempt); err != nil {
+		t.Fatal(err)
+	}
+	history := newHistoryModule(repo, repo.DBPath(), api.NopLogger{})
+	if err := history.cleanupOrphanedHistory(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	var remaining int
+	if err := repo.RawDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM input_records`).Scan(&remaining); err != nil || remaining != 0 {
+		t.Fatalf("stale input record was not cleaned up: %d, %v", remaining, err)
+	}
+	if attempts, err := repo.InputLogs(ctx, source, ""); err != nil || len(attempts) != 1 || attempts[0].Outcome != "failed" {
+		t.Fatalf("failed attempt was not preserved: %v, %v", attempts, err)
+	}
+	if err := history.Delete(ctx, source); err != nil {
+		t.Fatal(err)
+	}
+	if attempts, err := repo.InputLogs(ctx, source, ""); err != nil || len(attempts) != 0 {
+		t.Fatalf("explicit deletion did not remove the failed attempt: %v, %v", attempts, err)
+	}
+}
+
 func TestHistoryOrphanCleanupDefersMissingReleaseAuthoritySource(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	repo, err := db.Open(filepath.Join(root, "history.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	dbPath := filepath.Join(root, "history.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	now := time.Now().UTC()
 	orphan := filepath.Join(root, "Deleted.Release.mkv")
 	if err := repo.Save(t.Context(), db.FileMetadata{Path: orphan, UpdatedAt: now}); err != nil {
@@ -125,14 +158,8 @@ func TestHistoryOrphanCleanupDefersMissingReleaseAuthoritySource(t *testing.T) {
 func TestHistoryOrphanCleanupDefersActiveTempCollision(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	repo, err := db.Open(filepath.Join(root, "history.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	dbPath := filepath.Join(root, "history.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	now := time.Now().UTC()
 	orphan := filepath.Join(root, "old", "Example.Release.mkv")
 	active := filepath.Join(root, "new", "Example.Release.mkv")
@@ -167,14 +194,8 @@ func TestHistoryOrphanCleanupDefersActiveTempCollision(t *testing.T) {
 func TestHistoryOrphanCleanupRemovesWorkflowAndFilesPreservingHistory(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	repo, err := db.Open(filepath.Join(root, "history.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	dbPath := filepath.Join(root, "history.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	vault, err := releaseworkflow.NewPrivateArtifactVault(filepath.Join(root, "vault"))
 	if err != nil {
 		t.Fatal(err)
@@ -249,14 +270,8 @@ func TestHistoryOrphanCleanupRemovesWorkflowAndFilesPreservingHistory(t *testing
 func TestHistoryOrphanCleanupRetainsRowsWhenPrivateCleanupFails(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	repo, err := db.Open(filepath.Join(root, "history.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	dbPath := filepath.Join(root, "history.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	workflow := historySubmissionWorkflowState(t, filepath.Join(root, "Deleted.Release.mkv"), time.Now().UTC())
 	if _, _, err := repo.CreateReleaseWorkflowState(t.Context(), workflow); err != nil {
 		t.Fatal(err)

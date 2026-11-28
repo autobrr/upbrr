@@ -6,7 +6,7 @@ Shared API contract rules under `pkg/api`. Root + `internal/AGENTS.md` rules sti
 
 - CLI: `cmd/upbrr`
 - Core: `internal/core`
-- WebUI server/API: `internal/webserver`
+- Browser `/api/app/*` and public `/api/v1` adapters: `internal/webserver`
 - Browser clients/types: `webui/src`
 
 Preserve CLI/WebUI behavior unless intentionally changing entrypoint. Provider override contracts retain the root manual-provider authority rule: independently supplied IDs do not require cross-provider agreement. Keep selection, explicit clear and Auto/reset distinct; reconciliation belongs to the shared metadata owner in `internal/AGENTS.md`.
@@ -29,7 +29,7 @@ Changes require entrypoint parity review:
 - `PreparationProgressUpdate` + `ImageUploadProgressUpdate`
 - `OperationFailure` codes + recovery metadata
 
-Check CLI builders, WebUI `/api/app/*` routes, browser request shapes, TS types.
+Check affected CLI builders, `/api/app/*` routes, browser request shapes and TypeScript types, and public `/api/v1` mappings. Preserve API token scopes and workflow ownership when a shared contract crosses public routes.
 
 ## Canonical / Presentation Boundaries
 
@@ -45,7 +45,8 @@ Check CLI builders, WebUI `/api/app/*` routes, browser request shapes, TS types.
 ## Checks
 
 - CLI/core: `go test -race -v -timeout 20m ./cmd/upbrr ./internal/core ./pkg/api`.
-- WebUI API: `go test -race -v -timeout 20m ./internal/webserver/... ./pkg/api`.
+- Browser and public API adapters: `go test -race -v -timeout 20m ./internal/webserver/... ./pkg/api`.
+- Workflow transport contract changes: run `make workflow-contracts` to regenerate the public OpenAPI document and browser TypeScript types, then run `make workflow-contracts-check`.
 - Browser clients/types: `pnpm --dir webui run typecheck` + `pnpm --dir webui run test:unit`.
 - Embedded runtime/UI: build frontend, sync embedded assets, rebuild CLI, inspect embedded web on `http://localhost:7480`.
 - Cross-entrypoint behavior: `make test-go` + relevant frontend checks.

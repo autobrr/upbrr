@@ -30,7 +30,7 @@ func TestMaybeApplyE2ENamingRegistryLeavesBaseRegistryUntouched(t *testing.T) {
 		t.Fatal("base registry was replaced without a naming fixture mode")
 	}
 	descriptor, ok := got.LookupDescriptor("BTN")
-	if !ok || descriptor.ReleaseNamePolicy.ID != "standalone/btn/v5" {
+	if !ok || descriptor.ReleaseNamePolicy.ID != "standalone/btn/v6" {
 		t.Fatalf("base BTN naming policy = %#v", descriptor.ReleaseNamePolicy)
 	}
 }
@@ -72,7 +72,7 @@ func TestMaybeApplyE2ENamingRegistryConfiguresBTNPolicy(t *testing.T) {
 	}
 
 	baseBTN, ok := registry.LookupDescriptor("BTN")
-	if !ok || baseBTN.ReleaseNamePolicy.ID != "standalone/btn/v5" {
+	if !ok || baseBTN.ReleaseNamePolicy.ID != "standalone/btn/v6" {
 		t.Fatalf("base BTN naming policy changed = %#v", baseBTN.ReleaseNamePolicy)
 	}
 }

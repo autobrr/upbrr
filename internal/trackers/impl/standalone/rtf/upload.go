@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
@@ -138,6 +139,7 @@ func submitPreparedUpload(
 	announceURL string,
 	artifactPath string,
 ) (api.UploadSummary, error) {
+	req.Logger = logging.FromContext(ctx, req.Logger)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, strings.NewReader(string(body)))
 	if err != nil {
 		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("trackers: RTF create upload request: %w", err))
@@ -151,6 +153,7 @@ func submitPreparedUpload(
 		return api.UploadSummary{}, fmt.Errorf("trackers: RTF upload request: %w", err)
 	}
 	defer resp.Body.Close()
+	commonhttp.LogUploadResponse(ctx, "RTF", resp)
 	responseBody, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, resp.StatusCode == http.StatusCreated, commonhttp.DefaultResponsePreviewBytes)
 	if err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: RTF read upload response: %w", err)

@@ -15,6 +15,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -93,14 +94,7 @@ func sceneGroupPreparation(t *testing.T) (*db.SQLiteRepository, api.PrepareInput
 	t.Helper()
 	sourcePath := writePreparedTestFile(t, "Example.Movie.2026.1080p.WEB-DL.H.264-grp.mkv", "synthetic media")
 	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
-	repo, err := db.Open(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	detector := &preparedSceneDetector{}
 	var cfg config.Config
 	cfg.MainSettings.DBPath = dbPath

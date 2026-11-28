@@ -6,7 +6,9 @@ package torrent
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -54,6 +56,37 @@ func TestSubmissionContentIdentityUsesCanonicalWantedInventory(t *testing.T) {
 		if expected[index].path != reversed.Files[index].TorrentPath || expected[index].length != reversed.Files[index].Size {
 			t.Fatalf("expected torrent file %d = %#v, inventory = %#v", index, expected[index], reversed.Files[index])
 		}
+	}
+}
+
+func TestSubmissionContentInventoryPreservesFirstSelectedAlias(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	sourceDir := filepath.Join(root, "episode")
+	aliasDir := filepath.Join(root, "selected")
+	source := filepath.Join(sourceDir, "video.mkv")
+	alias := filepath.Join(aliasDir, "video.mkv")
+	writeSubmissionIdentityFile(t, source, "synthetic media")
+	if runtime.GOOS == "windows" {
+		output, err := exec.CommandContext(t.Context(), "cmd.exe", "/d", "/c", "mklink", "/J", aliasDir, sourceDir).CombinedOutput()
+		if err != nil {
+			t.Skipf("junction creation is unavailable: %v: %s", err, output)
+		}
+	} else if err := os.Symlink(sourceDir, aliasDir); err != nil {
+		t.Skipf("symlink creation is unavailable: %v", err)
+	}
+
+	inventory, ok, err := ResolveSubmissionContentInventory(api.TorrentSubject{
+		SourcePath: root,
+		FileList:   []string{alias, source},
+	})
+	if err != nil || !ok || inventory.Scope != api.SubmissionContentScopeSingleFile || len(inventory.Files) != 1 {
+		t.Fatalf("selected alias inventory = %#v, %t, %v", inventory, ok, err)
+	}
+	file := inventory.Files[0]
+	if file.LocalPath != alias || file.TorrentPath != filepath.Base(alias) {
+		t.Fatalf("selected alias was changed: %#v", file)
 	}
 }
 
@@ -112,6 +145,49 @@ func TestSubmissionContentIdentityFailsWithoutFreshFileVerification(t *testing.T
 	})
 	if err == nil {
 		t.Fatal("expected missing verified file to fail")
+	}
+}
+
+func TestSubmissionContentIdentityMatchesAliasesWithoutAcceptingAmbiguousEvidence(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	source := filepath.Join(root, "Example.mkv")
+	writeSubmissionIdentityFile(t, source, "content")
+	verified := verifySubmissionSource(t, source)
+	alias := filepath.Join(root, "Alias.mkv")
+	if err := os.Symlink(source, alias); err != nil {
+		if runtime.GOOS != "windows" || len(filepath.VolumeName(source)) != 2 || !filepath.IsAbs(source) {
+			t.Skipf("symlink creation is unavailable and no drive-absolute fallback applies: %v", err)
+		}
+		// The drive-letter namespace does not accept UNC paths.
+		const extendedDrivePrefix = `\\?\`
+		alias = filepath.Join(extendedDrivePrefix, source)
+	}
+	file := SubmissionContentFile{
+		LocalPath:   alias,
+		TorrentPath: filepath.Base(alias),
+		Size:        verified.Files[0].Size,
+	}
+	inventory := SubmissionContentInventory{Scope: api.SubmissionContentScopeSingleFile, Files: []SubmissionContentFile{file}}
+	identity, err := SubmissionContentIdentity(inventory, verified)
+	if err != nil || len(identity.Files) != 1 || identity.Files[0].SHA256 != verified.Files[0].SHA256 {
+		t.Fatalf("matched identity = %#v, err = %v", identity, err)
+	}
+
+	duplicateSample := verified.Files[0]
+	duplicateSample.LocalPath = alias
+	ambiguous := verified
+	ambiguous.Files = append(slices.Clone(verified.Files), duplicateSample)
+	if _, err := SubmissionContentIdentity(inventory, ambiguous); err == nil || !strings.Contains(err.Error(), "sampled source identity aliases") {
+		t.Fatalf("ambiguous sample error = %v", err)
+	}
+
+	duplicateFile := file
+	duplicateFile.LocalPath, duplicateFile.TorrentPath = source, filepath.Base(source)
+	inventory.Scope = api.SubmissionContentScopeFileSet
+	inventory.Files = append(inventory.Files, duplicateFile)
+	if _, err := SubmissionContentIdentity(inventory, verified); err == nil || !strings.Contains(err.Error(), "submitted content inventory aliases") {
+		t.Fatalf("duplicate inventory file error = %v", err)
 	}
 }
 

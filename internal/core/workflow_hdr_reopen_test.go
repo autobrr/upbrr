@@ -636,7 +636,7 @@ func TestHDRReopenRetainsAllArtifactsAndHostedLinks(t *testing.T) {
 			}
 			for _, scope := range []string{"global", "tracker:ONE"} {
 				cached, err := media.uploadImagesToTarget(t.Context(), api.UploadSubject{SourcePath: source, MediaBinding: newBinding},
-					trackers.ImageUploadTarget{Host: "onlyimage", UsageScope: scope}, images, nil, nil, false)
+					trackers.ImageUploadTarget{Host: "onlyimage", UsageScope: scope}, images, nil, nil, "test-attempt", false)
 				if err != nil || len(cached) != len(images) || len(host.images) != 0 {
 					t.Fatalf("reopen reuploaded existing analysis images: cached=%d calls=%d err=%v", len(cached), len(host.images), err)
 				}

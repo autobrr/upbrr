@@ -22,7 +22,7 @@ API keys are secrets and appear as `[REDACTED]` after saving.
 
 :::note Compatibility fields
 
-Legacy Emby paths are retained for configuration compatibility and are not exposed in Settings.
+Legacy Emby movie and TV directory settings are ignored when loading older configurations and are not exported.
 
 :::
 

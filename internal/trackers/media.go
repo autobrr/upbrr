@@ -19,10 +19,23 @@ import (
 // Legacy subjects retain release-temp lookup compatibility; missing legacy
 // selections and artifacts return empty without error.
 func ReadBDInfo(dbPath string, meta api.UploadSubject) (string, error) {
+	return readBDInfo(dbPath, meta, false)
+}
+
+// ReadBDInfoForDescription returns the first disc's reports for an inline
+// description block. The generated description section owns later discs.
+func ReadBDInfoForDescription(dbPath string, meta api.UploadSubject) (string, error) {
+	return readBDInfo(dbPath, meta, true)
+}
+
+func readBDInfo(dbPath string, meta api.UploadSubject, firstDiscOnly bool) (string, error) {
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") && len(meta.Disc.Items) > 0 {
 		expected, ready := bdInfoCoverage(meta.Disc)
 		if expected == 0 || ready != expected || !bdInfoDiscCoverage(meta.Disc) {
 			return "", errors.New("trackers: incomplete prepared BDInfo evidence")
+		}
+		if firstDiscOnly {
+			meta.Disc.Items = meta.Disc.Items[:1]
 		}
 		return strings.TrimSpace(meta.Disc.AggregateSummary()), nil
 	}
@@ -104,6 +117,16 @@ func ReadBDinfoOrMediaInfo(dbPath string, meta api.UploadSubject) string {
 		return metautil.FirstNonEmptyTrimmed(ReadDVDVOBMediaInfo(meta), readOptionalTextFile(meta.MediaInfoTextPath))
 	}
 	return readOptionalTextFile(meta.MediaInfoTextPath)
+}
+
+// ReadMediaInfoForDescription keeps later Blu-ray reports out of the inline
+// technical section without changing the evidence sent in separate upload fields.
+func ReadMediaInfoForDescription(dbPath string, meta api.UploadSubject) string {
+	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
+		text, _ := ReadBDInfoForDescription(dbPath, meta)
+		return text
+	}
+	return ReadBDinfoOrMediaInfo(dbPath, meta)
 }
 
 func bdInfoCoverage(facts api.DiscFacts) (int, int) {

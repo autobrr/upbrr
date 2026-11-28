@@ -21,6 +21,8 @@ Use **Settings → Description** to control shared description builders. Tracker
 
 ## Text blocks
 
+Generated Blu-ray pack descriptions put each additional disc's BDInfo just above the normal screenshot section where the destination renders one. Each report uses a spoiler and code block by default, with markup adapted to the destination. Destinations with their own per-disc galleries pair each report with its corresponding screenshots.
+
 | Field                                | Default         | Effect                                                                                                                                                                              |
 | ------------------------------------ | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Include episode overview**         | Off             | Adds episode overview text to the generated description where supported when available.                                                                                             |
@@ -41,7 +43,7 @@ Imported comparison blocks remain in the description rather than becoming ordina
 
 :::note Compatibility fields
 
-Legacy pack layout and description limit values are retained for configuration compatibility and are not exposed in Settings.
+Legacy pack layout and description limit settings in older configurations are ignored and are not exported. This does not change **Concurrent capture processes** under **Screenshots**.
 
 :::
 

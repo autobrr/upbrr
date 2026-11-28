@@ -30,6 +30,7 @@ import (
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -245,14 +246,8 @@ func TestWorkflowMediaRestoreCompatibleWithoutReuseCapabilityReturnsNoMedia(t *t
 func TestWorkflowMediaModuleKeepsReusableMediaCapabilityOutsideRepositoryView(t *testing.T) {
 	t.Parallel()
 
-	repository, err := db.Open(filepath.Join(t.TempDir(), "workflow-media.sqlite"))
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	t.Cleanup(func() { _ = repository.Close() })
-	if err := repository.Migrate(); err != nil {
-		t.Fatalf("migrate repository: %v", err)
-	}
+	dbPath := filepath.Join(t.TempDir(), "workflow-media.sqlite")
+	repository := dbfixture.OpenMigrated(t, dbPath)
 	capabilities := api.RepositoryCapabilitiesFrom(repository)
 	module := newMediaModule(
 		config.Config{},
@@ -428,14 +423,8 @@ func TestWorkflowMediaRestoreCompatibleRebindsRetainedSnapshotWithoutCacheLookup
 	if err := os.WriteFile(sourcePath, []byte("verified source bytes"), 0o600); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
-	repository, err := db.Open(filepath.Join(t.TempDir(), "workflow-media.sqlite"))
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	t.Cleanup(func() { _ = repository.Close() })
-	if err := repository.Migrate(); err != nil {
-		t.Fatalf("migrate repository: %v", err)
-	}
+	dbPath := filepath.Join(t.TempDir(), "workflow-media.sqlite")
+	repository := dbfixture.OpenMigrated(t, dbPath)
 	prepared, err := preparedrelease.New(repository, workflowMediaIdentityResolver{}, workflowMediaCollector{})
 	if err != nil {
 		t.Fatalf("create prepared release module: %v", err)
@@ -1072,14 +1061,7 @@ func TestWorkflowMediaRestoreCompatiblePersistsDistinctPathsForEqualBytes(t *tes
 	ctx := t.Context()
 	baseDir := t.TempDir()
 	dbPath := filepath.Join(baseDir, "workflow.db")
-	repository, err := db.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	t.Cleanup(func() { _ = repository.Close() })
-	if err := repository.Migrate(); err != nil {
-		t.Fatalf("migrate repository: %v", err)
-	}
+	repository := dbfixture.OpenMigrated(t, dbPath)
 	firstSource := filepath.Join(baseDir, "first", "Example.Release.mkv")
 	secondSource := filepath.Join(baseDir, "second", "Example.Release.mkv")
 	for _, sourcePath := range []string{firstSource, secondSource} {
@@ -1345,14 +1327,7 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 		t.Fatalf("write source: %v", err)
 	}
 	dbPath := filepath.Join(t.TempDir(), "workflow.db")
-	repository, err := db.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	t.Cleanup(func() { _ = repository.Close() })
-	if err := repository.Migrate(); err != nil {
-		t.Fatalf("migrate repository: %v", err)
-	}
+	repository := dbfixture.OpenMigrated(t, dbPath)
 	prepared, err := preparedrelease.New(repository, workflowMediaIdentityResolver{}, workflowMediaCollector{})
 	if err != nil {
 		t.Fatalf("create prepared release module: %v", err)
@@ -1916,14 +1891,7 @@ func TestWorkflowMediaAttachDefersReusableMediaPersistenceAndPreservesDuplicateA
 		t.Fatalf("write source: %v", err)
 	}
 	dbPath := filepath.Join(baseDir, "workflow.db")
-	repository, err := db.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	t.Cleanup(func() { _ = repository.Close() })
-	if err := repository.Migrate(); err != nil {
-		t.Fatalf("migrate repository: %v", err)
-	}
+	repository := dbfixture.OpenMigrated(t, dbPath)
 	prepared, err := preparedrelease.New(repository, workflowMediaIdentityResolver{}, workflowMediaCollector{})
 	if err != nil {
 		t.Fatalf("create prepared release module: %v", err)
@@ -2398,6 +2366,9 @@ func (f *workflowScreenshotFake) Capture(
 		if selection.DiscID != "" {
 			name = fmt.Sprintf("%s-screen-%d.png", selection.DiscID, selection.Index)
 		}
+		if subject.PackMemberID != "" {
+			name = fmt.Sprintf("%s-screen-%d.png", subject.PackMemberID, selection.Index)
+		}
 		images[index] = api.ScreenshotImage{
 			DiscID:           selection.DiscID,
 			DiscName:         discNames[selection.DiscID],
@@ -2465,6 +2436,95 @@ func TestWorkflowMediaBuilderKeepsAutomaticSuggestionsForOmittedDiscs(t *testing
 	}
 }
 
+func TestWorkflowMediaPlansAndCapturesConfiguredPrimaryAndFixedExtras(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	ids := []string{"first", "second", "third"}
+	subject := api.ScreenshotSubject{SourcePath: root}
+	for _, id := range ids {
+		subject.Discs = append(subject.Discs, api.ScreenshotDiscSubject{ID: id})
+	}
+	screenshots := &workflowScreenshotFake{
+		root: root,
+		planFor: func(subject api.ScreenshotSubject, count int) api.ScreenshotPlan {
+			if subject.AdditionalDiscCount != 2 || count != 3 {
+				t.Fatalf("request changed configured primary or fixed extras: %d+%d", count, subject.AdditionalDiscCount)
+			}
+			var plan api.ScreenshotPlan
+			for index, id := range ids {
+				target := count
+				if index > 0 {
+					target = subject.AdditionalDiscCount
+				}
+				disc := api.ScreenshotDiscPlan{DiscID: id}
+				for frame := range target {
+					disc.SuggestedSelections = append(disc.SuggestedSelections, api.ScreenshotSelection{
+						DiscID: id,
+						Index:  frame,
+					})
+				}
+				plan.SuggestedSelections = append(plan.SuggestedSelections, disc.SuggestedSelections...)
+				plan.Discs = append(plan.Discs, disc)
+			}
+			return plan
+		},
+	}
+	builder := workflowMediaBuilder{resolver: workflowMediaResolverFake{screenshotSubject: &subject}, screenshots: screenshots}
+	projections := api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+		TrackerID: "PTP",
+		Artifacts: api.TrackerArtifactRequirements{
+			ScreenshotCount: 3,
+			DiscScreenshots: &api.DiscScreenshotRequirement{DiscIDs: ids, AdditionalCount: 2},
+		},
+	}}}
+	release := api.ReleaseRef{SourcePath: root, Generation: 1}
+	plan, err := builder.Plan(t.Context(), release, projections, time.Now())
+	if err != nil || len(plan.SuggestedSelections) != 7 {
+		t.Fatalf("media plan: %+v, %v", plan, err)
+	}
+	// The web client supplies the total selected frame count; do not interpret
+	// that total as a new primary-disc count. An extra manual frame on another
+	// disc also must not be captured.
+	selected := slices.Clone(plan.SuggestedSelections)
+	selected = append(selected, api.ScreenshotSelection{DiscID: "third", Index: 7})
+	instructions := api.MediaCaptureInstructions{
+		Purpose:         api.ScreenshotPurposeFinal,
+		ScreenshotCount: len(selected),
+		Selections:      selected,
+	}
+	media, _, err := builder.Build(t.Context(), release, projections, instructions, time.Now())
+	if err != nil || media.Status != api.StageStatusCompleted || len(media.Artifacts) != 7 || len(screenshots.selections) != 7 {
+		t.Fatalf("captured selections: %+v; media: %+v; error: %v", screenshots.selections, media, err)
+	}
+	counts := make(map[string]int)
+	for _, artifact := range media.Artifacts {
+		counts[artifact.DiscID]++
+		if artifact.AdditionalDisc != (artifact.DiscID != "first") {
+			t.Fatalf("screenshot has the wrong tracker scope: %+v", artifact)
+		}
+	}
+	if counts["first"] != 3 || counts["second"] != 2 || counts["third"] != 2 {
+		t.Fatalf("actual capture counts = %+v", counts)
+	}
+	t.Run("preview keeps ordinary distribution", func(t *testing.T) {
+		screenshots.planFor = func(subject api.ScreenshotSubject, count int) api.ScreenshotPlan {
+			if subject.AdditionalDiscCount != 0 || count != 3 {
+				t.Fatalf("preview changed ordinary screenshot sizing: %d+%d", count, subject.AdditionalDiscCount)
+			}
+			return api.ScreenshotPlan{SuggestedSelections: []api.ScreenshotSelection{
+				{DiscID: "first", Index: 1},
+				{DiscID: "second", Index: 1},
+				{DiscID: "third", Index: 1},
+			}}
+		}
+		preview, _, err := builder.Build(t.Context(), release, projections,
+			api.MediaCaptureInstructions{Purpose: api.ScreenshotPurposePreview, ScreenshotCount: 3}, time.Now())
+		if err != nil || preview.Status != api.StageStatusCompleted || len(preview.Artifacts) != 3 {
+			t.Fatalf("preview media = %+v, err = %v", preview, err)
+		}
+	})
+}
+
 func TestMergeManualSelectionsPreservesUnreplacedExistingScreenshots(t *testing.T) {
 	t.Parallel()
 
@@ -2501,7 +2561,7 @@ func TestMergeManualSelectionsPreservesUnreplacedExistingScreenshots(t *testing.
 		},
 	}
 
-	selections, existing, err := mergeManualSelectionsWithDiscPlan(manual, plan)
+	selections, existing, err := mergeManualSelectionsWithDiscPlan(manual, plan, 0)
 	if err != nil {
 		t.Fatalf("merge selections: %v", err)
 	}
@@ -3861,14 +3921,12 @@ func TestWorkflowMediaRecordsImportedHostedImagesInReusableRepository(t *testing
 	t.Parallel()
 	root := t.TempDir()
 	dbPath := filepath.Join(root, "workflow.sqlite")
+	dbfixture.WriteMigrated(t, dbPath)
 	repository, err := db.Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = repository.Close() })
-	if err := repository.Migrate(); err != nil {
-		t.Fatal(err)
-	}
 	imagePath := filepath.Join(root, "imported.png")
 	if err := os.WriteFile(imagePath, []byte("saved screenshot"), 0o600); err != nil {
 		t.Fatal(err)
@@ -4040,14 +4098,8 @@ func TestWorkflowMediaRecordsImportedHostedImagesInReusableRepository(t *testing
 func TestWorkflowMediaRestoreKeepsEqualContentImageURLsDistinct(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	repository, err := db.Open(filepath.Join(root, "workflow.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repository.Close() })
-	if err := repository.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	dbPath := filepath.Join(root, "workflow.sqlite")
+	repository := dbfixture.OpenMigrated(t, dbPath)
 	paths := []string{filepath.Join(root, "first.png"), filepath.Join(root, "second.png")}
 	for _, pathValue := range paths {
 		if err := os.WriteFile(pathValue, []byte("same screenshot"), 0o600); err != nil {
@@ -4181,6 +4233,47 @@ func TestWorkflowMediaRestoreKeepsEqualContentImageURLsDistinct(t *testing.T) {
 	}
 	if !seen[urls[0]] || !seen[urls[1]] || !seen[plan.TrackerImageLinks[0].URL] {
 		t.Fatalf("removed source image URLs = %#v", seen)
+	}
+}
+
+func TestWorkflowMediaIncrementalCaptureEvaluatesCombinedDiscCoverage(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	release := api.ReleaseRef{SourcePath: root, Generation: 1}
+	projections := api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+		TrackerID: "PTP",
+		Artifacts: api.TrackerArtifactRequirements{
+			ScreenshotCount: 1,
+			DiscScreenshots: &api.DiscScreenshotRequirement{DiscIDs: []string{"first", "second"}, AdditionalCount: 2},
+		},
+	}}}
+	screenshots := &workflowScreenshotFake{root: root}
+	builder := workflowMediaBuilder{resolver: workflowMediaResolverFake{}, screenshots: screenshots}
+	builderInput := api.MediaCaptureInstructions{Purpose: api.ScreenshotPurposeFinal}
+	screenshots.plan = &api.ScreenshotPlan{SuggestedSelections: []api.ScreenshotSelection{
+		{DiscID: "second", Index: 1},
+		{DiscID: "second", Index: 2},
+	}}
+	existing, private, err := builder.Build(t.Context(), release, projections, builderInput, time.Now())
+	if err != nil || existing.Status != api.StageStatusBlocked {
+		t.Fatalf("second disc without primary = %+v, err = %v", existing, err)
+	}
+	screenshots.plan.SuggestedSelections = []api.ScreenshotSelection{{DiscID: "first", Index: 1}}
+	builderInput.Selections = slices.Clone(screenshots.plan.SuggestedSelections)
+	combined, _, err := builder.BuildIncremental(t.Context(), release, projections, builderInput, &existing, private, time.Now())
+	if err != nil || combined.Status != api.StageStatusCompleted || len(combined.RequiredActions) != 0 || len(combined.Artifacts) != 3 {
+		t.Fatalf("retained and new disc frames = %+v, err = %v", combined, err)
+	}
+	projections.Projections[0].Artifacts.ScreenshotCount = 2
+	incomplete, _, err := builder.BuildIncremental(t.Context(), release, projections, builderInput, &existing, private, time.Now())
+	if err != nil || incomplete.Status != api.StageStatusBlocked || len(incomplete.RequiredActions) != 1 {
+		t.Fatalf("incomplete combined coverage = %+v, err = %v", incomplete, err)
+	}
+	screenshots.err = errors.New("capture failed")
+	failed, _, err := builder.BuildIncremental(t.Context(), release, projections, builderInput, &existing, private, time.Now())
+	if err != nil || failed.Status != api.StageStatusFailed || len(failed.Failures) == 0 {
+		t.Fatalf("capture failure was not retained: %+v, err = %v", failed, err)
 	}
 }
 
@@ -4750,14 +4843,8 @@ func TestWorkflowImageCancellationPreservesKnownEffects(t *testing.T) {
 			if err := os.WriteFile(source, []byte("source"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			repository, err := db.Open(filepath.Join(t.TempDir(), "workflow.db"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = repository.Close() })
-			if err := repository.Migrate(); err != nil {
-				t.Fatal(err)
-			}
+			dbPath := filepath.Join(t.TempDir(), "workflow.db")
+			repository := dbfixture.OpenMigrated(t, dbPath)
 			prepared, err := preparedrelease.New(repository, workflowMediaIdentityResolver{}, workflowMediaCollector{})
 			if err != nil {
 				t.Fatal(err)

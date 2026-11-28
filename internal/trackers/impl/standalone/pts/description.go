@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -19,12 +20,16 @@ func buildDescription(meta api.UploadSubject, assets trackers.DescriptionAssets)
 		return strings.TrimSpace(assets.Description)
 	}
 	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
+	baseDescription, discReports := description.SplitLeadingDiscReports(assets.Description)
 	parts := make([]string, 0, 4)
 	if info := commonhttp.ReadOptionalFile(strings.TrimSpace(meta.MediaInfoTextPath)); strings.TrimSpace(info) != "" {
 		parts = append(parts, info)
 	}
-	if base := strings.TrimSpace(assets.Description); base != "" {
+	if base := strings.TrimSpace(baseDescription); base != "" {
 		parts = append(parts, sanitizeDescription(base))
+	}
+	if discReports != "" {
+		parts = append(parts, sanitizeDescription(discReports))
 	}
 	if shots := screenshotBlock(assets.Screenshots); shots != "" {
 		parts = append(parts, shots)

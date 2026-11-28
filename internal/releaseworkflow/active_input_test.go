@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -46,14 +48,9 @@ func persistActiveInputTestRelease(ctx context.Context, repo *db.SQLiteRepositor
 }
 
 func TestInputSourcePathPreservesVerifiedCasingAndRejectsDetachedAuthority(t *testing.T) {
-	repo, err := db.Open(filepath.Join(t.TempDir(), "source-path.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "source-path.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	source := filepath.Join(t.TempDir(), "Synthetic.HDR.2026.mkv")
 	canonical := source
 	if runtime.GOOS == "windows" {
@@ -100,14 +97,8 @@ func TestInputSourcePathPreservesVerifiedCasingAndRejectsDetachedAuthority(t *te
 
 func TestActiveInputReviewRemainsBoundToVerifiedSourceVersion(t *testing.T) {
 	t.Parallel()
-	repo, err := db.Open(filepath.Join(t.TempDir(), "review.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	dbPath := filepath.Join(t.TempDir(), "review.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	persistent, err := NewPersistentRepository(repo)
 	if err != nil {
 		t.Fatal(err)
@@ -169,14 +160,8 @@ func TestActiveInputReviewRemainsBoundToVerifiedSourceVersion(t *testing.T) {
 
 func TestActiveInputOpenRefreshRollbackAndOwnerIsolation(t *testing.T) {
 	t.Parallel()
-	repo, err := db.Open(filepath.Join(t.TempDir(), "input.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	dbPath := filepath.Join(t.TempDir(), "input.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	persistent, err := NewPersistentRepository(repo)
 	if err != nil {
 		t.Fatal(err)
@@ -255,11 +240,111 @@ func TestActiveInputOpenRefreshRollbackAndOwnerIsolation(t *testing.T) {
 	}
 }
 
+func TestMetadataCorrectionsReuseOnlyMatchingActiveSourceInventory(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "input.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
+	persistent, err := NewPersistentRepository(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifications := 0
+	module, err := New(persistent, NewMemoryPrivateResourceStore(), ReleasePreparerFunc{}, WithActiveInputs(repo,
+		func(ctx context.Context, input api.PrepareInput) (api.InputRecord, error) {
+			verifications++
+			verified, err := preparedrelease.VerifyInputSource(ctx, input)
+			if err != nil {
+				return api.InputRecord{}, fmt.Errorf("verify test source: %w", err)
+			}
+			manifest, err := json.Marshal(verified)
+			if err != nil {
+				return api.InputRecord{}, fmt.Errorf("encode test source: %w", err)
+			}
+			return api.InputRecord{
+				CanonicalPath: preparedrelease.CanonicalSourceKey(verified.Manifest.SourcePath),
+				SourceVersion: verified.Identity.Digest,
+				Manifest:      manifest,
+			}, nil
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = module.Shutdown(context.Background()) })
+
+	source := filepath.Join(t.TempDir(), "Example.mkv")
+	if err := os.WriteFile(source, []byte("synthetic content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := OpenInputRequest{Input: api.PrepareInput{SourcePath: source}, IdempotencyKey: "open"}
+	opened, err := module.OpenInput(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request.ExpectedRevision, request.IdempotencyKey = opened.Revision, "correct"
+	request.CorrectionPatch = &api.ReleaseCorrectionPatch{}
+	request.CorrectionPatch.Values.Metadata.OriginalLanguage = new("fr")
+	request.ReuseVerifiedSource = true
+	var verificationCompleted bool
+	progressCtx := api.WithPreparationProgressReporter(t.Context(), func(update api.PreparationProgressUpdate) {
+		if update.Phase == api.PreparationPhaseSourceInspection {
+			verificationCompleted = update.Status == api.PreparationProgressCompleted
+		}
+	})
+	corrected, err := module.OpenInput(progressCtx, testOwnerID, request)
+	if err != nil || corrected.SourceVersion != opened.SourceVersion || corrected.WorkflowID != opened.WorkflowID || verifications != 1 {
+		t.Fatalf("same source correction: verifications=%d version=%q err=%v", verifications, corrected.SourceVersion, err)
+	}
+	if !verificationCompleted {
+		t.Fatal("reusing verification did not finish source inspection progress")
+	}
+
+	if err := os.WriteFile(source, []byte("different synthetic content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request.ExpectedRevision, request.IdempotencyKey = corrected.Revision, "correct-changed-source"
+	changed, err := module.OpenInput(t.Context(), testOwnerID, request)
+	if err != nil || changed.SourceVersion == corrected.SourceVersion || verifications != 2 {
+		t.Fatalf("changed source correction: verifications=%d version=%q err=%v", verifications, changed.SourceVersion, err)
+	}
+
+	request.ExpectedRevision, request.IdempotencyKey = changed.Revision, "explicit-reopen"
+	request.ReuseVerifiedSource = false
+	reopened, err := module.OpenInput(t.Context(), testOwnerID, request)
+	if err != nil || reopened.SourceVersion != changed.SourceVersion || verifications != 3 {
+		t.Fatalf("explicit reopen with correction: verifications=%d version=%q err=%v", verifications, reopened.SourceVersion, err)
+	}
+
+	request.ExpectedRevision, request.IdempotencyKey = reopened.Revision, "confirm-correction"
+	request.ReuseVerifiedSource = true
+	request.CorrectionPatch = &api.ReleaseCorrectionPatch{
+		ConfirmFields: []api.CorrectionFieldRef{{Field: api.CorrectionFieldMetadataAlternateTitle}},
+	}
+	confirmed, err := module.OpenInput(t.Context(), testOwnerID, request)
+	if err != nil || confirmed.SourceVersion != reopened.SourceVersion || verifications != 4 {
+		t.Fatalf("confirmation with reuse requested: verifications=%d version=%q err=%v", verifications, confirmed.SourceVersion, err)
+	}
+
+	request.ExpectedRevision, request.IdempotencyKey = confirmed.Revision, "invalid-correction"
+	request.CorrectionPatch = &api.ReleaseCorrectionPatch{}
+	request.CorrectionPatch.Values.Metadata.OriginalLanguage = new("it")
+	request.Input.Search.InfoHash = "invalid"
+	if _, err := module.OpenInput(t.Context(), testOwnerID, request); err == nil {
+		t.Fatal("correction with invalid preparation input was accepted")
+	}
+	retained, err := module.ActiveInput(t.Context(), testOwnerID)
+	if err != nil || retained.State != api.ActiveInputActive || retained.SourceVersion != confirmed.SourceVersion ||
+		retained.IdempotencyKey != confirmed.IdempotencyKey {
+		t.Fatalf("invalid request changed the active input: state=%s err=%v", retained.State, err)
+	}
+}
+
 func TestRetainActiveInputRequiresUnchangedCurrentAuthority(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{
 		"unchanged", "changed source", "changed facts", "changed corrections", "correction patch", "unchanged correction patch", "correction confirmation", "force", "provider refresh",
 		"provider load", "client recheck", "HDR capture", "BDMV rescan", "expired duplicates", "missing evidence", "stale generation", "successful upload",
+		"pending anime lookup", "kept MAL with pending anime lookup", "stored MAL selection", "stored MAL clear", "pending logo lookup",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -317,6 +402,33 @@ func TestRetainActiveInputRequiresUnchangedCurrentAuthority(t *testing.T) {
 				request.Input.ExternalFreshness = api.ExternalFreshnessLoad
 			case "client recheck":
 				request.Input.Controls.ForceRecheck = new(true)
+			case "pending anime lookup", "kept MAL with pending anime lookup", "stored MAL selection", "stored MAL clear", "pending logo lookup":
+				request.CorrectionPatch = &api.ReleaseCorrectionPatch{}
+				preparer.CorrectionsUnchangedFunc = func(context.Context, api.PrepareInput, api.ReleaseCorrectionUpdate, uint64) (bool, error) {
+					return true, nil
+				}
+				module.preparer = preparer
+				current := state.Releases[state.Workflow.Release.ID]
+				current.Release.ProviderMetadata.TMDB = &api.TMDBMetadata{
+					Anime:              true,
+					AnimeSeason:        "S01",
+					AnimeLookupPending: name != "pending logo lookup",
+					LogoLookupPending:  name == "pending logo lookup",
+				}
+				if name == "kept MAL with pending anime lookup" {
+					current.Release.Identity.MALID = 444
+					current.Release.Identity.Provenance.MAL = api.IdentityProvenanceRetained
+				}
+				switch name {
+				case "stored MAL selection":
+					current.Release.Identity.MALID = 444
+					current.Release.Identity.Overrides.MAL = api.OverrideStateValue
+					current.Release.ProviderMetadata.TMDB = &api.TMDBMetadata{Anime: true}
+				case "stored MAL clear":
+					current.Release.Identity.Overrides.MAL = api.OverrideStateClear
+					current.Release.ProviderMetadata.TMDB = &api.TMDBMetadata{Anime: true}
+				}
+				state.Releases[current.ID] = current
 			case "HDR capture":
 				request.Input.Controls.CaptureHDRMetadata = true
 			case "BDMV rescan":
@@ -334,7 +446,8 @@ func TestRetainActiveInputRequiresUnchangedCurrentAuthority(t *testing.T) {
 				state.Workflow.SubmissionExclusions = []api.SubmissionExclusion{{TrackerID: "ALPHA", Reason: "already_uploaded"}}
 			}
 			retained, err := module.canRetainActiveInput(t.Context(), testOwnerID, state, prior, record, request)
-			want := name == "unchanged" || name == "successful upload" || name == "unchanged correction patch"
+			want := name == "unchanged" || name == "successful upload" || name == "unchanged correction patch" ||
+				name == "kept MAL with pending anime lookup" || name == "stored MAL selection" || name == "stored MAL clear"
 			if err != nil || retained != want {
 				t.Fatalf("retained=%t want=%t err=%v", retained, want, err)
 			}
@@ -344,14 +457,8 @@ func TestRetainActiveInputRequiresUnchangedCurrentAuthority(t *testing.T) {
 
 func TestReopenVerifiedInputRestoresAudioAnalysis(t *testing.T) {
 	t.Parallel()
-	repo, err := db.Open(filepath.Join(t.TempDir(), "input.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	dbPath := filepath.Join(t.TempDir(), "input.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	persistent, err := NewPersistentRepository(repo)
 	if err != nil {
 		t.Fatal(err)
@@ -593,14 +700,8 @@ func TestReopenVerifiedInputRestoresAudioAnalysis(t *testing.T) {
 
 func TestContinueInitialOpenLoadsAndSameInputApplies(t *testing.T) {
 	t.Parallel()
-	repo, err := db.Open(filepath.Join(t.TempDir(), "input.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	dbPath := filepath.Join(t.TempDir(), "input.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	persistent, err := NewPersistentRepository(repo)
 	if err != nil {
 		t.Fatal(err)
@@ -960,14 +1061,8 @@ func TestClosedInputWorkflowSourceAssociatesTerminalHistoryPurge(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			repo, err := db.Open(filepath.Join(t.TempDir(), "history.sqlite"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = repo.Close() })
-			if err := repo.Migrate(); err != nil {
-				t.Fatal(err)
-			}
+			dbPath := filepath.Join(t.TempDir(), "history.sqlite")
+			repo := dbfixture.OpenMigrated(t, dbPath)
 			persistent, err := NewPersistentRepository(repo)
 			if err != nil {
 				t.Fatal(err)
@@ -1056,14 +1151,8 @@ func TestRefreshCompletedInputPreservesRetryAuthorityAndConfirmedExclusions(t *t
 	for _, name := range []string{"successful upload", "all excluded", "failed upload", "partial client injection", "blocked", "failed workflow"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			repo, err := db.OpenContext(t.Context(), filepath.Join(t.TempDir(), "terminal-refresh.sqlite"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = repo.Close() })
-			if err := repo.MigrateContext(t.Context()); err != nil {
-				t.Fatal(err)
-			}
+			dbPath := filepath.Join(t.TempDir(), "terminal-refresh.sqlite")
+			repo := dbfixture.OpenMigrated(t, dbPath)
 			persistent, err := NewPersistentRepository(repo)
 			if err != nil {
 				t.Fatal(err)

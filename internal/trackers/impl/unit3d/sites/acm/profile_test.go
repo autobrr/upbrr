@@ -259,7 +259,7 @@ func TestACMStructuredPolicyPreservesManualAndOpaqueNames(t *testing.T) {
 
 func TestProfileParity(t *testing.T) {
 	profile := Profile().Site
-	if got := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy(); got.ID != "unit3d/acm/v5" || got.Structured == nil || got.Resolver != nil {
+	if got := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy(); got.ID != "unit3d/acm/v6" || got.Structured == nil || got.Resolver != nil {
 		t.Fatalf("ACM policy = %#v", got)
 	}
 	if got := profile.ResolveTypeID(api.UploadSubject{
@@ -432,5 +432,72 @@ func TestACMUnknownTaxonomyRemainsStrict(t *testing.T) {
 		if failure.Disposition != api.RuleDispositionStrict {
 			t.Fatalf("unknown taxonomy is not strict: %+v", failure)
 		}
+	}
+}
+
+func TestACMOriginalTitleDistinguishesRawTitlesFromAKAMarkers(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name     string
+		metadata api.SourceScopedMetadata
+		manual   bool
+		fallback string
+		want     string
+	}{
+		{
+			name:     "raw TMDB title",
+			metadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalTitle: "AKA Echo"}},
+			want:     "AKA Echo",
+		},
+		{
+			name:     "raw IMDb title",
+			metadata: api.SourceScopedMetadata{IMDB: &api.IMDBMetadata{AKA: "AKA Echo"}},
+			want:     "AKA Echo",
+		},
+		{
+			name:   "manual title",
+			manual: true,
+			want:   "AKA Echo",
+		},
+		{
+			name:     "rendered TMDB AKA",
+			metadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{RetrievedAKA: "aKa Echo"}},
+			want:     "Echo",
+		},
+		{
+			name:     "rendered canonical AKA",
+			fallback: "AKA Echo",
+			want:     "Echo",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			generated := metadata.BuildReleaseName(api.ReleaseNameRequest{
+				Category: "MOVIE",
+				Type:     "ENCODE",
+				Title:    "Example",
+				Year:     2024,
+			}, api.NopLogger{})
+			subject := api.UploadSubject{
+				ReleaseName:      generated.Name,
+				GeneratedName:    generated.GeneratedName,
+				ProviderMetadata: test.metadata,
+				AlternateTitle:   test.fallback,
+			}
+			if test.manual {
+				subject.EffectiveMetadata.OriginalTitle = "AKA Echo"
+				subject.EffectiveMetadata.OriginalTitleProvenance = api.FactProvenanceManual
+			}
+			prepared, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{
+				Tracker: "ACM",
+				Meta:    subject,
+			}, namePolicy())
+			if failure != nil {
+				t.Fatal(failure)
+			}
+			got, err := prepared.ReviewedUploadName()
+			if want := "Example / " + test.want + " \u202A 2024 [No subs]"; err != nil || got != want {
+				t.Errorf("ACM reviewed name = %q, %v, want %q", got, err, want)
+			}
+		})
 	}
 }

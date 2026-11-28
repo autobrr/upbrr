@@ -2,18 +2,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { FieldHelp } from "./ui/field-help";
-import { settingsFieldPresentation } from "../settings/fieldPresentation";
 import { pageStyle } from "./ui/pageStyle";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import { Checkbox } from "./ui/checkbox";
-import { Select } from "./ui/select";
 import { Switch } from "./ui/switch";
 import { loggingClient } from "../api/app";
 import { subscribeWebEvent } from "../api/client";
 import type { ConfigMap, ConfigValue, FieldMeta } from "../types";
 import { cn } from "../utils/cn";
-import { settingsStyle } from "../settings/style";
 import { SettingsFieldGroups } from "../settings/FieldGroups";
 
 type LogEntry = {
@@ -31,7 +28,6 @@ type LogSettingsPanelProps = Readonly<{
     path: string[],
     meta?: FieldMeta,
   ) => ReactElement;
-  updateConfigValue: (path: string[], value: ConfigValue) => void;
   fieldMeta: Record<string, FieldMeta>;
 }>;
 
@@ -39,6 +35,7 @@ const LOG_SOFT_CAP = 1000;
 const LOG_HARD_CAP = 10000;
 
 const levelOrder = ["trace", "debug", "info", "warn", "error"];
+const runtimeLevelOptions = levelOrder.map((value) => ({ value, label: value.toUpperCase() }));
 
 const levelBadgeClass = (level: string) => {
   switch (level.toLowerCase()) {
@@ -98,7 +95,6 @@ const logEntryKey = (entry: LogEntry) =>
 export default function LogSettingsPanel({
   configData,
   renderField,
-  updateConfigValue,
   fieldMeta,
 }: LogSettingsPanelProps) {
   const [logPath, setLogPath] = useState("");
@@ -124,7 +120,13 @@ export default function LogSettingsPanel({
     !Array.isArray(loggingConfigValue)
       ? loggingConfigValue
       : {};
-  const levelValue = String(loggingConfig.Level ?? "info");
+  const savedLevel = String(loggingConfig.Level ?? "");
+  const normalizedLevel = savedLevel.trim().toLowerCase();
+  const effectiveLevel = normalizedLevel === "warning" ? "warn" : normalizedLevel || "info";
+  const knownLevel = levelOrder.includes(effectiveLevel);
+  const levelOptions = knownLevel
+    ? runtimeLevelOptions
+    : [...runtimeLevelOptions, { value: savedLevel, label: savedLevel + " (saved)" }];
 
   const filteredEntries = useMemo(() => {
     const searchTerm = search.trim().toLowerCase();
@@ -335,39 +337,11 @@ export default function LogSettingsPanel({
         <SettingsFieldGroups
           section="Logging"
           fields={["Level", "FileEnabled", "MaxTotalSizeMB", "MaxFiles"].map((key) => {
-            const meta = fieldMeta[key];
-            if (key === "Level") {
-              const { label, help } = settingsFieldPresentation.Logging.Level;
-              return [
-                key,
-                <div className={settingsStyle.field} key="Logging.Level">
-                  <span className="flex flex-wrap items-center gap-1">
-                    <label htmlFor="logging-runtime-level">{label}</label>
-                    <FieldHelp label={label!} id="logging-runtime-level-help">
-                      {help}
-                    </FieldHelp>
-                  </span>
-                  <Select
-                    id="logging-runtime-level"
-                    aria-describedby="logging-runtime-level-help"
-                    value={levelValue}
-                    onChange={(event) =>
-                      updateConfigValue(["Logging", "Level"], event.target.value)
-                    }
-                  >
-                    {!levelOrder.includes(levelValue) ? (
-                      <option value={levelValue}>{levelValue} (saved)</option>
-                    ) : null}
-                    {levelOrder.map((level) => (
-                      <option key={level} value={level}>
-                        {level.toUpperCase()}
-                      </option>
-                    ))}
-                  </Select>
-                </div>,
-              ];
-            }
-            return [key, renderField(key, loggingConfig[key], ["Logging", key], meta)];
+            const meta =
+              key === "Level" ? { ...fieldMeta[key], key, options: levelOptions } : fieldMeta[key];
+            const value =
+              key === "Level" ? (knownLevel ? effectiveLevel : savedLevel) : loggingConfig[key];
+            return [key, renderField(key, value, ["Logging", key], meta)];
           })}
         />
         <div className="grid min-w-0 gap-1 rounded-md border border-border bg-muted px-3 py-2 text-foreground">

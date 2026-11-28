@@ -116,7 +116,6 @@ export function LoggingRoute() {
         loadSettings={settings.loadSettings}
         handleSaveSettings={settings.handleSaveSettings}
         renderField={renderField}
-        updateConfigValue={settings.updateConfigValue}
         sectionFieldMeta={settings.sectionFieldMeta}
       />
     </Suspense>

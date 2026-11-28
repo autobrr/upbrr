@@ -226,11 +226,6 @@ type DescriptionSettingsConfig struct {
 	ScreensPerRow           string `yaml:"screens_per_row"`
 	EpisodeOverview         bool   `yaml:"episode_overview"`
 	TonemappedHeader        string `yaml:"tonemapped_header"`
-	MultiScreens            int    `yaml:"multiScreens"`
-	PackThumbSize           int    `yaml:"pack_thumb_size"`
-	CharLimit               int    `yaml:"charLimit"`
-	FileLimit               int    `yaml:"fileLimit"`
-	ProcessLimit            int    `yaml:"processLimit"`
 	CustomDescriptionHeader string `yaml:"custom_description_header"`
 	ScreenshotHeader        string `yaml:"screenshot_header"`
 	DiscMenuHeader          string `yaml:"disc_menu_header"`
@@ -265,8 +260,6 @@ type ArrIntegrationConfig struct {
 	RadarrAPIKey2 string `yaml:"radarr_api_key_2"`
 	RadarrURL3    string `yaml:"radarr_url_3"`
 	RadarrAPIKey3 string `yaml:"radarr_api_key_3"`
-	EmbyDir       string `yaml:"emby_dir"`
-	EmbyTVDir     string `yaml:"emby_tv_dir"`
 }
 
 // TorrentCreationConfig controls torrent construction and reuse scheduling.
