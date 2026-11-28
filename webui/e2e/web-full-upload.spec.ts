@@ -3593,7 +3593,10 @@ for (const change of ["deselect", "delete"] as const) {
           })
           .click();
         expect((await changed).ok()).toBe(true);
-        await page.getByRole("button", { name: nextPage, exact: true }).click();
+        await page
+          .getByRole("navigation", { name: "Release workflow" })
+          .getByRole("button", { name: nextPage, exact: true })
+          .click();
         if (nextPage === "Upload Images") {
           await expect(page.getByText("1 saved", { exact: true })).toBeVisible();
           await expect(page.getByRole("link", { name: removedURL, exact: true })).toHaveCount(0);
