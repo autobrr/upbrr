@@ -1649,7 +1649,7 @@ func TestEnrichTrackerDataDeprioritizesBTNWhenKeepingImages(t *testing.T) {
 				TMDBID:      513053,
 				TrackerID:   "513053",
 				Description: "desc",
-				Images:      []bbcode.Image{{RawURL: "https://img.example/a.jpg"}},
+				Images:      []bbcode.Image{{RawURL: "https://127.0.0.1/a.jpg"}},
 			},
 			"BTN": {IMDBID: 39050141, TrackerID: "2167358"},
 		},
