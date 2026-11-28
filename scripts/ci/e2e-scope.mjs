@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { execFileSync } from "node:child_process";
+import { changedPaths } from "./changed-paths.mjs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -39,11 +39,22 @@ const buildFiles = new Set([
   "scripts/sync-webui-assets.sh",
   "scripts/sync-webui-assets.ps1",
   ".github/workflows/e2e.yml",
+  ".github/actions/prepare-e2e/action.yml",
+  "scripts/ci/changed-paths.mjs",
 ]);
 
-/** Selects runtime, normal E2E, and shared build inputs; source-tree unit tests stay conservative. */
+export function isFrontendUnitTest(path) {
+  return (
+    /^webui\/src\/.*\.(test|spec)\.tsx?$/.test(path) ||
+    path === "webui/src/test/setup.ts" ||
+    path === "webui/src/test/appRequestMock.ts"
+  );
+}
+
+/** Selects the inputs to the embedded application and the normal Playwright projects. */
 export function requiresE2E(paths) {
   return paths.some((path) => {
+    if (path.endsWith("_test.go") || isFrontendUnitTest(path)) return false;
     if (/(^|\/)(AGENTS|CLAUDE|README)\.md$/.test(path)) return false;
     if (
       /^internal\/(architecturepolicy|literalpolicy|logpolicy|pathing\/policy)\//.test(
@@ -75,30 +86,6 @@ if (
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   const [base, head] = process.argv.slice(2);
-  let run = true;
-  if (base && head) {
-    try {
-      // Keep old and new rename paths, deletions, and every changed file without API pagination limits.
-      const paths = execFileSync(
-        "git",
-        [
-          "diff",
-          "--name-only",
-          "--no-renames",
-          "-z",
-          `${base}...${head}`,
-          "--",
-        ],
-        {
-          encoding: "utf8",
-        },
-      );
-      run = requiresE2E(paths.split("\0").filter(Boolean));
-    } catch {
-      console.warn(
-        "Could not read the complete PR diff; running all E2E projects.",
-      );
-    }
-  }
-  console.log(run);
+  const paths = changedPaths(base, head);
+  console.log(paths === null || requiresE2E(paths));
 }

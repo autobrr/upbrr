@@ -1,0 +1,128 @@
+name: Prepare embedded E2E application
+description: Restore build tools and caches, build the embedded application and install Chromium.
+inputs:
+  seed:
+    description: Save cache misses from a trusted main run
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Setup Go
+      id: go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: go.mod
+        cache: false
+
+    - name: Locate Go caches
+      id: paths
+      shell: bash
+      run: |
+        echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+        echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore shared Go modules
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ steps.paths.outputs.modules }}
+        key: go-modules-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}
+        restore-keys: |
+          go-modules-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-
+
+    - name: Restore E2E compilation cache
+      id: build-cache
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ steps.paths.outputs.build }}
+        key: go-build-e2e-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+        restore-keys: |
+          go-build-e2e-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}-
+
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v6
+      with:
+        package_json_file: webui/package.json
+
+    - name: Setup Node
+      uses: actions/setup-node@v6
+      with:
+        node-version: 24
+        cache: pnpm
+        cache-dependency-path: webui/pnpm-lock.yaml
+
+    - name: Cache FFmpeg 9.0.2
+      id: ffmpeg-cache
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ runner.temp }}/ffmpeg-9.0.2
+        key: ffmpeg-linux-x64-n9.0.2-39-g7adfbe40dc
+
+    - name: Install pinned FFmpeg 9.0.2
+      if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        # shortcut: month-end archives last two years; refresh this pin before November 2028.
+        # Versioned upstream build and checksum keep all shards reproducible.
+        curl --fail --location --retry 3 \
+          'https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/download/autobuild-2026-10-31-12-59/ffmpeg-n9.0.2-39-g7adfbe40dc-linux64-gpl-9.0.tar.xz' \
+          --output "$RUNNER_TEMP/ffmpeg.tar.xz"
+        echo "73e29a56974ae5a651133a04584c7483b21afe941e17dc91d79814a758b608d3  $RUNNER_TEMP/ffmpeg.tar.xz" | sha256sum --check
+        mkdir -p "$RUNNER_TEMP/ffmpeg-9.0.2"
+        tar -xJf "$RUNNER_TEMP/ffmpeg.tar.xz" --strip-components=1 -C "$RUNNER_TEMP/ffmpeg-9.0.2"
+
+    - name: Select FFmpeg 9.0.2
+      shell: bash
+      run: echo "$RUNNER_TEMP/ffmpeg-9.0.2/bin" >> "$GITHUB_PATH"
+
+    - name: Verify E2E prerequisites and runner capacity
+      shell: bash
+      run: |
+        ffmpeg_version="$(ffmpeg -version)"
+        printf '%s\n' "$ffmpeg_version"
+        [[ "$ffmpeg_version" == 'ffmpeg version n9.0.2-'* ]]
+        printf 'Runner capacity: %s logical CPUs\n' "$(nproc)"
+        free --human
+
+    - name: Build embedded E2E application
+      shell: bash
+      run: make e2e-build
+
+    - name: Locate Playwright browser version
+      id: playwright
+      working-directory: webui
+      shell: bash
+      run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+    - name: Restore Playwright browser
+      id: browser-cache
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-chromium-v1-ubuntu-24.04-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
+
+    # Playwright reuses installed browser revisions and checks OS dependencies.
+    - name: Install Playwright browser
+      working-directory: webui
+      shell: bash
+      run: pnpm exec playwright install --with-deps --only-shell chromium
+
+    - name: Save E2E compilation cache
+      if: inputs.seed == 'true' && steps.build-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ steps.paths.outputs.build }}
+        key: ${{ steps.build-cache.outputs.cache-primary-key }}
+
+    - name: Save pinned FFmpeg cache
+      if: inputs.seed == 'true' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ runner.temp }}/ffmpeg-9.0.2
+        key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
+
+    - name: Save Playwright browser cache
+      if: inputs.seed == 'true' && steps.browser-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ steps.browser-cache.outputs.cache-primary-key }}

@@ -15,7 +15,7 @@ jobs:
   golangci:
     name: golangci-lint
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -32,30 +32,22 @@ jobs:
           version: v2.14.0
           args: --timeout=5m
 
-  policies:
-    name: Go policy checks
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-
       - name: Run architecture ownership policy
+        if: ${{ !cancelled() }}
         run: go run ./cmd/architecturepolicy
 
       - name: Run path portability policy
+        if: ${{ !cancelled() }}
         run: go run ./cmd/pathpolicy
 
       - name: Run composite literal layout policy
+        if: ${{ !cancelled() }}
         run: go run ./cmd/literalpolicy
 
       - name: Validate release workflow contracts
+        if: ${{ !cancelled() }}
         run: go run ./cmd/workflowcontractgen -check
 
       - name: Validate Input correction choices
+        if: ${{ !cancelled() }}
         run: go run ./cmd/correctionchoicesgen -check

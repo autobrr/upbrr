@@ -87,6 +87,6 @@ Never commit Playwright traces, videos, screenshots, reports, temp DBs, or `dist
 
 [`.github/workflows/e2e.yml`](../../.github/workflows/e2e.yml) owns runner versions, shards, timeouts and artifacts. Preserve these contracts when changing it:
 
-- The always-present gate tests `scripts/ci/e2e-scope.mjs` and reads the full base-to-head merge-base diff. Unrelated/docs-only changes skip E2E without an absent required check; unreadable diffs or selector failures run the full suite. Cancellation stays canceled; manual dispatch runs all projects.
-- Each shard builds embedded assets and the E2E CLI, installs matching Chromium and verifies FFmpeg. Individual tests are distributed with `fullyParallel`; all shards finish even if another fails.
+- Each shard reads the complete merge-base diff before preparing the application. Shard 1 tests the selector. Unit-test-only and unrelated changes skip heavy steps. Unreadable diffs or selector execution failures run the full suite. Cancellation stays canceled; manual dispatch runs all projects.
+- Each shard builds embedded assets and the E2E CLI, installs matching Chromium and verifies FFmpeg. Three shards split web-full-upload and one runs the remaining projects with `fullyParallel`. All shards finish even if another fails.
 - Repository permissions are read-only; local fakes require no repository secrets, including fork PRs. Preserve per-shard timing/failure evidence and cancellation of obsolete runs for the same PR.
