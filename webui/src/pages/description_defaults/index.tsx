@@ -103,8 +103,11 @@ export default function DescriptionDefaultsPage({ settings, renderField }: Props
               type="button"
               disabled={settingsLoading}
               onClick={() => {
-                if (!settingsDirty || window.confirm("Discard unsaved settings and reload?"))
+                if (!settingsDirty || window.confirm("Discard unsaved settings and reload?")) {
                   settings.loadSettings();
+                  if (catalog.isError) void catalog.refetch();
+                  if (preview.isError) void preview.refetch();
+                }
               }}
             >
               Reload

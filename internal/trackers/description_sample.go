@@ -191,18 +191,19 @@ func TextDescriptionLayout() []DescriptionLayoutItem {
 	return []DescriptionLayoutItem{{Label: "Imported or custom text"}}
 }
 
-// TextAndGalleryLayout covers a notes section and a tracker-formatted gallery.
-func TextAndGalleryLayout() []DescriptionLayoutItem {
+// TextAndGalleryLayout covers notes and a gallery, with spacing controls only
+// for trackers that separate the sections with blank lines.
+func TextAndGalleryLayout(canCompact bool) []DescriptionLayoutItem {
 	return []DescriptionLayoutItem{
 		{
 			ID:         "kept",
 			Label:      "Imported or custom text",
-			CanCompact: true,
+			CanCompact: canCompact,
 		},
 		{
 			ID:         "screenshots",
 			Label:      "Screenshots",
-			CanCompact: true,
+			CanCompact: canCompact,
 		},
 	}
 }

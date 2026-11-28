@@ -128,6 +128,7 @@ func buildDescriptionSample(kind string) (trackers.DescriptionSample, map[string
 			DescriptionTemplate: "[b]The Lantern Coast (2026)[/b]",
 			ReleaseName:         "The.Lantern.Coast.2026.1080p.WEB-DL-GRP",
 			Release:             api.ReleaseInfo{Title: "The Lantern Coast", Year: 2026},
+			Identity:            api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
 			ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{
 				Logo:     logo,
 				Poster:   image("poster", "The Lantern Coast · Poster", "#365362"),
@@ -150,13 +151,16 @@ func buildDescriptionSample(kind string) (trackers.DescriptionSample, map[string
 		sample.Subject.EpisodeInt = 3
 		sample.Subject.ProviderMetadata.TMDB.Category = "TV"
 		sample.Subject.Release.Category = "TV"
+		sample.Subject.Identity.Category = api.CanonicalCategoryTV
 		sample.Subject.EpisodeOverview = "A lighthouse keeper investigates strange lights beyond the harbour."
 	case "dvd", "bluray":
 		sample.Subject.Type = "REMUX"
 		sample.Subject.DiscType = "BDMV"
+		sample.Report = "DISC INFO:\nDisc Title: The Lantern Coast\n\nPLAYLIST REPORT:\nName: 00001.MPLS\nLength: 1:36:00\n\nVIDEO:\nMPEG-4 AVC Video / 1080p\n\nAUDIO:\nEnglish / DTS-HD Master Audio / 5.1"
 		if kind == "dvd" {
 			sample.Subject.DiscType = "DVD"
 			sample.Subject.DVDVOBMediaInfoText = "Video\nFormat : MPEG Video\n\nAudio\nFormat : AC-3"
+			sample.Report = sample.Subject.DVDVOBMediaInfoText
 			menu := image("menu", "Disc menu", "#4f4665")
 			sample.Assets.MenuImages = []api.ScreenshotImage{{
 				ImgURL: menu,
@@ -176,9 +180,6 @@ func buildDescriptionSample(kind string) (trackers.DescriptionSample, map[string
 	default:
 		return trackers.DescriptionSample{}, nil, false
 	}
-	sample.Assets.Description += "\n\n[spoiler=source_comparisons]\n[comparison=Source, Encode]\n" +
-		image("comparison-source", "Source frame", "#274452") + "\n" +
-		image("comparison-encode", "Encoded frame", "#355451") + "\n[/comparison]\n[/spoiler]"
 	colors := []string{"#3e5177", "#365d57", "#754d5d"}
 	for index, color := range colors {
 		id := fmt.Sprintf("frame-%d", index+1)
@@ -193,5 +194,8 @@ func buildDescriptionSample(kind string) (trackers.DescriptionSample, map[string
 	}
 	sample.Assets.Description += "\n\n[spoiler=Audio Plots]\n[img]" + image("audio", "English AAC · waveform", "#405b68") +
 		"[/img]\n[/spoiler]\n\n[spoiler=HDR plots]\n[img]" + image("hdr", "HDR10 · luminance", "#69537f") + "[/img]\n[/spoiler]"
+	sample.Assets.Description += "\n\n[spoiler=source_comparisons]\n[comparison=Source, Encode]\n" +
+		image("comparison-source", "Source frame", "#274452") + "\n" +
+		image("comparison-encode", "Encoded frame", "#355451") + "\n[/comparison]\n[/spoiler]"
 	return sample, images, true
 }

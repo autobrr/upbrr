@@ -22,7 +22,7 @@ func Profile() standalone.Profile {
 		UploadContentMode:         trackers.UploadContentModeDescription,
 		AuthCapability:            authcontract.APIKeyCapability("BHDTV"),
 		PrepareDescription:        prepareDescription,
-		DescriptionDefaultsLayout: trackers.TextAndGalleryLayout,
+		DescriptionDefaultsLayout: func() []trackers.DescriptionLayoutItem { return trackers.TextAndGalleryLayout(false) },
 		DescriptionSample:         renderDescriptionSample,
 		PrepareUpload:             prepareUpload,
 		ReleaseNamePolicy:         namePolicy(),

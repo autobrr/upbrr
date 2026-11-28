@@ -46,7 +46,7 @@ func composeDescription(req trackers.PreparationInput, assets trackers.Descripti
 	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
 	baseDescription, discReports := description.SplitLeadingDiscReports(assets.Description)
 	baseDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(baseDescription)
-	audioAnalysis = description.RelabelAnalysis(audioAnalysis, req.Runtime.Description.AudioPlotsLabel, req.Runtime.Description.HDRPlotsLabel)
+	audioAnalysis = description.LabelAnalysisWithoutSpoilers(audioAnalysis, req.Runtime.Description.AudioPlotsLabel, req.Runtime.Description.HDRPlotsLabel)
 	assets.Description = baseDescription
 	meta := req.Meta
 	parts := make([]description.Section, 0, 12)

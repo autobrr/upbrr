@@ -9,7 +9,6 @@ import { handleExternalLinkClick } from "../utils/externalLinks";
 
 export type NavigationItem = Readonly<{
   label: string;
-  ariaLabel?: string;
   active: boolean;
   onSelect: () => void;
   disabled?: boolean;
@@ -37,7 +36,6 @@ function NavigationGroup({ items }: Readonly<{ items: readonly NavigationItem[] 
         item.active && "border-sidebar-ring bg-sidebar-accent text-sidebar-accent-foreground",
       )}
       type="button"
-      aria-label={item.ariaLabel}
       aria-current={item.active ? "page" : undefined}
       disabled={item.disabled}
       title={item.reason}

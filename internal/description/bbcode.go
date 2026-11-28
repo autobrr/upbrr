@@ -6,6 +6,7 @@ package description
 import (
 	"html"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -61,7 +62,8 @@ func SplitLeadingDiscReports(value string) (body, reports string) {
 var analysisSpoilerTagPattern = regexp.MustCompile(`(?i)\[(?:spoiler(?:\s*=\s*[^\]]*)?|/spoiler)\]`)
 
 // SplitTrailingSourceAudioSpoiler separates complete top-level audio and HDR markup so
-// description builders can place it before their screenshot sections.
+// description builders can place it before their screenshot sections. The
+// generated comparison wrapper may follow or precede the analysis spoilers.
 func SplitTrailingSourceAudioSpoiler(value string) (string, string) {
 	value, literals := extractLiteralBlocks(strings.TrimSpace(value))
 	value, htmlLiterals := extractHTMLLiteralBlocks(value)
@@ -74,7 +76,7 @@ func SplitTrailingSourceAudioSpoiler(value string) (string, string) {
 	}
 	trimmed := strings.TrimSpace(value)
 	ranges := comparison.BlockRanges(trimmed)
-	ends := make(map[int]int)
+	starts := make(map[int]int)
 	depth, opening := 0, 0
 	for _, tag := range analysisSpoilerTagPattern.FindAllStringIndex(trimmed, -1) {
 		if trimmed[tag[0]+1] != '/' {
@@ -85,40 +87,45 @@ func SplitTrailingSourceAudioSpoiler(value string) (string, string) {
 		} else if depth > 0 {
 			depth--
 			if depth == 0 {
-				ends[opening] = tag[1]
+				starts[tag[1]] = opening
 			}
 		}
 	}
-	start, end := len(trimmed), len(trimmed)
+	var plots []string
+	var comparisonBlock string
+	end := len(trimmed)
+tail:
 	for end > 0 {
 		prefix := strings.TrimSpace(trimmed[:end])
-		if !strings.HasSuffix(prefix, "[/spoiler]") {
+		index, ok := starts[len(prefix)]
+		if !ok || index > 0 && prefix[index-1] != '\n' {
 			break
 		}
-		index := strings.LastIndex(prefix, "[spoiler=")
-		if index < 0 || ends[index] != len(prefix) || index > 0 && prefix[index-1] != '\n' {
+		if slices.ContainsFunc(ranges, func(span [2]int) bool { return index >= span[0] && index < span[1] }) {
 			break
 		}
-		if !strings.HasPrefix(prefix[index:], "[spoiler=source_audio]") && !strings.HasPrefix(prefix[index:], "[spoiler=source_hdr]") &&
-			!strings.HasPrefix(prefix[index:], "[spoiler=Audio Plots]") && !strings.HasPrefix(prefix[index:], "[spoiler=HDR plots]") {
-			break
+		block := prefix[index:]
+		switch {
+		case strings.HasPrefix(block, "[spoiler=source_audio]"), strings.HasPrefix(block, "[spoiler=source_hdr]"),
+			strings.HasPrefix(block, "[spoiler=Audio Plots]"), strings.HasPrefix(block, "[spoiler=HDR plots]"):
+			plots = append(plots, block)
+		case comparisonBlock == "" && strings.HasPrefix(block, "[spoiler=source_comparisons]\n[comparison=") &&
+			strings.HasSuffix(block, "[/comparison]\n[/spoiler]"):
+			comparisonBlock = block
+		default:
+			break tail
 		}
-		insideComparison := false
-		for _, block := range ranges {
-			if index >= block[0] && index < block[1] {
-				insideComparison = true
-				break
-			}
-		}
-		if insideComparison {
-			break
-		}
-		start, end = index, index
+		end = index
 	}
-	if start == len(trimmed) {
+	if len(plots) == 0 {
 		return restore(trimmed), ""
 	}
-	return restore(strings.TrimSpace(trimmed[:start])), restore(strings.TrimSpace(trimmed[start:]))
+	body := strings.TrimSpace(trimmed[:end])
+	if comparisonBlock != "" {
+		body = strings.TrimSpace(body + "\n\n" + comparisonBlock)
+	}
+	slices.Reverse(plots)
+	return restore(body), restore(strings.Join(plots, "\n\n"))
 }
 
 func compileImg(node *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
@@ -552,6 +559,20 @@ var analysisHeadings = regexp.MustCompile(`\[spoiler=(source_audio|Audio Plots|s
 // RelabelAnalysis updates the display headings of isolated analysis spoilers.
 // The report text and image values inside the spoilers are unchanged.
 func RelabelAnalysis(blocks, audio, hdr string) string {
+	return formatAnalysisHeadings(blocks, audio, hdr, func(label string) string {
+		return "[spoiler=" + label + "]"
+	})
+}
+
+// LabelAnalysisWithoutSpoilers emits configured headings as visible BBCode
+// for a tracker that strips unsupported spoiler tags.
+func LabelAnalysisWithoutSpoilers(blocks, audio, hdr string) string {
+	return formatAnalysisHeadings(blocks, audio, hdr, func(label string) string {
+		return "[b]" + label + "[/b]\n"
+	})
+}
+
+func formatAnalysisHeadings(blocks, audio, hdr string, format func(string) string) string {
 	audio, hdr = MarkupLabel(audio), MarkupLabel(hdr)
 	if audio == "" && hdr == "" {
 		return blocks
@@ -565,7 +586,7 @@ func RelabelAnalysis(blocks, audio, hdr string) string {
 			if label == "" {
 				return tag
 			}
-			return "[spoiler=" + label + "]"
+			return format(label)
 		})
 	})
 }

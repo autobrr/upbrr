@@ -105,7 +105,7 @@ func TestLSTFinalDescriptionRequiresDiscParserReports(t *testing.T) {
 	if err := validateFinalDescription(meta, description, "General\nFormat : DVD Video", ""); err == nil {
 		t.Fatal("missing VOB spoiler accepted")
 	}
-	description = descriptionunit3d.AppendDVDVOBMediaInfoBlock(description, api.NewDescriptionSubject(meta))
+	description = descriptionunit3d.AppendDVDVOBMediaInfoBlock(description, api.NewDescriptionSubject(meta), "")
 	if err := validateFinalDescription(meta, description, meta.DVDVOBMediaInfoText, ""); err == nil {
 		t.Fatal("VOB report accepted instead of IFO")
 	}

@@ -295,12 +295,5 @@ func renderDescriptionSample(
 	defaults config.DescriptionSettingsConfig,
 	_ config.TrackerConfig,
 ) (string, error) {
-	var report string
-	switch sample.Subject.DiscType {
-	case "DVD":
-		report = "[spoiler=VOB MediaInfo][code]" + sample.Subject.DVDVOBMediaInfoText + "[/code][/spoiler]"
-	case "BDMV":
-		report = "[spoiler=BDINFO][code]" + sample.Report + "[/code][/spoiler]"
-	}
-	return composeDescription(defaults, sample.Subject, sample.Assets, report), nil
+	return buildDescription(defaults, sample.Subject, sample.Assets), nil
 }

@@ -635,10 +635,11 @@ func dvdVOBMediaInfoBlock(meta api.DescriptionSubject, label string) string {
 	return dvdVOBMediaInfoHeader + vobText + dvdVOBMediaInfoFooter
 }
 
-// AppendDVDVOBMediaInfoBlock appends DVD VOB MediaInfo when meta contains it.
-func AppendDVDVOBMediaInfoBlock(description string, meta api.DescriptionSubject) string {
+// AppendDVDVOBMediaInfoBlock appends the DVD report unless it is already
+// included under the default or configured spoiler heading.
+func AppendDVDVOBMediaInfoBlock(description string, meta api.DescriptionSubject, label string) string {
 	trimmedDescription := strings.TrimSpace(description)
-	block := DVDVOBMediaInfoBlock(meta)
+	block := dvdVOBMediaInfoBlock(meta, label)
 	if block == "" {
 		return trimmedDescription
 	}

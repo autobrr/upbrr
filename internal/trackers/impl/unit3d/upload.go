@@ -485,7 +485,7 @@ func buildUploadDryRunUnit3D(
 			description = ""
 		}
 	}
-	description = ensureUnit3DDVDVOBDescription(description, req.Meta)
+	description = ensureUnit3DDVDVOBDescription(description, req.Meta, req.Runtime.Description.VOBReportLabel)
 
 	mediainfo, bdinfo, err := loadUnit3DMedia(req.Meta, req.Runtime.DBPath, logger)
 	if err != nil {

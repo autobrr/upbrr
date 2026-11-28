@@ -79,6 +79,7 @@ test("description defaults preview reflects draft order and survives an embedded
   let app: AppServer | undefined;
   const outgoing: string[] = [];
   const localOrigins = new Set<string>();
+  const unavailable = new Set(["ListDescriptionDefaultsTrackers", "PreviewDescriptionDefaults"]);
   try {
     app = await startApp(workspace);
     localOrigins.add(new URL(app.url).origin);
@@ -88,12 +89,28 @@ test("description defaults preview reflects draft order and survives an embedded
         await route.abort();
         return;
       }
+      const endpoint = new URL(route.request().url()).pathname.split("/").at(-1) ?? "";
+      if (unavailable.delete(endpoint)) {
+        await route.fulfill({ status: 503, json: { error: "Unavailable" } });
+        return;
+      }
       await route.continue();
     });
     await page.goto(app.url);
-    await page.getByRole("button", { name: "Description defaults" }).click();
+    await page
+      .getByRole("navigation", { name: "Workspace" })
+      .getByRole("button", { name: "Descriptions", exact: true })
+      .click();
+    const reload = page.getByRole("button", { name: "Reload", exact: true });
+    await expect(page.getByRole("alert")).toContainText(
+      "Could not load description preview trackers.",
+    );
+    await reload.click();
     const tracker = page.getByRole("combobox", { name: "Preview tracker" });
     const sample = page.getByRole("region", { name: "Mock description" });
+    await expect(sample.getByRole("alert")).toBeVisible();
+    await reload.click();
+    await expect(sample.getByText("Sample release notes.", { exact: false })).toBeVisible();
     await tracker.selectOption("AITHER");
     const label = page.getByRole("textbox", { name: "Audio plots heading" });
     await label.fill("Audio tracks");

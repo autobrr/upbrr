@@ -48,8 +48,8 @@ func buildUnit3DDescription(
 	return description, nil
 }
 
-func ensureUnit3DDVDVOBDescription(description string, meta api.UploadSubject) string {
-	return descriptionunit3d.AppendDVDVOBMediaInfoBlock(description, api.NewDescriptionSubject(meta))
+func ensureUnit3DDVDVOBDescription(description string, meta api.UploadSubject, label string) string {
+	return descriptionunit3d.AppendDVDVOBMediaInfoBlock(description, api.NewDescriptionSubject(meta), label)
 }
 
 // DescriptionLayout lists the movable groups owned by the Unit3D composer.

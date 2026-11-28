@@ -37,7 +37,6 @@ func buildACMDescription(
 	base, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(keptDescription)
 	base = descriptionunit3d.PrepareSiteText(base, prepareACMText)
 	meta.DescriptionTemplate = descriptionunit3d.PrepareSiteText(meta.DescriptionTemplate, prepareACMText)
-	base = descriptionunit3d.AppendDVDVOBMediaInfoBlock(base, api.NewDescriptionSubject(meta))
 
 	cfg := appConfig
 	if cfg.Description.ThumbnailSize <= 0 {

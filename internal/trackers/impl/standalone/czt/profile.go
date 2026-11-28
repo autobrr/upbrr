@@ -24,7 +24,7 @@ func Profile() standalone.Profile {
 		UploadContentMode:         trackers.UploadContentModeDescription,
 		AuthCapability:            authcontract.PasskeyCapability(trackerName),
 		PrepareDescription:        prepareDescription,
-		DescriptionDefaultsLayout: trackers.TextAndGalleryLayout,
+		DescriptionDefaultsLayout: func() []trackers.DescriptionLayoutItem { return trackers.TextAndGalleryLayout(true) },
 		DescriptionSample:         renderDescriptionSample,
 		PrepareUpload:             prepareUpload,
 		ProjectionQuestionnaire:   projectionQuestionnaire,

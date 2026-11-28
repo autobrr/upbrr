@@ -203,7 +203,6 @@ function AppShell() {
     { label: "Logging", active: activeTab === "logging", onSelect: () => setActiveTab("logging") },
     {
       label: "Descriptions",
-      ariaLabel: "Description defaults",
       active: activeTab === "description_defaults",
       onSelect: () => setActiveTab("description_defaults"),
     },

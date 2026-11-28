@@ -31,6 +31,11 @@ func TestSplitTrailingSourceAudioSpoilerPreservesNestedComparison(t *testing.T) 
 	if body != description || audio != generated+"\n\n"+hdr {
 		t.Fatalf("combined analysis blocks split incorrectly: %q %q", body, audio)
 	}
+	generatedComparison := "[spoiler=source_comparisons]\n[comparison=Source, Encode]\nsource.png\nencode.png\n[/comparison]\n[/spoiler]"
+	body, audio = SplitTrailingSourceAudioSpoiler(description + "\n\n" + generated + "\n\n" + hdr + "\n\n" + generatedComparison)
+	if body != description+"\n\n"+generatedComparison || audio != generated+"\n\n"+hdr {
+		t.Fatalf("analysis preceding a generated comparison split incorrectly: %q %q", body, audio)
+	}
 }
 
 func TestRenderBBCode(t *testing.T) {

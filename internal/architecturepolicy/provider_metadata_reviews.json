@@ -1013,7 +1013,7 @@
   },
   "internal/trackers/impl/standalone/hds/description.go:composeDescription": {
     "reason": "Separates prepared data from presentation or passes description defaults to the same composer. The same reviewed upload subject and provider values feed it; links, manual precedence and lookup authority are unchanged.",
-    "sha256": "4188b04703d542db46e892ecbef2b18ffc2cb16c80dc1c08267868c38a46889e"
+    "sha256": "820900672b7086962441d999e7fb7ab39e3067b68efcc815fe9c212d148e3a39"
   },
   "internal/trackers/impl/standalone/hds/description.go:prepareDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -1701,7 +1701,7 @@
   },
   "internal/trackers/impl/unit3d/upload.go:buildUploadDryRunUnit3D": {
     "reason": "Preserves finalized canonical and effective provider facts and current scoped review answers through questionnaire, validation and submission finalization.",
-    "sha256": "282e191250a8c1aa5757c8a1db9fe3a60b6d290ba7506303e24b61c3ce4ab27d"
+    "sha256": "48eba339f5f07aa20ed7f4d7df2525085dd643397e6bbae8609206ecab09efd9"
   },
   "internal/trackers/impl/unit3d/validation.go:unit3DUploadSubject": {
     "reason": "Annotation-display review: copies canonical ReleaseFeatures and the ordered display-only projection into detached slices. Existing provider snapshot, identity, manual provenance and validation mappings remain unchanged; display text is not semantic evidence.",

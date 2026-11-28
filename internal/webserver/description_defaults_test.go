@@ -136,9 +136,30 @@ func TestDescriptionSampleWiringCoversRegisteredDescriptionModes(t *testing.T) {
 				if !ok {
 					t.Fatalf("sample %q not configured", kind)
 				}
-				raw, err := renderer.RenderDescriptionSample(t.Context(), sample, config.DescriptionSettingsConfig{}, config.TrackerConfig{})
+				defaults := config.DescriptionSettingsConfig{}
+				if tracker == "HDS" && kind == "movie" {
+					defaults.AudioPlotsLabel = "Custom audio heading"
+				}
+				raw, err := renderer.RenderDescriptionSample(t.Context(), sample, defaults, config.TrackerConfig{})
 				if err != nil || strings.TrimSpace(raw) == "" {
 					t.Errorf("sample %q has no description: %v", kind, err)
+				}
+				if tracker == "BHD" && kind == "bluray" && strings.Contains(raw, "[spoiler=BDINFO]") {
+					t.Error("BHD preview must not inline the primary Blu-ray report")
+				}
+				if tracker == "ASC" && kind == "episode" && (!strings.Contains(raw, "Signals at Sea") || !strings.Contains(raw, "Temporada 1")) {
+					t.Error("ASC TV preview must use the canonical category to render episode and season sections")
+				}
+				if defaults.AudioPlotsLabel != "" && !strings.Contains(raw, "[b]Custom audio heading[/b]") {
+					t.Error("HDS must render the analysis heading without a spoiler tag")
+				}
+				if tracker == "PTP" {
+					if kind == "dvd" && (!strings.Contains(raw, "MPEG Video") || strings.Contains(raw, "Matroska")) {
+						t.Error("PTP DVD preview must render VOB evidence")
+					}
+					if kind == "bluray" && !strings.Contains(raw, "00001.MPLS") {
+						t.Error("PTP Blu-ray preview must render playlist evidence")
+					}
 				}
 			}
 		})
