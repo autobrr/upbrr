@@ -4,6 +4,7 @@
 package tl
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/languageutil"
@@ -20,12 +21,9 @@ func resolveCategory(meta api.UploadSubject) string {
 	if meta.ProviderMetadata.TMDB != nil {
 		provider = meta.ProviderMetadata.TMDB.OriginalLanguage
 	}
-	originalLanguage := provider
-	if meta.EffectiveMetadata.OriginalLanguageProvenance.IsManual() {
-		originalLanguage = trackers.PreferredOriginalLanguage(meta, provider)
-		if normalized := languageutil.NormalizeLanguageCode(originalLanguage); normalized != "" {
-			originalLanguage = normalized
-		}
+	originalLanguage := trackers.PreferredOriginalLanguage(meta, provider)
+	if normalized := languageutil.NormalizeLanguageCode(originalLanguage); normalized != "" {
+		originalLanguage = normalized
 	}
 	isEnglish := strings.EqualFold(originalLanguage, "en")
 	if meta.Anime {
@@ -41,10 +39,12 @@ func resolveCategory(meta api.UploadSubject) string {
 		if meta.Release.Resolution == "2160p" {
 			return "47"
 		}
-		if strings.EqualFold(meta.DiscType, "BDMV") || strings.EqualFold(meta.Type, "REMUX") && strings.EqualFold(meta.Source, "BluRay") {
+		hdDVD := strings.EqualFold(meta.DiscType, "HDDVD") || strings.EqualFold(meta.Source, "HDDVD") || strings.EqualFold(meta.Source, "HD DVD")
+		if strings.EqualFold(meta.DiscType, "BDMV") || hdDVD && !strings.EqualFold(meta.Type, "ENCODE") ||
+			strings.EqualFold(meta.Type, "REMUX") && strings.EqualFold(meta.Source, "BluRay") {
 			return "13"
 		}
-		if strings.EqualFold(meta.Type, "ENCODE") && strings.EqualFold(meta.Source, "BluRay") {
+		if strings.EqualFold(meta.Type, "ENCODE") && (strings.EqualFold(meta.Source, "BluRay") || hdDVD) {
 			return "14"
 		}
 		if strings.EqualFold(meta.DiscType, "DVD") || strings.Contains(strings.ToUpper(meta.Source), "DVD") && strings.EqualFold(meta.Type, "REMUX") {
@@ -70,6 +70,16 @@ func resolveCategory(meta api.UploadSubject) string {
 		return "26"
 	}
 	return "32"
+}
+
+// animeIDURL uses only the snapshot bound to the selected canonical MAL identity.
+func animeIDURL(meta api.UploadSubject) string {
+	snapshot := meta.ProviderMetadata.AniList
+	if !meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) || meta.Identity.MALID <= 0 ||
+		snapshot == nil || snapshot.MALID != meta.Identity.MALID || snapshot.AniListID <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("https://anilist.co/anime/%d", snapshot.AniListID)
 }
 
 func containsWord(a string, b string) bool {

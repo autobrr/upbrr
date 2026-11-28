@@ -111,6 +111,7 @@ func newBackendWithLiveTest(ctx context.Context, cfg config.Config, hub *eventHu
 	if err != nil {
 		return nil, fmt.Errorf("web: %w", err)
 	}
+	logger.LogApplicationStart()
 
 	repo, err := db.OpenWithLoggerContext(ctx, cfg.MainSettings.DBPath, logger)
 	if err != nil {

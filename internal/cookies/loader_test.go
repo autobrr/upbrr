@@ -560,3 +560,30 @@ func countTrackerCookies(ctx context.Context, t *testing.T, dbPath string, track
 	}
 	return count
 }
+
+func TestDeleteTrackerCookiesRemovesCaseVariantExport(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	dbPath := writeWebAuthFile(t, "tester", "password-hash")
+	initTestCookieDBSchema(t, dbPath)
+	path := commonhttp.CookiePathCandidates(dbPath, "tl", ".JSON")[0]
+	if err := os.WriteFile(path, []byte(`{"session":"fixture"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	values, err := LoadTrackerCookieMap(ctx, dbPath, "TL")
+	if err != nil || values["session"] != "fixture" {
+		t.Error("legacy loader did not find a case-variant export")
+	}
+	if err := SaveOwnedTrackerHTTPCookies(ctx, dbPath, "TL", "fixture-owner", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadTrackerCookieMap(ctx, dbPath, "TL", "fixture-owner"); !errors.Is(err, ErrTrackerCookiesNotFound) {
+		t.Error("a signed-out marker did not suppress the case-variant export")
+	}
+	if err := DeleteTrackerCookies(ctx, dbPath, "TL", "fixture-owner"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Delete Auth left the case-variant export: %v", err)
+	}
+}

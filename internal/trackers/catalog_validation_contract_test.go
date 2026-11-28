@@ -4,12 +4,29 @@
 package trackers
 
 import (
+	"encoding/json"
 	"slices"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestUploadArtifactPolicyFingerprintCompatibility(t *testing.T) {
+	legacy := json.RawMessage(`{"Source":"Example","DefaultAnnounce":"","UseMyAnnounce":false,"RequireAnnounce":false}`)
+	want, err := api.CanonicalWorkflowFingerprint(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := UploadArtifactPolicy{Source: "Example"}
+	if got, err := api.CanonicalWorkflowFingerprint(policy); err != nil || got != want {
+		t.Fatalf("unchanged upload policy changed the existing fingerprint: got %q, want %q, err %v", got, want, err)
+	}
+	policy.OmitAnnounceList = true
+	if got, err := api.CanonicalWorkflowFingerprint(policy); err != nil || got == want {
+		t.Fatalf("omitting the announce list must change the upload policy fingerprint: got %q, err %v", got, err)
+	}
+}
 
 func TestSharedContractsInvalidateRetainedProjectionCatalog(t *testing.T) {
 	registry := NewRegistry()

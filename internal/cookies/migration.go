@@ -4,12 +4,15 @@
 package cookies
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/redaction"
@@ -24,14 +27,59 @@ type FailedCookie struct {
 	CookieName string
 }
 
-// MigrateFromFilesToDB imports top-level .txt and .json cookie files into the
-// encrypted database. It returns the stored-cookie count and all parse/storage
-// failures so callers can retain source files after any partial migration.
-func MigrateFromFilesToDB(ctx context.Context, cookiesDir string, store *CookieStore, key []byte, logger api.Logger) (int, []FailedCookie, error) {
-	if store == nil {
-		return 0, nil, errors.New("cookies: cookie store is required")
+// MigrationResult records the cookies and exact files successfully migrated.
+type MigrationResult struct {
+	Count    int
+	Failures []FailedCookie
+	files    []migratedCookieFile
+}
+
+type migratedCookieFile struct {
+	name string
+	info fs.FileInfo
+}
+
+func legacyCookieFilename(name string) (stem, ext string) {
+	extension := filepath.Ext(name)
+	ext = strings.ToLower(extension)
+	if ext != ".txt" && ext != ".json" {
+		return "", ""
 	}
-	return migrateFromFilesToDB(ctx, cookiesDir, key, logger, store.SaveCookie)
+	return strings.TrimSuffix(name, extension), ext
+}
+
+// compareLegacyCookieNames orders Netscape before JSON, then exact names
+// before aliases. It also makes the order of multiple aliases deterministic.
+func compareLegacyCookieNames(a, b string) int {
+	aStem, aExt := legacyCookieFilename(a)
+	bStem, bExt := legacyCookieFilename(b)
+	if byExt := cmp.Compare(bExt, aExt); byExt != 0 {
+		return byExt
+	}
+	aExact := a == strings.ToUpper(aStem)+aExt
+	bExact := b == strings.ToUpper(bStem)+bExt
+	if aExact != bExact {
+		if aExact {
+			return -1
+		}
+		return 1
+	}
+	return cmp.Compare(a, b)
+}
+
+// MigrateFromFilesToDB imports top-level .txt and .json cookie files into the
+// encrypted database. Use the result to clean up only after migration succeeds.
+func MigrateFromFilesToDB(ctx context.Context, cookiesDir string, store *CookieStore, key []byte, logger api.Logger) (MigrationResult, error) {
+	if store == nil {
+		return MigrationResult{}, errors.New("cookies: cookie store is required")
+	}
+	var result MigrationResult
+	err := store.RunInTransaction(ctx, func(tx *sql.Tx) error {
+		var err error
+		result, err = MigrateFromFilesToDBTx(ctx, cookiesDir, store, tx, key, logger)
+		return err
+	})
+	return result, err
 }
 
 // MigrateFromFilesToDBTx imports legacy cookie files through tx so callers can
@@ -43,19 +91,27 @@ func MigrateFromFilesToDBTx(
 	tx *sql.Tx,
 	key []byte,
 	logger api.Logger,
-) (int, []FailedCookie, error) {
+) (MigrationResult, error) {
 	if store == nil {
-		return 0, nil, errors.New("cookies: cookie store is required")
+		return MigrationResult{}, errors.New("cookies: cookie store is required")
 	}
 	if tx == nil {
-		return 0, nil, errors.New("cookies: transaction is required")
+		return MigrationResult{}, errors.New("cookies: transaction is required")
+	}
+	if ctx == nil {
+		return MigrationResult{}, errors.New("cookies: context is required")
+	}
+	// Take the SQLite write lock before reading files. DeleteTrackerCookies
+	// holds it until the database rows and their source files are removed.
+	if err := lockCookieWrites(ctx, tx); err != nil && !isMissingCookieSchemaError(err) {
+		return MigrationResult{}, fmt.Errorf("cookies: lock migration: %w", err)
 	}
 	return migrateFromFilesToDB(ctx, cookiesDir, key, logger, func(
 		ctx context.Context,
 		trackerID, cookieName, cookieValue string,
 		key []byte,
 	) error {
-		return store.SaveCookieTx(ctx, tx, trackerID, cookieName, cookieValue, key)
+		return store.saveCookie(ctx, tx, trackerID, cookieName, cookieValue, key, true)
 	})
 }
 
@@ -67,9 +123,9 @@ func migrateFromFilesToDB(
 	key []byte,
 	logger api.Logger,
 	saveCookie saveCookieFunc,
-) (int, []FailedCookie, error) {
+) (MigrationResult, error) {
 	if ctx == nil {
-		return 0, nil, errors.New("cookies: context is required")
+		return MigrationResult{}, errors.New("cookies: context is required")
 	}
 	if logger == nil {
 		logger = api.NopLogger{}
@@ -79,23 +135,29 @@ func migrateFromFilesToDB(
 	info, err := os.Stat(cookiesDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return 0, nil, nil // No cookies directory, nothing to migrate
+			return MigrationResult{}, nil // No cookies directory, nothing to migrate
 		}
-		return 0, nil, fmt.Errorf("failed to stat cookies directory: %w", err)
+		return MigrationResult{}, fmt.Errorf("failed to stat cookies directory: %w", err)
 	}
 
 	if !info.IsDir() {
-		return 0, nil, fmt.Errorf("cookie path is not a directory: %s", cookiesDir)
+		return MigrationResult{}, fmt.Errorf("cookie path is not a directory: %s", cookiesDir)
 	}
 
 	// List files in the cookies directory
 	entries, err := os.ReadDir(cookiesDir)
 	if err != nil {
-		return 0, nil, fmt.Errorf("failed to read cookies directory: %w", err)
+		return MigrationResult{}, fmt.Errorf("failed to read cookies directory: %w", err)
 	}
 
-	migratedCount := 0
-	failedCookies := make([]FailedCookie, 0)
+	// Import less preferred aliases first so the same conflicting cookie wins
+	// as with direct legacy loading. All successfully imported sources can be
+	// cleaned, so a losing alias cannot overwrite the winner on the next start.
+	slices.SortStableFunc(entries, func(a, b fs.DirEntry) int {
+		return compareLegacyCookieNames(b.Name(), a.Name())
+	})
+
+	var result MigrationResult
 
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -103,20 +165,18 @@ func migrateFromFilesToDB(
 		}
 
 		filename := entry.Name()
-		ext := strings.ToLower(filepath.Ext(filename))
-
-		// Only process .txt and .json files
-		if ext != ".txt" && ext != ".json" {
+		stem, ext := legacyCookieFilename(filename)
+		if stem == "" {
 			continue
 		}
-
-		// Extract tracker name from filename (e.g., "ar.txt" -> "ar")
-		trackerID := strings.TrimSuffix(filename, ext)
-		if trackerID == "" {
-			continue
-		}
-
+		trackerID := strings.ToUpper(stem)
 		filePath := filepath.Join(cookiesDir, filename)
+		info, err := legacyCookieFileInfo(filePath)
+		if err != nil {
+			result.Failures = append(result.Failures, FailedCookie{TrackerID: trackerID})
+			logger.Warnf("cookies: failed to inspect cookie file tracker=%s file=%s: %v", trackerID, filename, err)
+			continue
+		}
 
 		var cookies map[string]string
 		var parseErr error
@@ -146,7 +206,7 @@ func migrateFromFilesToDB(
 		}
 
 		if parseErr != nil {
-			failedCookies = append(failedCookies, FailedCookie{TrackerID: trackerID})
+			result.Failures = append(result.Failures, FailedCookie{TrackerID: trackerID})
 			logger.Warnf("cookies: failed to parse cookie file tracker=%s file=%s: %v", trackerID, filename, parseErr)
 			continue
 		}
@@ -155,78 +215,74 @@ func migrateFromFilesToDB(
 			continue
 		}
 
-		// Store each cookie in the database
+		before := result.Count
+		retained := false
 		for cookieName, cookieValue := range cookies {
 			if err := saveCookie(ctx, trackerID, cookieName, cookieValue, key); err != nil {
-				failedCookies = append(failedCookies, FailedCookie{TrackerID: trackerID, CookieName: cookieName})
+				if errors.Is(err, errLegacyCookieRetained) {
+					retained = true
+					logger.Debugf("cookies: retained legacy file tracker=%s reason=managed_session", trackerID)
+					break
+				}
+				result.Failures = append(result.Failures, FailedCookie{TrackerID: trackerID, CookieName: cookieName})
 				redactedValue := redaction.RedactValue(cookieValue, nil)
 				logger.Warnf("cookies: failed to migrate cookie tracker=%s cookie=%s value=%v: %v", trackerID, cookieName, redactedValue, err)
 				continue
 			}
 
-			migratedCount++
+			result.Count++
+		}
+		if !retained && result.Count > before {
+			result.files = append(result.files, migratedCookieFile{name: filename, info: info})
 		}
 	}
-
-	return migratedCount, failedCookies, nil
+	return result, nil
 }
 
-// DeleteMigratedCookieFiles removes every top-level .txt and .json file from
-// cookiesDir. It does not verify that an individual file was migrated.
-func DeleteMigratedCookieFiles(cookiesDir string, logger api.Logger) error {
-	return deleteMigratedCookieFiles(cookiesDir, logger)
+// legacyCookieFileInfo binds the identity to the open file, not a later path
+// lookup (Windows resolves the identity of os.Stat results lazily).
+func legacyCookieFileInfo(path string) (fs.FileInfo, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open cookie export: %w", err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("stat cookie export: %w", err)
+	}
+	return info, nil
 }
 
-func deleteMigratedCookieFiles(cookiesDir string, logger api.Logger) error {
+// Cleanup removes successfully migrated files that still match their source
+// snapshot. Failed migrations and changed exports remain available for retry.
+func (r MigrationResult) Cleanup(cookiesDir string, logger api.Logger) error {
+	if len(r.Failures) > 0 {
+		return nil
+	}
 	if logger == nil {
 		logger = api.NopLogger{}
 	}
-
-	// Check if cookies directory exists
-	info, err := os.Stat(cookiesDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil // Directory doesn't exist, nothing to delete
-		}
-		return fmt.Errorf("failed to stat cookies directory: %w", err)
-	}
-
-	if !info.IsDir() {
-		return fmt.Errorf("cookie path is not a directory: %s", cookiesDir)
-	}
-
-	// List files in the cookies directory
-	entries, err := os.ReadDir(cookiesDir)
-	if err != nil {
-		return fmt.Errorf("failed to read cookies directory: %w", err)
-	}
-
-	deleteErrs := make([]error, 0)
-
-	for _, entry := range entries {
-		if entry.IsDir() {
+	var deleteErrs []error
+	for _, source := range r.files {
+		filePath := filepath.Join(cookiesDir, source.name)
+		info, err := legacyCookieFileInfo(filePath)
+		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
-
-		filename := entry.Name()
-		ext := strings.ToLower(filepath.Ext(filename))
-
-		// Only delete .txt and .json files
-		if ext != ".txt" && ext != ".json" {
-			continue
+		if err == nil {
+			if !os.SameFile(source.info, info) || source.info.Size() != info.Size() || !source.info.ModTime().Equal(info.ModTime()) {
+				continue
+			}
+			err = os.Remove(filePath)
 		}
-
-		filePath := filepath.Join(cookiesDir, filename)
-		if err := os.Remove(filePath); err != nil {
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			logger.Warnf("cookies: failed to delete migrated cookie file path=%s: %v", filePath, err)
 			deleteErrs = append(deleteErrs, fmt.Errorf("remove %s: %w", filePath, err))
-			continue
 		}
 	}
-
 	if len(deleteErrs) > 0 {
 		return fmt.Errorf("failed to delete one or more migrated cookie files: %w", errors.Join(deleteErrs...))
 	}
-
 	return nil
 }

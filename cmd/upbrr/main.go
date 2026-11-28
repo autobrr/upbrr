@@ -376,6 +376,7 @@ func runUploadDriver(
 		return exitError(1, err)
 	}
 	logger.SetConsoleOutput(streams.out, streams.errOut)
+	logger.LogApplicationStart()
 	defer func() {
 		if err := logger.Close(); err != nil {
 			printCLIError(streams.errOut, err)

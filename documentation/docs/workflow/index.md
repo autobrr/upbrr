@@ -25,7 +25,7 @@ Opening a source, restoring it from History, or resetting Input checks the path 
 
 A fresh application start leaves Input empty, including when the previous input had retained HDR analysis or an unfinished upload workflow. History, saved corrections, reusable artifacts, and completed operation checkpoints remain available. Open the source explicitly to continue; startup does not inspect the previous source or automatically resume its processing. Reloading a browser page in the same running application retains the current session.
 
-Startup waits for live work to release its lease before recovering interrupted effects, including when a configuration change needs to activate. See [restart recovery](../troubleshooting/index.md#an-operation-was-interrupted-by-restart).
+Startup waits for live work to release its lease before recovering interrupted effects, including when a configuration change needs to activate. After recovery, changed tracker policies withdraw obsolete duplicate approval and require fresh tracker preparation before new work; confirmed submissions retain their authority. See [restart recovery](../troubleshooting/index.md#an-operation-was-interrupted-by-restart).
 
 Folder handling matters. `--keep-folder` preserves a supplied folder instead of processing only a selected video file.
 

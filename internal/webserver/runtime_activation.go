@@ -883,15 +883,14 @@ func persistRuntimeConfigAndCookiesWithPreSave(
 		return &runtimeCookiePersistenceError{err: fmt.Errorf("create cookie store: %w", err)}
 	}
 
-	migratedCount := 0
-	failedCookies := make([]cookies.FailedCookie, 0)
+	var migrated cookies.MigrationResult
 	err = save(func(ctx context.Context, tx *sql.Tx, key []byte) error {
 		if len(key) == 0 {
 			logger.Debugf("runtime activation: cookie migration skipped: web auth helper unavailable")
 			return runActivate(ctx, tx)
 		}
 		var migrateErr error
-		migratedCount, failedCookies, migrateErr = cookies.MigrateFromFilesToDBTx(ctx, cookiesDir, store, tx, key, logger)
+		migrated, migrateErr = cookies.MigrateFromFilesToDBTx(ctx, cookiesDir, store, tx, key, logger)
 		if migrateErr != nil {
 			return &runtimeCookiePersistenceError{err: fmt.Errorf("migrate cookies: %w", migrateErr)}
 		}
@@ -900,11 +899,8 @@ func persistRuntimeConfigAndCookiesWithPreSave(
 	if err != nil {
 		return fmt.Errorf("persist runtime config with cookie migration: %w", err)
 	}
-	if migratedCount == 0 || len(failedCookies) > 0 {
-		return nil
-	}
-	if err := cookies.DeleteMigratedCookieFiles(cookiesDir, logger); err != nil {
-		logger.Warnf("cookies: migration cleanup failed dir=%s migrated=%d: %v", cookiesDir, migratedCount, err)
+	if err := migrated.Cleanup(cookiesDir, logger); err != nil {
+		logger.Warnf("cookies: migration cleanup failed dir=%s migrated=%d: %v", cookiesDir, migrated.Count, err)
 	}
 	return nil
 }

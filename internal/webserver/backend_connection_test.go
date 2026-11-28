@@ -22,6 +22,7 @@ import (
 	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
+	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -628,5 +629,46 @@ func TestTrackerProbeIgnoresSecretsFromUnusedAuthenticationModes(t *testing.T) {
 				t.Fatalf("unused auth secret blocked selected probe: %#v", got)
 			}
 		})
+	}
+}
+
+func TestTLConnectionUsesSavedManagedSession(t *testing.T) {
+	// Replace transport only while parallel tests are paused.
+	original := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = original })
+	requests := 0
+	http.DefaultTransport = connectionTestTransport(func(req *http.Request) (*http.Response, error) {
+		requests++
+		session, err := req.Cookie("session")
+		if req.Method != http.MethodGet || req.URL.Host != "www.torrentleech.org" || err != nil ||
+			session.Value != "fixture-session" || len(req.Cookies()) != 1 {
+			t.Error("TL probe did not send only the saved session cookie")
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"torrentList":[]}`))}, nil
+	})
+	repo, path := openBackendConfigTestRepo(t, "tl-managed-session.db")
+	if err := authmaterial.BootstrapAuthFile(path, "admin", "synthetic-tl-probe-password"); err != nil {
+		t.Fatal(err)
+	}
+	cfg := backendConfigTestConfig(path)
+	cfg.Trackers.Trackers = map[string]config.TrackerConfig{
+		"TL": {Username: "fixture-user", Passkey: "fixture-passkey"},
+	}
+	policy, ok := trackerimpl.MustNewRegistry().LookupAuthPolicy("TL")
+	if !ok || policy.CookieOwner == nil {
+		t.Fatal("TL managed session owner is unavailable")
+	}
+	owner := policy.CookieOwner(cfg.Trackers.Trackers["TL"])
+	if err := cookies.SaveOwnedTrackerHTTPCookies(t.Context(), path, "TL", owner, []*http.Cookie{{Name: "session", Value: "fixture-session"}}); err != nil {
+		t.Fatal(err)
+	}
+	backend := &Backend{repo: repo, cfg: cfg}
+	req := api.ConnectionTestRequest{Target: api.ConnectionTestTarget{Kind: "tracker", Instance: "TL"}, Payload: `{}`}
+	if result := backend.TestConnection(t.Context(), "fixture", req); result.Code != "success" || requests != 1 {
+		t.Fatalf("matching TL session code=%s requests=%d", result.Code, requests)
+	}
+	backend.cfg.Trackers.Trackers["TL"] = config.TrackerConfig{Username: "new-user", Passkey: "new-passkey"}
+	if result := backend.TestConnection(t.Context(), "fixture", req); result.Code != "missing_configuration" || requests != 1 {
+		t.Fatalf("mismatched TL session code=%s requests=%d", result.Code, requests)
 	}
 }

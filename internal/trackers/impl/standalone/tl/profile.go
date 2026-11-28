@@ -23,9 +23,13 @@ func Profile() standalone.Profile {
 		UploadContentMode:   trackers.UploadContentModeDescription,
 		PrepareDescription:  prepareDescription,
 		PrepareUpload:       prepareUpload,
-		ReleaseNamePolicy:   trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/tl/v1", resolveName, resolveSearchName),
+		ReleaseNamePolicy:   trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/tl/v2", resolveName, resolveSearchName),
 		NewDuplicateAdapter: newDuplicateAdapter,
-		ValidationPolicy:    validationPolicy(),
+		DupePolicy: &trackers.DupePolicy{
+			ID:          "standalone/tl/authenticated-search/v4",
+			SearchScope: trackers.DupeSearchScope{MaxPages: 100},
+		},
+		ValidationPolicy: validationPolicy(),
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{{
@@ -34,19 +38,36 @@ func Profile() standalone.Profile {
 				Disposition: api.RuleDispositionStrict,
 			}},
 		},
-		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: sourceFlag},
-		AudioPolicy:          &trackers.AudioPolicy{AllowBloat: true},
+		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{
+			Source:           sourceFlag,
+			DefaultAnnounce:  "https://fake.tracker",
+			OmitAnnounceList: true,
+		},
+		AudioPolicy: &trackers.AudioPolicy{AllowBloat: true},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{
 			TrackerURLPatterns: []string{"tracker.tleechreload", "tracker.torrentleech"},
 		},
+		AuthResolver: resolveAuthSession,
 		AuthCapability: &api.TrackerAuthCapability{
 			TrackerID:          "TL",
 			DisplayName:        "TL",
 			AuthKind:           "passkey_or_cookies",
 			SupportsCookieFile: true,
+			SupportsLogin:      true,
+			SupportsAutoLogin:  true,
+			SupportsTOTP:       true,
+			SupportsManual2FA:  true,
 			RequiresPasskey:    true,
+			Notes: []string{
+				"Save an account username and password under Trackers for automatic sign-in. An authenticator setup URI is optional.",
+				"Use Check Auth to verify or refresh your session. Enter your one-time code here if prompted.",
+				"Saved sessions take precedence over cookie folder exports. Use Import Cookies to replace a session, or use Delete Auth before placing a replacement export in the cookie folder.",
+				"Duplicate search and form uploads use the website session. API upload uses the account passkey.",
+			},
 		},
 		AuthPolicy: &trackers.AuthPolicy{
+			CookieOwner:       cookieOwner,
+			LockCookieSession: lockCookieSession,
 			ResolveRequirements: func(_ config.Config, cfg config.TrackerConfig) trackers.EffectiveAuthRequirements {
 				if cfg.APIUpload {
 					return authcontract.Requirements(
@@ -57,7 +78,7 @@ func Profile() standalone.Profile {
 				}
 				return authcontract.Requirements(
 					"form_upload",
-					false,
+					true,
 					[]trackers.AuthRequirement{
 						trackers.AuthRequirementStoredCookie,
 						trackers.AuthRequirementPasskey,

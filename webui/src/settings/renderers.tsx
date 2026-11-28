@@ -439,6 +439,8 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
         ) : (
           <input
             {...controlProps}
+            type={meta?.inputType}
+            autoComplete={meta?.inputType === "password" ? "new-password" : undefined}
             className={settingsInputClass}
             value={value === null ? "" : String(value ?? "")}
             onChange={(event) => updateConfigValue(path, event.target.value)}

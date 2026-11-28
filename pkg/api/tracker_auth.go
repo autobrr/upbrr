@@ -50,4 +50,6 @@ type TrackerAuthStatus struct {
 type TrackerAuthLoginRequest struct {
 	// Code is a one-time 2FA code for adapters that accept it during login.
 	Code string `json:"code"`
+	// ValidateStoredOnly is set internally during session validation.
+	ValidateStoredOnly bool `json:"-"`
 }

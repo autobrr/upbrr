@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -16,9 +17,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/authmaterial/authfixture"
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/logging"
+	servicedb "github.com/autobrr/upbrr/internal/services/db"
 	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
 	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
+	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/tl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -30,6 +36,210 @@ type workflowPreflightAuthFake struct {
 	capabilityCalls *int
 	validateCalls   *int
 	validatedIDs    *[]string
+}
+
+// TL API upload and cookie-only form upload can check credentials without a login.
+func TestTLPreflightChecksLocalAuthRequirements(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                                    string
+		apiUpload, passkey, storedCookie, ready bool
+		noCookieStorage, badCookieStorage       bool
+		blockedReason                           string
+		credentials                             bool
+	}{
+		{
+			name:      "API upload with passkey",
+			apiUpload: true,
+			passkey:   true,
+			ready:     true,
+		},
+		{
+			name:            "API upload without cookie storage",
+			apiUpload:       true,
+			passkey:         true,
+			ready:           true,
+			noCookieStorage: true,
+		},
+		{
+			name:             "API upload with credentials and unreadable optional cookies",
+			apiUpload:        true,
+			passkey:          true,
+			badCookieStorage: true,
+			ready:            true,
+			credentials:      true,
+		},
+		{
+			name:             "form upload with unreadable required cookies",
+			passkey:          true,
+			badCookieStorage: true,
+			blockedReason:    "cookie_storage_unavailable",
+		},
+		{
+			name:          "API upload without passkey",
+			apiUpload:     true,
+			storedCookie:  true,
+			blockedReason: "missing_passkey",
+		},
+		{
+			name:         "form upload with passkey and cookie",
+			passkey:      true,
+			storedCookie: true,
+			ready:        true,
+		},
+		{
+			name:          "form upload missing cookie",
+			passkey:       true,
+			blockedReason: "missing_stored_cookies",
+		},
+		{
+			name:          "form upload missing passkey",
+			storedCookie:  true,
+			blockedReason: "missing_passkey",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := t.Context()
+			dbPath := filepath.Join(t.TempDir(), "upbrr.db")
+			switch {
+			case tc.badCookieStorage:
+				if err := os.Mkdir(dbPath, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			case !tc.noCookieStorage:
+				authfixture.Write(t, dbPath)
+				repo, err := servicedb.OpenWithLoggerContext(ctx, dbPath, api.NopLogger{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = repo.MigrateContext(ctx)
+				if closeErr := repo.Close(); err != nil || closeErr != nil {
+					t.Fatal(errors.Join(err, closeErr))
+				}
+			}
+			if tc.storedCookie {
+				if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "TL", map[string]string{"fixture": "synthetic"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			trackerConfig := config.TrackerConfig{APIUpload: tc.apiUpload}
+			if tc.credentials {
+				trackerConfig.Username = "fixture-user"
+				trackerConfig.Password = "fixture-password"
+			}
+			if tc.passkey {
+				trackerConfig.Passkey = "synthetic"
+			}
+			cfg := config.Config{
+				MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+				Trackers:     config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"TL": trackerConfig}},
+			}
+			registry := trackerspkg.NewRegistry()
+			if err := registry.Register(tl.New()); err != nil {
+				t.Fatal(err)
+			}
+			logger, err := logging.New(config.LoggingConfig{Level: "debug"}, dbPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			logger.SetConsoleOutput(io.Discard, io.Discard)
+			auth := trackerauth.NewServiceWithRegistryAndLogger(cfg, registry, logger)
+			builder := workflowPreflightBuilder{
+				auth:     auth,
+				registry: registry,
+				config:   cfg,
+				logger:   api.NopLogger{},
+			}
+			catalog := api.TrackerCatalogSnapshot{Trackers: []api.TrackerCatalogDescriptor{{TrackerID: "TL"}}}
+			projections := api.TrackerReleaseProjectionSet{
+				ExecutionMode: api.WorkflowExecutionModeDebug,
+				Projections: []api.TrackerReleaseProjection{{
+					TrackerID:   "TL",
+					Readiness:   api.ReadinessStatusReady,
+					DupeReady:   true,
+					UploadReady: true,
+				}},
+			}
+			assessment, _, err := builder.Build(ctx, api.UploadSubject{}, catalog, api.TrackerRuntimeSnapshot{}, projections, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := assessment.Results[0]
+			if result.AuthReady != tc.ready {
+				t.Fatalf("auth readiness = %t, want %t; failures=%+v", result.AuthReady, tc.ready, result.Failures)
+			}
+			if !tc.ready {
+				if len(result.Failures) != 1 || result.Failures[0].Failure.Code != api.OperationFailureTrackerAuthRequired {
+					t.Fatalf("failed local inputs must remain blocked, got %+v", result.Failures)
+				}
+			}
+			mode := "form_upload"
+			if tc.apiUpload {
+				mode = "api_upload"
+			}
+			level, decision, reason := "debug", "ready", "none"
+			if !tc.ready {
+				level, decision, reason = "warn", "blocked", tc.blockedReason
+			}
+			entries := logger.Recent(0)
+			if len(entries) != 1 || entries[0].Level != level ||
+				!strings.Contains(entries[0].Message, "tracker=TL mode="+mode+" validation=local") ||
+				!strings.Contains(entries[0].Message, "decision="+decision+" reason="+reason) ||
+				strings.Contains(entries[0].Message, "synthetic") {
+				t.Fatalf("local auth log = %#v, want %s decision=%s reason=%s without credential values", entries, level, decision, reason)
+			}
+		})
+	}
+}
+
+func TestTLPreflightResourceRevalidationRetainsAPIUploadMode(t *testing.T) {
+	t.Parallel()
+	registry := trackerspkg.NewRegistry()
+	if err := registry.Register(tl.New()); err != nil {
+		t.Fatal(err)
+	}
+	for _, apiUpload := range []bool{false, true} {
+		cfg := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"TL": {APIUpload: apiUpload}}}}
+		subject := api.UploadSubject{
+			Anime:        true,
+			ReleaseName:  "Example.Show.S01E01.1080p.WEB-DL-GRP",
+			SceneNFOPath: filepath.Join(t.TempDir(), "missing.nfo"),
+			Identity: api.ExternalIdentity{
+				Category: api.CanonicalCategoryTV,
+				MALID:    111,
+				IMDBID:   456,
+			},
+			ProviderMetadata: api.SourceScopedMetadata{AniList: &api.AniListMetadata{MALID: 111, AniListID: 222}, IMDB: &api.IMDBMetadata{IMDBID: 456, Title: "Example Show"}},
+		}
+		projection, failure := registry.ProjectRelease(t.Context(), trackerspkg.PreparationInput{
+			Tracker:       "TL",
+			Meta:          subject,
+			TrackerConfig: cfg.Trackers.Trackers["TL"],
+		}, "input", "catalog", "config")
+		if failure != nil || !projection.DupeReady {
+			t.Fatalf("initial projection=%+v failure=%v", projection, failure)
+		}
+		// A changed local resource triggers preflight's production rule-evaluation path.
+		// Its API mapping requirement must survive construction of a fresh subject.
+		subject.ProviderMetadata.AniList = nil
+		builder := workflowPreflightBuilder{
+			config:   cfg,
+			registry: registry,
+			auth: workflowPreflightAuthFake{
+				capabilities: []api.TrackerAuthCapability{{TrackerID: "TL"}},
+				statuses:     []api.TrackerAuthStatus{{TrackerID: "TL", State: trackerauth.StateConfigured}},
+			},
+		}
+		_, finalized, err := builder.Build(t.Context(), subject, api.TrackerCatalogSnapshot{Trackers: []api.TrackerCatalogDescriptor{{TrackerID: "TL"}}}, api.TrackerRuntimeSnapshot{}, api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{projection}}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(finalized) != 1 || finalized[0].DupeReady == apiUpload {
+			t.Fatalf("api=%t finalized=%+v", apiUpload, finalized)
+		}
+	}
 }
 
 type workflowPreflightImagesFake struct{ links []api.ScreenshotLinkedImage }
@@ -792,9 +1002,9 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 			t.Fatal(err)
 		}
 		builder := workflowPreflightBuilder{
-auth: workflowPreflightAuthFake{},
- registry: policyRegistry,
-			config: config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}},
+			auth:     workflowPreflightAuthFake{},
+			registry: policyRegistry,
+			config:   config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}},
 		}
 		progress := make([]api.WorkflowProgressUpdate, 0, 1)
 		ctx := api.WithWorkflowProgressReporter(context.Background(), func(update api.WorkflowProgressUpdate) {
@@ -832,15 +1042,17 @@ auth: workflowPreflightAuthFake{},
 		diagnostic.Projections = slices.Clone(projections.Projections)
 		projection := &diagnostic.Projections[0]
 		if err := trackerspkg.ApplyProjectionRuleFailures(projection, []api.RuleFailure{{
-			Rule: "manual_policy",
- Reason: "Normal upload requires approval.",
- Disposition: api.RuleDispositionWaivable,
+			Rule:        "manual_policy",
+			Reason:      "Normal upload requires approval.",
+			Disposition: api.RuleDispositionWaivable,
 		}}, api.WorkflowExecutionModeDebug, "", nil); err != nil {
 			t.Fatal(err)
 		}
 		builder := workflowPreflightBuilder{auth: workflowPreflightAuthFake{}, registry: registry}
 		assessment, finalized, err := builder.Build(t.Context(), api.UploadSubject{}, catalog, runtime, diagnostic, now)
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		if assessment.Results[0].State != api.TrackerPreflightStateFailed || len(assessment.Results[0].Failures) == 0 ||
 			!finalized[0].DiagnosticReady || finalized[0].Readiness != api.ReadinessStatusBlocked || finalized[0].UploadReady {
 			t.Fatalf("diagnostic rule outcome = %#v / %#v", assessment.Results[0], finalized[0])

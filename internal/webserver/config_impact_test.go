@@ -4,13 +4,90 @@
 package webserver
 
 import (
+	"encoding/json"
 	"reflect"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestTLUploadModeChangesWithdrawReviewedDescription(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		change func(*config.TrackerConfig)
+	}{
+		{"API upload", func(cfg *config.TrackerConfig) { cfg.APIUpload = true }},
+		{"native screenshots", func(cfg *config.TrackerConfig) { cfg.ImgRehost = true }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			previous := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"TL": {}}}}
+			next := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"TL": {}}}}
+			tracker := next.Trackers.Trackers["TL"]
+			test.change(&tracker)
+			next.Trackers.Trackers["TL"] = tracker
+			now := time.Now().UTC()
+			state := releaseworkflow.State{
+				OwnerID: "owner",
+				Workflow: api.ReleaseWorkflow{
+					ID:                 "workflow",
+					Revision:           1,
+					Status:             api.WorkflowStatusActive,
+					CreatedAt:          now,
+					UpdatedAt:          now,
+					FactInstructions:   api.ReleaseFactInstructionSnapshotRef{ID: "facts", Revision: 1},
+					Release:            &api.ReleaseSnapshotRef{ID: "release", Revision: 1},
+					TrackerCatalog:     &api.TrackerCatalogSnapshotRef{ID: "catalog", Revision: 1},
+					TrackerRuntime:     &api.TrackerRuntimeSnapshotRef{ID: "runtime", Revision: 1},
+					Selection:          &api.TrackerSelectionRef{ID: "selection", Revision: 1},
+					TrackerProjections: &api.TrackerReleaseProjectionSetRef{ID: "projections", Revision: 1},
+					Dupes:              &api.DupeAssessmentRef{ID: "dupes", Revision: 1},
+					Media:              &api.MediaArtifactSetRef{ID: "media", Revision: 1},
+					Descriptions:       &api.DescriptionSetRef{ID: "reviewed", Revision: 1},
+					DryRun:             &api.UploadDryRunResultRef{ID: "plan", Revision: 1},
+				},
+				Projections: map[api.TrackerReleaseProjectionSetID]api.TrackerReleaseProjectionSet{
+					"projections": {
+						ID:          "projections",
+						Revision:    1,
+						Projections: []api.TrackerReleaseProjection{{TrackerID: "TL"}},
+					},
+				},
+			}
+			payload, err := json.Marshal(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			record := api.ReleaseWorkflowStateRecord{
+				OwnerID:    state.OwnerID,
+				WorkflowID: state.Workflow.ID,
+				Revision:   state.Workflow.Revision,
+				Payload:    payload,
+			}
+			impacts := ConfigImpactDetails(previous, next)
+			if len(impacts) == 0 {
+				t.Fatal("mode change produced no invalidation")
+			}
+			for _, impact := range impacts {
+				record, err = releaseworkflow.ApplyConfigImpact(record, impact)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			var restored releaseworkflow.State
+			if err := json.Unmarshal(record.Payload, &restored); err != nil {
+				t.Fatal(err)
+			}
+			if restored.Workflow.Descriptions != nil || restored.Workflow.DryRun != nil || restored.Workflow.TrackerProjections != nil {
+				t.Fatal("changed mode retained reviewed submission dependencies")
+			}
+		})
+	}
+}
 
 func TestConfigImpactsClassifiesEffectiveRoots(t *testing.T) {
 	base := config.Config{

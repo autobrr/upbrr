@@ -4,6 +4,7 @@
 package logging
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -340,6 +341,12 @@ func (l *Logger) Tracef(format string, args ...any) {
 
 func (l *Logger) Debugf(format string, args ...any) {
 	l.logf(LevelDebug, "DEBUG", format, args...)
+}
+
+// LogApplicationStart records the running build in the configured log outputs.
+func (l *Logger) LogApplicationStart() {
+	info := api.CurrentApplicationInfo()
+	l.Infof("upbrr starting version=%q commit=%q", info.Version, cmp.Or(info.BuildIdentifier, "unknown"))
 }
 
 func (l *Logger) Infof(format string, args ...any) {

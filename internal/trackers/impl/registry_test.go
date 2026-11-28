@@ -99,10 +99,10 @@ func testPTPDescriptionCaptureScope(t *testing.T, disc string, frameDiscs []stri
 		ImageHostOverrides: api.ImageHostOverrides{SkipUpload: new(true)},
 	}
 	cfg := config.Config{
-MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "upbrr.db")},
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "upbrr.db")},
 		ImageHosting: config.ImageHostingConfig{Host1: "imgbb"},
 		Description:  config.DescriptionSettingsConfig{CustomDescriptionHeader: "Release notes", ScreenshotHeader: "[b]Screenshots[/b]"},
-}
+	}
 	service := trackers.NewServiceWithRegistry(cfg, api.NopLogger{}, descriptionPreviewPersistence{}, MustNewRegistry())
 	preview, err := service.BuildPreparation(t.Context(), api.NewDescriptionSubject(meta), trackerIDs)
 	if err != nil || len(preview.ContentFailures) != 0 || len(preview.Descriptions) != len(trackerIDs) {
@@ -988,7 +988,6 @@ func TestNewRegistryOwnsUploadArtifactPolicies(t *testing.T) {
 		"PHD": {Source: "PrivateHD", DefaultAnnounce: "https://tracker.privatehd.to/announce"},
 		"PTS": {Source: "[www.ptskit.org] PTSKIT", RequireAnnounce: true},
 		"RTF": {Source: "sunshine", RequireAnnounce: true},
-		"TL":  {Source: "TorrentLeech.org"},
 		"TOS": {Source: "TheOldSchool"},
 		"TVC": {Source: "TVCHAOS", RequireAnnounce: true},
 	}
@@ -1226,9 +1225,9 @@ func TestNewRegistryIncludesAuthResolvers(t *testing.T) {
 		case "TL":
 			wantMode = "form_upload"
 		}
-		wantLogin := slices.Contains([]string{"AR", "BTN", "FF", "FL", "PTP", "RTF"}, tracker)
-		wantResolver := slices.Contains([]string{"AR", "AZ", "BTN", "CZ", "FF", "FL", "HDB", "HDT", "PHD", "PTP", "RTF"}, tracker)
-		want2FA := tracker == "BTN" || tracker == "PTP"
+		wantLogin := slices.Contains([]string{"AR", "BTN", "FF", "FL", "PTP", "RTF", "TL"}, tracker)
+		wantResolver := slices.Contains([]string{"AR", "AZ", "BTN", "CZ", "FF", "FL", "HDB", "HDT", "PHD", "PTP", "RTF", "TL"}, tracker)
+		want2FA := tracker == "BTN" || tracker == "PTP" || tracker == "TL"
 		capability, ok := registry.LookupAuthCapability(tracker)
 		if !ok || capability.TrackerID != tracker || capability.SupportsLogin != wantLogin {
 			t.Errorf("%s auth capability = %#v, %t", tracker, capability, ok)
@@ -1311,6 +1310,7 @@ func TestNewRegistryResolvesHybridAuthRequirements(t *testing.T) {
 			name:     "TL form upload",
 			tracker:  "TL",
 			wantMode: "form_upload",
+			want2FA:  true,
 			wantFirst: []trackers.AuthRequirement{
 				trackers.AuthRequirementStoredCookie,
 				trackers.AuthRequirementPasskey,

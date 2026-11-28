@@ -1547,6 +1547,7 @@ export type FieldMeta = {
   label?: string;
   help?: string;
   type?: FieldType;
+  inputType?: "password";
   advanced?: boolean;
   sensitive?: boolean;
   commaSeparated?: boolean;

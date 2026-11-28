@@ -315,6 +315,12 @@ type AuthRequirementsResolver func(config.Config, config.TrackerConfig) Effectiv
 // AuthPolicy declares coordinator behavior that cannot be inferred from the
 // user-facing auth capability alone.
 type AuthPolicy struct {
+	// CookieOwner binds automatically created cookies to the credentials that
+	// created them. User-imported sessions have no owner.
+	CookieOwner func(config.TrackerConfig) string
+	// LockCookieSession serializes explicit cookie changes with this
+	// tracker's equivalent automatic operations.
+	LockCookieSession func(context.Context) (release func(), err error)
 	// APIKeyGuidance observes account expiry without contributing auth requirements.
 	APIKeyGuidance *APIKeyGuidance
 	// ResolveRequirements returns the secret-free auth facts for the effective
@@ -519,6 +525,8 @@ type UploadArtifactPolicy struct {
 	UseMyAnnounce bool
 	// RequireAnnounce prevents artifact preparation without an announce URL.
 	RequireAnnounce bool
+	// OmitAnnounceList keeps only the primary announce in the upload artifact.
+	OmitAnnounceList bool `json:",omitempty"`
 }
 
 // UploadArtifactPolicyProvider declares tracker-owned personalization policy.
