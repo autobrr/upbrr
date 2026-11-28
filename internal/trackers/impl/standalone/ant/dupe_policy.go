@@ -174,9 +174,12 @@ func compareSlots(target, candidate string, targetNames []string, candidateName 
 		return api.DupeRelationManualReview
 	}
 	if evidence.Contradictory || editionConflict {
-		// Full discs and remuxes derive their native kind without source or codec.
+		// A codec conflict can change an encode's slot but cannot make a
+		// structurally confirmed encode or remux a full disc.
 		discAndRemux := proposed[0] == "FullDisc" && existing[0] == "Remux" || proposed[0] == "Remux" && existing[0] == "FullDisc"
-		if discAndRemux {
+		sameTierDiscAndEncode := proposed[1] != "?" && proposed[1] == existing[1] &&
+			(proposed[0] == "FullDisc" && existing[0] == "Encode" || proposed[0] == "Encode" && existing[0] == "FullDisc")
+		if discAndRemux || sameTierDiscAndEncode {
 			if evidence.DeclaredTypeDistinct {
 				return api.DupeRelationCoexists
 			}

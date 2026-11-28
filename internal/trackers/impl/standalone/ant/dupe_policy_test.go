@@ -86,6 +86,7 @@ func TestANTNativeSlotsAllowOnlyIndependentlyProvenSeparation(t *testing.T) {
 		{"UHD encode with unrelated codec conflict", "Example.Movie.2026.2160p.BluRay.x265-OTHER.mkv", "2160p", "ENCODE", "BluRay", "H264", "", api.DupeRelationCoexists},
 		{"HD remux with unrelated source conflict", "Example.Movie.2026.1080p.BluRay.REMUX.AVC-OTHER.mkv", "1080p", "REMUX", "DVD", "H264", "", api.DupeRelationCoexists},
 		{"same tier encode with unrelated edition conflict", "Example.Movie.2026.Extended.Edition.576i.PAL.DVD.x264-OTHER.mkv", "576i", "ENCODE", "DVD", "H264", "", api.DupeRelationCoexists},
+		{"same tier encode with unrelated codec conflict", "Example.Movie.2026.576i.PAL.DVD.x264-OTHER.mkv", "576i", "ENCODE", "DVD", "H265", "", api.DupeRelationCoexists},
 		{"same tier encode with unrelated HDR conflict", "Example.Movie.2026.576i.PAL.DVD.DV.x264-OTHER.mkv", "576i", "ENCODE", "DVD", "H264", "", api.DupeRelationCoexists},
 		{"target full disc conflicts with reviewed remux title", "Example.Movie.2026.576i.PAL.DVD.DV.x264-OTHER.mkv", "576i", "ENCODE", "DVD", "H264", "Example.Movie.2026.576i.PAL.DVD.REMUX-GRP", api.DupeRelationManualReview},
 		{"native remux kind conflicts with complete disc title", "Example.Movie.2026.576i.PAL.DVD9.DV.x264-OTHER.mkv", "576i", "REMUX", "DVD", "H264", "", api.DupeRelationManualReview},
