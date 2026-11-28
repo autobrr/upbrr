@@ -645,9 +645,9 @@ func resolveBTNImage(meta api.UploadSubject, fields map[string]string) string {
 // data is missing.
 
 // resolveBTNTVSeasonEpisode returns the season and episode numbers BTN should
-// use for generated request and description fields. TVDB episode numbers win
-// over IMDb episode data, then metadata ints; missing values fall back
-// independently.
+// use for generated request and description fields. Explicit season zero keeps
+// the prepared coordinates. Otherwise, TVDB episode numbers win over IMDb
+// episode data, then metadata ints; missing values fall back independently.
 
 // btnTVPayloadMetadataMessage explains when BTN cannot build TV season or
 // episode fields because canonical metadata is absent. Parsed release values are
