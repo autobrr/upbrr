@@ -58,6 +58,68 @@ func TestEpisodeSeasonPresenceDoesNotTrustLegacyEvidence(t *testing.T) {
 	}
 }
 
+func TestSeriesIdentityDoesNotReuseLegacyTMDBResponses(t *testing.T) {
+	t.Parallel()
+	const series = "/tv/555001"
+	var mediaReads, linksReads atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := `{}`
+		switch r.URL.Path {
+		case series:
+			mediaReads.Add(1)
+			body = `{"id":555001,"name":"Example Series","first_air_date":"2026-01-01"}`
+		case series + "/external_ids":
+			linksReads.Add(1)
+			body = `{"id":555001,"imdb_id":"tt0555002"}`
+		case series + "/translations":
+			body = `{"translations":[{"iso_639_1":"de","data":{"name":"Beispielserie"}}]}`
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(server.Close)
+	repo, err := db.OpenContext(t.Context(), filepath.Join(t.TempDir(), "metadata.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.MigrateContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(t.TempDir(), "source.mkv")
+	ctx, scope := evidence.WithScope(t.Context(), repo, source, "fingerprint", api.ExternalFreshnessReuse, api.NopLogger{})
+	client := NewClient(server.Client(), nil, "synthetic-key")
+	client.baseURL = server.URL
+	params := map[string]string{"api_key": client.apiKey}
+	// Pre-upgrade typed payloads decode with no envelope IDs.
+	for _, cached := range []struct {
+		domain, endpoint string
+		payload          any
+	}{
+		{"tmdb.media-response.v2", series, &mediaResponse{Name: "Example Series", FirstAirDate: "2026-01-01"}},
+		{"tmdb.response.v1", series + "/external_ids", &externalIDsResponse{IMDbID: "tt0555002"}},
+	} {
+		if err := evidence.JSON(ctx, cached.domain, []any{client.baseURL, client.apiKey, cached.endpoint, params}, cached.payload, errNotFound, nil, func() error { return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := scope.Err(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		ctx, scope := evidence.WithScope(t.Context(), repo, source, "fingerprint", api.ExternalFreshnessReuse, api.NopLogger{})
+		result, err := client.FetchMetadata(ctx, MetadataInput{TMDBID: 555001, Category: "TV"})
+		if err != nil || !result.SeriesExternalIDsVerified || result.ExternalIMDbID != 555002 {
+			t.Fatalf("unverified series links: verified=%t, IMDb=%d, err=%v", result.SeriesExternalIDsVerified, result.ExternalIMDbID, err)
+		}
+		if err := scope.Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if mediaReads.Load() != 1 || linksReads.Load() != 1 {
+		t.Fatalf("want one refetch of each response, got media=%d links=%d", mediaReads.Load(), linksReads.Load())
+	}
+}
+
 func TestFetchMetadataUsesGermanDetailFallbackWhenTranslationsFail(t *testing.T) {
 	var translationsRequested atomic.Bool
 	var localizedRequested atomic.Bool
