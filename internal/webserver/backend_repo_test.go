@@ -25,6 +25,7 @@ import (
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -65,6 +66,46 @@ func TestNewBackendKeepsSharedRepositoryUsableAfterCoreClose(t *testing.T) {
 	}
 }
 
+func TestNewBackendPublishesBuildInRecentAndFileLogs(t *testing.T) {
+	api.SetApplicationBuild("v0.0.0-test", "123456789abc")
+	t.Cleanup(func() { api.SetApplicationBuild("", "") })
+
+	cfg := backendConfigTestConfig(filepath.Join(t.TempDir(), "startup.db"))
+	cfg.Logging = config.LoggingConfig{
+		Level:          "info",
+		FileEnabled:    true,
+		MaxTotalSizeMB: 1,
+		MaxFiles:       1,
+	}
+	backend, err := NewBackendWithContext(t.Context(), cfg, newEventHub())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+
+	want := "version=\"v0.0.0-test\" commit=\"123456789abc\""
+	entries, err := backend.GetRecentLogs(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(entries, func(entry logging.Entry) bool {
+		return entry.Level == "info" && strings.Contains(entry.Message, want)
+	}) {
+		t.Fatalf("recent logs missing build metadata: %+v", entries)
+	}
+	logPath, err := backend.GetLogPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := strings.Count(string(contents), want); count != 1 {
+		t.Fatalf("logfile build entries = %d, want 1", count)
+	}
+}
+
 func TestNewBackendInitializesConfigActivationFingerprint(t *testing.T) {
 	t.Parallel()
 
@@ -92,14 +133,7 @@ func TestNewBackendInitializesConfigActivationFingerprint(t *testing.T) {
 func TestStartupReconcilesNewDefaultsBeforeConfigIsSaved(t *testing.T) {
 	ctx := t.Context()
 	repoPath := filepath.Join(t.TempDir(), "activation.db")
-	repo, err := db.OpenContext(ctx, repoPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.MigrateContext(ctx); err != nil {
-		t.Fatal(err)
-	}
+	repo := dbfixture.OpenMigrated(t, repoPath)
 	previous := backendConfigTestConfig(repoPath)
 	initial, err := InitializeRuntimeConfigActivation(ctx, repo, previous, nil)
 	if err != nil {
@@ -129,7 +163,7 @@ func TestStartupPreservesEvidenceOnlyForProvenFingerprintFormatChange(t *testing
 			repo := openRuntimeActivationTestRepo(t)
 			cfg := validRuntimeActivationConfig()
 			cfg.MainSettings.DBPath = repo.DBPath()
-			cfg.Description.CharLimit = 37
+			cfg.MainSettings.TrackerPassChecks = 37
 			legacy := cfg
 			legacy.MainSettings.DBPath = ""
 			oldFingerprint, err := api.CanonicalWorkflowFingerprint(legacy)
@@ -167,14 +201,7 @@ func TestStartupPreservesEvidenceOnlyForProvenFingerprintFormatChange(t *testing
 func TestNewBackendReconcilesExpiredOpeningInput(t *testing.T) {
 	ctx := t.Context()
 	repoPath := filepath.Join(t.TempDir(), "activation.db")
-	repo, err := db.OpenContext(ctx, repoPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.MigrateContext(ctx); err != nil {
-		t.Fatal(err)
-	}
+	repo := dbfixture.OpenMigrated(t, repoPath)
 	previous := backendConfigTestConfig(repoPath)
 	if _, err := InitializeRuntimeConfigActivation(ctx, repo, previous, nil); err != nil {
 		t.Fatal(err)
@@ -222,14 +249,12 @@ func TestNewBackendReconcilesRetiredA4KActivationFingerprint(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 	repoPath := filepath.Join(t.TempDir(), "activation.db")
+	dbfixture.WriteMigrated(t, repoPath)
 	repo, err := db.OpenContext(ctx, repoPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer repo.Close()
-	if err := repo.MigrateContext(ctx); err != nil {
-		t.Fatal(err)
-	}
 	cfg := backendConfigTestConfig(repoPath)
 	cfg.Trackers.Trackers = map[string]config.TrackerConfig{"A4K": {APIKey: "synthetic-key", Anon: true}}
 	if err := config.SaveToDatabase(ctx, &cfg, repo); err != nil {
@@ -323,14 +348,7 @@ func TestStartupReconcilesStoredConfigChanges(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := t.Context()
 			repoPath := filepath.Join(t.TempDir(), "activation.db")
-			repo, err := db.OpenContext(ctx, repoPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = repo.Close() })
-			if err := repo.MigrateContext(ctx); err != nil {
-				t.Fatal(err)
-			}
+			repo := dbfixture.OpenMigrated(t, repoPath)
 			cfg := backendConfigTestConfig(repoPath)
 			if err := config.SaveToDatabase(ctx, &cfg, repo); err != nil {
 				t.Fatal(err)
@@ -380,7 +398,7 @@ func TestStartupReconcilesStoredConfigChanges(t *testing.T) {
 	}
 }
 
-func TestStartupPreservesUnresolvedWorkflowEffectsBeforeActivation(t *testing.T) {
+func TestStartupRecoversMultipleEffectsInOneWorkflowBeforeActivation(t *testing.T) {
 	for _, test := range []struct {
 		name          string
 		changedConfig bool
@@ -391,25 +409,27 @@ func TestStartupPreservesUnresolvedWorkflowEffectsBeforeActivation(t *testing.T)
 		t.Run(test.name, func(t *testing.T) {
 			ctx := t.Context()
 			repoPath := filepath.Join(t.TempDir(), "activation.db")
-			repo, err := db.OpenContext(ctx, repoPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = repo.Close() })
-			if err := repo.MigrateContext(ctx); err != nil {
-				t.Fatal(err)
-			}
+			repo := dbfixture.OpenMigrated(t, repoPath)
 			previous := backendConfigTestConfig(repoPath)
 			initial, err := InitializeRuntimeConfigActivation(ctx, repo, previous, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			now := time.Now().UTC().Format(time.RFC3339Nano)
-			if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO release_workflow_states (
-				owner_id, workflow_id, revision, status, creation_key, creation_fingerprint, state_json, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, "owner", "workflow", 1, "active", "", "", []byte(`{}`), now, now); err != nil {
+			persistent, err := releaseworkflow.NewPersistentRepository(repo)
+			if err != nil {
 				t.Fatal(err)
 			}
+			module, err := releaseworkflow.New(persistent, releaseworkflow.NewMemoryPrivateResourceStore(), releaseworkflow.ReleasePreparerFunc{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = module.Shutdown(context.Background()) })
+			created, err := module.Execute(ctx, "owner", releaseworkflow.CreateWorkflowCommand{IdempotencyKey: "retained-workflow"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			workflowID := created.Workflow.ID
+			now := time.Now().UTC().Format(time.RFC3339Nano)
 			for _, effect := range []struct {
 				id     string
 				status api.WorkflowEffectStatus
@@ -421,8 +441,8 @@ func TestStartupPreservesUnresolvedWorkflowEffectsBeforeActivation(t *testing.T)
 				if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO release_workflow_effects (
 					owner_id, workflow_id, operation_id, effect_id, kind, scope_id, semantic_fingerprint,
 					status, started_at, updated_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "owner", "workflow", "operation", effect.id,
-					"image_hosting", effect.id, "synthetic", effect.status, now, now); err != nil {
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "owner", workflowID, "operation", effect.id,
+					"tracker_submission", effect.id, "synthetic", effect.status, now, now); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -430,36 +450,32 @@ func TestStartupPreservesUnresolvedWorkflowEffectsBeforeActivation(t *testing.T)
 				content_version, content_digest, content_scope, content_json, tracker_site,
 				owner_id, workflow_id, operation_id, effect_id, status, started_at, updated_at
 			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "1", "synthetic-content", "file", []byte(`{}`), "TEST",
-				"owner", "workflow", "operation", "unknown-effect", api.WorkflowEffectStatusUnknown, now, now); err != nil {
+				"owner", workflowID, "operation", "unknown-effect", api.WorkflowEffectStatusUnknown, now, now); err != nil {
 				t.Fatal(err)
 			}
 			current := previous
 			if test.changedConfig {
 				current.Metadata.KeepImages = !previous.Metadata.KeepImages
 			}
-			activation, err := InitializeRuntimeConfigActivation(ctx, repo, current, nil)
+			wantGeneration := initial.ActiveGeneration
 			if test.changedConfig {
-				if !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
-					t.Fatalf("changed-config startup with interrupted effects: %v", err)
-				}
-			} else if err != nil || activation.ActiveGeneration != initial.ActiveGeneration {
-				t.Fatalf("unchanged-config startup = %#v, err=%v", activation, err)
+				wantGeneration++
 			}
-			persisted, err := repo.LoadConfigActivation(ctx)
-			if err != nil || persisted.ActiveGeneration != initial.ActiveGeneration || persisted.Fingerprint != initial.Fingerprint {
-				t.Fatalf("startup changed activation with uncertain effects: %#v, err=%v", persisted, err)
+			activation, err := InitializeRuntimeConfigActivation(ctx, repo, current, nil)
+			if err != nil || activation.ActiveGeneration != wantGeneration {
+				t.Fatalf("startup did not recover effects and activate generation %d: %+v err=%v", wantGeneration, activation, err)
 			}
-			var fenceStatus string
-			if err := repo.RawDB().QueryRowContext(ctx, `SELECT status FROM submission_fences WHERE content_digest = ?`,
-				"synthetic-content").Scan(&fenceStatus); err != nil || fenceStatus != string(api.WorkflowEffectStatusUnknown) {
-				t.Fatalf("uncertain submission fence = %q, err=%v", fenceStatus, err)
+			var fences int
+			if err := repo.RawDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM submission_fences WHERE content_digest = ?`,
+				"synthetic-content").Scan(&fences); err != nil || fences != 0 {
+				t.Fatalf("interrupted exact submission fence still blocks a retry: count=%d err=%v", fences, err)
 			}
 			for _, effect := range []struct {
 				id     string
 				status api.WorkflowEffectStatus
 			}{
-				{id: "started-effect", status: api.WorkflowEffectStatusStarted},
-				{id: "unknown-effect", status: api.WorkflowEffectStatusUnknown},
+				{id: "started-effect", status: api.WorkflowEffectStatusFailed},
+				{id: "unknown-effect", status: api.WorkflowEffectStatusFailed},
 				{id: "succeeded-effect", status: api.WorkflowEffectStatusSucceeded},
 			} {
 				var status string
@@ -475,14 +491,7 @@ func TestStartupPreservesUnresolvedWorkflowEffectsBeforeActivation(t *testing.T)
 func TestStartupWaitsForLiveInputWithoutDiscardingUnresolvedEffect(t *testing.T) {
 	ctx := t.Context()
 	repoPath := filepath.Join(t.TempDir(), "activation.db")
-	repo, err := db.OpenContext(ctx, repoPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.MigrateContext(ctx); err != nil {
-		t.Fatal(err)
-	}
+	repo := dbfixture.OpenMigrated(t, repoPath)
 	previous := backendConfigTestConfig(repoPath)
 	initial, err := InitializeRuntimeConfigActivation(ctx, repo, previous, nil)
 	if err != nil {
@@ -509,7 +518,7 @@ func TestStartupWaitsForLiveInputWithoutDiscardingUnresolvedEffect(t *testing.T)
 		Fence:          1,
 		OwnerID:        "owner",
 		CoordinatorID:  "previous-process",
-		LeaseExpiresAt: now.Add(500 * time.Millisecond),
+		LeaseExpiresAt: now.Add(time.Minute),
 		ReservationID:  "opening",
 		RequestedPath:  "synthetic-source",
 	}
@@ -523,14 +532,11 @@ func TestStartupWaitsForLiveInputWithoutDiscardingUnresolvedEffect(t *testing.T)
 	}
 	current := previous
 	current.Metadata.KeepImages = !previous.Metadata.KeepImages
-	startupCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	startupCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 	defer cancel()
 	_, err = InitializeRuntimeConfigActivation(startupCtx, repo, current, nil)
-	if !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
-		t.Fatalf("startup after input lease expires: %v", err)
-	}
-	if time.Now().Before(slot.LeaseExpiresAt) {
-		t.Fatal("startup skipped the live input lease")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("startup bypassed the live input lease: %v", err)
 	}
 	activation, err := repo.LoadConfigActivation(ctx)
 	if err != nil || activation.ActiveGeneration != initial.ActiveGeneration {
@@ -547,14 +553,12 @@ func TestNewBackendRejectsChangedConfigActivationFingerprint(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 	repoPath := filepath.Join(t.TempDir(), "activation.db")
+	dbfixture.WriteMigrated(t, repoPath)
 	repo, err := db.OpenContext(ctx, repoPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer repo.Close()
-	if err := repo.MigrateContext(ctx); err != nil {
-		t.Fatal(err)
-	}
 	cfg := backendConfigTestConfig(repoPath)
 	if err := config.SaveToDatabase(ctx, &cfg, repo); err != nil {
 		t.Fatal(err)

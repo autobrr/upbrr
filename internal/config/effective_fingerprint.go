@@ -40,13 +40,6 @@ func WorkflowConfigForComparison(cfg Config) Config {
 	cfg.Metadata.PingUnit3D = false
 	cfg.Metadata.CheckPredb = false
 	cfg.ScreenshotHandling.CutoffScreens = 0
-	cfg.Description.MultiScreens = 0
-	cfg.Description.PackThumbSize = 0
-	cfg.Description.CharLimit = 0
-	cfg.Description.FileLimit = 0
-	cfg.Description.ProcessLimit = 0
-	cfg.ArrIntegration.EmbyDir = ""
-	cfg.ArrIntegration.EmbyTVDir = ""
 	cfg.TorrentCreation.MkbrrThreads = 0
 	cfg.PostUpload.ShowUploadDuration = false
 	cfg.PostUpload.PrintTrackerMessages = false

@@ -196,7 +196,7 @@ func parseNativeJSON(data []byte, defaults *config.Config) (*config.Config, erro
 }
 
 // mergeConfigMap recursively overlays user-supplied maps onto default maps.
-// Unknown sections and fields are rejected except tracker extension fields, and
+// Retired settings are ignored. Other unknown fields are rejected except tracker extension fields, and
 // dynamically named torrent clients are validated against the client schema.
 // Null or empty object overlays leave default objects intact; scalar or array
 // overlays cannot replace an object section.
@@ -208,6 +208,9 @@ func mergeConfigMap(base map[string]any, overlay map[string]any) error {
 // so dynamic tracker and torrent-client entries can be validated by context.
 func mergeConfigMapAt(base map[string]any, overlay map[string]any, path string) error {
 	for key, overlayValue := range overlay {
+		if config.IsRetiredConfigField(path, key) {
+			continue
+		}
 		field := key
 		if path != "" {
 			field = path + "." + key

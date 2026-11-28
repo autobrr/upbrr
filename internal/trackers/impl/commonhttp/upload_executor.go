@@ -4,6 +4,7 @@
 package commonhttp
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers/submission"
 )
@@ -105,6 +107,7 @@ func ExecuteUpload(client *http.Client, req *http.Request, options UploadExecuti
 	success := successStatus(resp.StatusCode)
 	body, preview, complete, readErr := readExecutedUploadBody(resp.Body, success, options.SuccessBody, options.SuccessBodyLimit, previewLimit)
 	closeErr := resp.Body.Close()
+	LogUploadResponse(req.Context(), tracker, resp)
 
 	finalURL := ""
 	if resp.Request != nil && resp.Request.URL != nil {
@@ -131,6 +134,12 @@ func ExecuteUpload(client *http.Client, req *http.Request, options UploadExecuti
 		return result, fmt.Errorf("trackers: %s read upload response: %w", tracker, safeWrappedError(errors.Join(readErr, closeErr)))
 	}
 	return result, nil
+}
+
+// LogUploadResponse records the status of a tracker submission without logging
+// response headers, body, or URL.
+func LogUploadResponse(ctx context.Context, tracker string, resp *http.Response) {
+	logging.FromContext(ctx, nil).Debugf("trackers: upload HTTP response tracker=%s status=%d", tracker, resp.StatusCode)
 }
 
 func readExecutedUploadBody(

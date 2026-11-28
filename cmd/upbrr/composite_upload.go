@@ -154,7 +154,7 @@ func cliWorkflowProjectionOutputEnabled(configured string, runOverride string, d
 }
 
 func cliWorkflowProjectionPolicyOutputEnabled(logger api.Logger) bool {
-	consoleLogger, ok := logger.(*logging.Logger)
+	consoleLogger, ok := logger.(interface{ ConsoleEnabled(logging.Level) bool })
 	return !ok || consoleLogger.ConsoleEnabled(logging.LevelDebug)
 }
 

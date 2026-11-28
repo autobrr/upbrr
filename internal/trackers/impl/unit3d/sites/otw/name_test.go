@@ -61,6 +61,16 @@ func TestBuildNameUsesCurrentEnglishTMDBTVTitleAndDebutYear(t *testing.T) {
 	} else if strings.Contains(got, "AKA") || strings.Contains(got, "Limited") || strings.Contains(got, "Criterion") {
 		t.Fatalf("OTW non-disc name retained forbidden elements: %q", got)
 	}
+	meta.EpisodeTitle = "Example Show"
+	const automatic = "Example Show 2020 S01E02 1080p DSNP WEB-DL DD+ 5.1 H.264-GRP"
+	if got := buildName(meta, config.TrackerConfig{}); got != automatic {
+		t.Errorf("OTW automatic episode name = %q, want %q", got, automatic)
+	}
+	meta.ReleaseNameOverrides.EpisodeTitle = new(meta.EpisodeTitle)
+	const manual = "Example Show 2020 S01E02 Example Show 1080p DSNP WEB-DL DD+ 5.1 H.264-GRP"
+	if got := buildName(meta, config.TrackerConfig{}); got != manual {
+		t.Errorf("OTW manual episode name = %q, want %q", got, manual)
+	}
 }
 
 func TestBuildNameAllowsDistributorOnlyForCompleteDisc(t *testing.T) {

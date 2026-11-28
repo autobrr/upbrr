@@ -10,10 +10,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
@@ -29,9 +31,12 @@ const (
 	httpUploadURL = baseURL + "/torrents/upload/"
 	torrentURL    = baseURL + "/torrent/"
 	sourceFlag    = "TorrentLeech.org"
+
+	missingAnnounceMessage = "Announce URL is missing from the torrent you uploaded."
 )
 
 type uploadState struct {
+	torrent     []byte
 	torrentPath string
 	description string
 	releaseName string
@@ -56,6 +61,15 @@ func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers
 	if req.Intent != trackers.PreparationIntentUpload {
 		return trackers.NewPreparedOperation(preview, nil, nil), nil
 	}
+	state.torrent, err = os.ReadFile(state.torrentPath)
+	if err != nil {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: TL read prepared torrent: %w", err)
+	}
+	if len(state.torrent) == 0 {
+		return trackers.PreparedOperation{}, errors.New("trackers: TL prepared torrent is empty")
+	}
+	// Both TL upload routes put the torrent in the first multipart file field.
+	state.files[0].Content = state.torrent
 	body, contentType, err := commonhttp.BuildMultipartPayload(state.fields, state.files)
 	if err != nil {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %w", err)
@@ -79,6 +93,7 @@ func submitPreparedUpload(
 	announces []string,
 	artifactPath string,
 ) (api.UploadSummary, error) {
+	req.Logger = logging.FromContext(ctx, req.Logger)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, state.endpoint, bytes.NewReader(body))
 	if err != nil {
 		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("trackers: TL build upload request: %w", err))
@@ -91,6 +106,7 @@ func submitPreparedUpload(
 		return api.UploadSummary{}, fmt.Errorf("trackers: TL upload request: %w", err)
 	}
 	defer resp.Body.Close()
+	commonhttp.LogUploadResponse(ctx, "TL", resp)
 	successCandidate := resp.StatusCode == http.StatusFound || (req.TrackerConfig.APIUpload && resp.StatusCode >= 200 && resp.StatusCode < 300)
 	responseBody, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, successCandidate, commonhttp.DefaultResponsePreviewBytes)
 
@@ -120,7 +136,11 @@ func submitPreparedUpload(
 		if successCandidate {
 			errorResponse = responseBody
 		}
-		return api.UploadSummary{}, commonhttp.UploadHTTPError("TL", resp.StatusCode, errorResponse)
+		failure := commonhttp.UploadHTTPError("TL", resp.StatusCode, errorResponse)
+		if resp.StatusCode == http.StatusBadRequest && bytes.Equal(bytes.TrimSpace(responseBody), []byte(missingAnnounceMessage)) {
+			return api.UploadSummary{}, submission.NewError(submission.Rejected, failure)
+		}
+		return api.UploadSummary{}, failure
 	}
 
 	urlValue := torrentURL + torrentID
@@ -128,8 +148,8 @@ func submitPreparedUpload(
 	if len(announces) > 0 {
 		announceURL = announces[0]
 	}
-	registeredPath := trackers.PersistReconstructedRegisteredTorrent(
-		req.Logger, "TL", state.torrentPath, artifactPath, announceURL, sourceFlag, urlValue,
+	registeredPath := trackers.PersistUploadedRegisteredTorrent(
+		req.Logger, "TL", state.torrent, artifactPath, announceURL, urlValue, announces...,
 	)
 	return api.UploadSummary{Uploaded: 1, UploadedTorrents: []api.UploadedTorrent{{
 		Tracker:     "TL",
@@ -147,11 +167,7 @@ func buildUploadPreview(state uploadState) api.TrackerDryRunEntry {
 		Description:      state.description,
 		Endpoint:         state.endpoint,
 		Payload:          state.fields,
-		Files: []api.TrackerDryRunFile{{
-			Field:   "torrent",
-			Path:    state.torrentPath,
-			Present: strings.TrimSpace(state.torrentPath) != "",
-		}},
+		Files:            commonhttp.PreviewFileFields(state.files),
 	})
 }
 
@@ -188,8 +204,8 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 		}
 		category, _ := req.Meta.Identity.RequireCategory()
 		switch {
-		case req.Meta.Anime && req.Meta.Identity.MALID > 0:
-			state.fields["animeid"] = tlAnimeIDURL(req.Meta.Identity.MALID)
+		case req.Meta.Anime:
+			state.fields["animeid"] = animeIDURL(req.Meta)
 		case category == api.CanonicalCategoryMovie && req.Meta.Identity.IMDBID > 0:
 			state.fields["imdb"] = providerid.IMDb(req.Meta.Identity.IMDBID).Prefixed()
 		case category == api.CanonicalCategoryTV:
@@ -224,8 +240,8 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 		"uploaderComments":    "",
 		"is_anonymous_upload": boolWord(req.TrackerConfig.Anon, "on", "off"),
 	}
-	if req.TrackerConfig.ImgRehost {
-		for idx, shot := range screenshots(assets.Screenshots) {
+	if nativeRehosting(req.TrackerConfig) {
+		for idx, shot := range screenshots(assets.MenuImages, assets.Screenshots) {
 			state.fields["screenshots["+strconv.Itoa(idx)+"]"] = shot
 		}
 	}
@@ -241,16 +257,9 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 			Content:   []byte(description),
 		},
 	}
-	client, err := cookieClient(ctx, req.Runtime.DBPath)
+	client, err := cookieClient(ctx, req.Runtime.DBPath, req.TrackerConfig)
 	if err != nil {
 		return uploadState{}, nil, err
 	}
 	return state, client, nil
-}
-
-// tlAnimeIDURL formats TorrentLeech's animeid field. TL names the value as an
-// AniList URL, while upbrr's canonical MALID carries the same anime identifier
-// for this tracker payload.
-func tlAnimeIDURL(malID int) string {
-	return fmt.Sprintf("https://anilist.co/anime/%d", malID)
 }

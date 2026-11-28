@@ -49,6 +49,7 @@ const trackerFieldMeta: Record<string, FieldMeta> = {
   }),
   Password: stringField("Password", {
     label: "Account password",
+    inputType: "password",
     sensitive: true,
     help: "Tracker website login password where supported, not an API key or passkey. Leave [REDACTED] unchanged to preserve it.",
   }),
@@ -149,8 +150,9 @@ const trackerFieldMeta: Record<string, FieldMeta> = {
   }),
   OTPURI: stringField("OTPURI", {
     label: "Authenticator setup URI",
+    inputType: "password",
     sensitive: true,
-    help: "Secret reusable TOTP setup URI for supported BTN/PTP login, not the current one-time code. An explicitly submitted challenge code takes precedence.",
+    help: "Optional reusable TOTP setup URI for automatic sign-in. Enter a current one-time code on Tracker authentication when prompted.",
   }),
   SkipIfRehash: boolField("SkipIfRehash", {
     label: "Skip when torrent regeneration is needed",

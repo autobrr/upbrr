@@ -75,7 +75,7 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 		originalTitle = media.OriginalName
 	}
 	result.Title = title
-	result.OriginalTitle = metautil.FirstNonEmpty(originalTitle, title)
+	result.OriginalTitle = strings.TrimSpace(originalTitle)
 	result.Overview = media.Overview
 	result.OriginCountry = append([]string{}, media.OriginCountry...)
 	result.ProductionCompanies = media.ProductionCompanies
@@ -274,21 +274,14 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 		animeResult, err := c.ResolveAnime(requestCtx, title, input)
 		if err == nil {
 			result.MALID = animeResult.MALID
-			result.RetrievedAKA = animeResult.Romaji
+			if result.MALID > 0 {
+				result.RetrievedAKA = FormatRetrievedAKA(result.Title, animeResult.Romaji, result.Year)
+			}
 			result.Demographic = animeResult.Demographic
 		}
 	}
 	if input.MALManual != 0 {
 		result.MALID = input.MALManual
-	}
-
-	if result.RetrievedAKA != "" {
-		aka := "AKA " + result.RetrievedAKA
-		if shouldKeepAKA(result.Title, aka, result.Year) {
-			result.RetrievedAKA = aka
-		} else {
-			result.RetrievedAKA = ""
-		}
 	}
 
 	logger.Debugf("tmdb: metadata loaded id=%d title=%q year=%d type=%s", input.TMDBID, result.Title, result.Year, result.TMDBType)
@@ -737,23 +730,16 @@ func isAnime(language string, genres []genre) bool {
 	return false
 }
 
-func shouldKeepAKA(title, aka string, year int) bool {
-	cleanTitle := strings.ToLower(title)
-	cleanAKA := strings.ToLower(strings.TrimPrefix(aka, "AKA "))
-	if cleanAKA == "" {
-		return false
+// FormatRetrievedAKA cleans and renders a distinct retrieved anime title.
+func FormatRetrievedAKA(title, alternate string, year int) string {
+	if metautil.SameAnimeTitle(title, alternate, year) {
+		return ""
 	}
-	if metautil.SimilarityRatio(cleanTitle, cleanAKA) >= 0.7 {
-		return false
+	alternate = metautil.TrimTrailingParentheticalYear(alternate, year)
+	if !metautil.DistinctTitle(title, alternate) {
+		return ""
 	}
-	if year > 0 {
-		cleanAKA = strings.ReplaceAll(cleanAKA, fmt.Sprintf("(%d)", year), "")
-		cleanAKA = strings.TrimSpace(cleanAKA)
-		if cleanAKA == "" {
-			return false
-		}
-	}
-	return true
+	return metautil.FormatOriginalAKA(alternate)
 }
 
 func applyExternalIDs(result MetadataResult, external externalIDsResponse, input MetadataInput, media mediaResponse) MetadataResult {

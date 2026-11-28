@@ -5,6 +5,7 @@ package releaseworkflow
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -538,7 +539,7 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 			m.private.Delete(ownerID, state.Workflow.ID, hdrMeasurementPrivateResourceID(id))
 		}
 	}
-	if result.Dupes != nil {
+	if result.Dupes != nil || state.effectResolution != nil {
 		m.cleanupSupersededDupeResources(ownerID, state.Workflow.ID, priorWorkflow, state.Workflow, state.ComparisonMedia)
 	}
 	if priorDuplicateReuse != nil && (state.PendingDuplicateReuse == nil ||
@@ -884,7 +885,11 @@ func (m *Module) Start(ctx context.Context, ownerID string, command Command) (ap
 		return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow append queued operation event: %w", err)
 	}
 	status.Events = events
-	m.dispatchOperationWorker(ctx, ownerID, command, record, release)
+	sourcePath := cmp.Or(strings.TrimSpace(state.SourcePath), currentWorkflowSourcePath(&state))
+	if _, preparing := command.(PrepareReleaseCommand); sourcePath == "" && preparing {
+		sourcePath = m.activeOperationLogPath(ctx, ownerID, workflowID)
+	}
+	m.dispatchOperationWorker(ctx, ownerID, sourcePath, command, record, release)
 	transferredLifetime = true
 	return cloneWorkflowOperationStatus(status, "start operation")
 }
@@ -895,6 +900,7 @@ func (m *Module) Start(ctx context.Context, ownerID string, command Command) (ap
 func (m *Module) dispatchOperationWorker(
 	ctx context.Context,
 	ownerID string,
+	sourcePath string,
 	command Command,
 	record api.ReleaseWorkflowOperationRecord,
 	release func(),
@@ -928,7 +934,19 @@ func (m *Module) dispatchOperationWorker(
 			close(workerDone)
 			m.operationWorkersMu.Unlock()
 		}()
-		m.runOperation(context.WithValue(workerCtx, operationLifetimeContextKey{}, struct{}{}), ownerID, command, record)
+		runCtx, finishLogs := m.beginInputLog(workerCtx, sourcePath, string(record.Status.Operation))
+		logging.FromContext(runCtx, m.logger).Debugf("input: running operation kind=%s", record.Status.Operation)
+		m.runOperation(context.WithValue(runCtx, operationLifetimeContextKey{}, struct{}{}), ownerID, command, record)
+		outcome := ""
+		if current, err := m.operations.LoadOperation(context.WithoutCancel(runCtx), ownerID, record.WorkflowID, record.OperationID); err == nil {
+			switch {
+			case current.ProcessEpoch != record.ProcessEpoch:
+				outcome = string(api.StageStatusInterrupted)
+			case isTerminalProgressStatus(current.Status.Status):
+				outcome = string(current.Status.Status)
+			}
+		}
+		finishLogs("", outcome)
 	}()
 }
 
@@ -2019,6 +2037,22 @@ func (m *Module) recoverOperationAfterLease(
 	if state.Workflow.Revision != current.ExpectedRevision && !commandCommitted && !compositeValid {
 		return m.interruptRecoveredOperation(ctx, current, "The retained operation authority is stale.")
 	}
+	_, rebuildingProjections := capsule.command.(ProjectTrackersCommand)
+	if !commandCommitted && !rebuildingProjections {
+		switch capsule.command.operationKind() {
+		case api.OperationKindDuplicateCheck, api.OperationKindMedia, api.OperationKindImageHosting,
+			api.OperationKindDescription, api.OperationKindUploadDryRun, api.OperationKindUploadExecute:
+			stale, policyErr := m.staleTrackerPolicies(state)
+			if policyErr != nil {
+				return policyErr
+			}
+			if len(stale) > 0 {
+				return m.interruptRecoveredOperation(ctx, current, "Tracker policies changed; rebuild projections before retrying this stage.")
+			}
+		case api.OperationKindUnknown, api.OperationKindPreparation, api.OperationKindDryRun,
+			api.OperationKindClientInjection, api.OperationKindHDRAnalysis, api.OperationKindAudioAnalysis:
+		}
+	}
 	if hdrCommand, hdr := capsule.command.(AnalyzeHDRCommand); hdr && !commandCommitted {
 		m.private.Delete(current.OwnerID, current.WorkflowID, hdrAnalysisPrivateResourceID(string(current.OperationID)))
 		if cleaner, ok := m.hdrAnalysisBuilder.(HDRAnalysisAttemptCleaner); ok {
@@ -2066,6 +2100,7 @@ func (m *Module) recoverOperationAfterLease(
 	m.dispatchOperationWorker(
 		context.WithValue(ctx, recoveredOperationContextKey{}, true),
 		current.OwnerID,
+		cmp.Or(strings.TrimSpace(state.SourcePath), currentWorkflowSourcePath(&state)),
 		capsule.command,
 		current,
 		release,
@@ -3310,22 +3345,30 @@ func (m *Module) recoverAfterRestart(ctx context.Context, ownerID string, state 
 	if state.ProcessEpoch == m.processEpoch {
 		return nil
 	}
-	if recovered, _ := ctx.Value(recoveredOperationContextKey{}).(bool); recovered {
-		state.ProcessEpoch = m.processEpoch
-		return nil
+	inFlight, _ := ctx.Value(recoveredOperationContextKey{}).(bool)
+	if !inFlight {
+		operations, err := m.operations.ListActiveOperations(ctx)
+		if err != nil {
+			return fmt.Errorf("release workflow list active operations during restart recovery: %w", err)
+		}
+		inFlight = slices.ContainsFunc(operations, func(operation api.ReleaseWorkflowOperationRecord) bool {
+			return operation.OwnerID == ownerID && operation.WorkflowID == state.Workflow.ID && operation.ProcessEpoch == m.processEpoch
+		})
 	}
-	operations, err := m.operations.ListActiveOperations(ctx)
+	stalePolicies, err := m.staleTrackerPolicies(*state)
 	if err != nil {
-		return fmt.Errorf("release workflow list active operations during restart recovery: %w", err)
+		return err
 	}
-	if slices.ContainsFunc(operations, func(operation api.ReleaseWorkflowOperationRecord) bool {
-		return operation.OwnerID == ownerID && operation.WorkflowID == state.Workflow.ID && operation.ProcessEpoch == m.processEpoch
-	}) {
-		state.ProcessEpoch = m.processEpoch
+	if inFlight {
+		// Finish/reconcile already-started work before withdrawing dependencies,
+		// but do not certify obsolete policy state as current when it commits.
+		if len(stalePolicies) == 0 {
+			state.ProcessEpoch = m.processEpoch
+		}
 		return nil
 	}
 	authRetryRequired, obsoletePreflightActions := currentPreflightAuthRetry(*state)
-	if !workflowNeedsRestartRecovery(*state) && !authRetryRequired {
+	if !workflowNeedsRestartRecovery(*state) && !authRetryRequired && len(stalePolicies) == 0 {
 		state.ProcessEpoch = m.processEpoch
 		return nil
 	}
@@ -3389,6 +3432,9 @@ func (m *Module) recoverAfterRestart(ctx context.Context, ownerID string, state 
 	reconciliationPending := slices.ContainsFunc(workflow.RequiredActions, func(action api.RequiredAction) bool {
 		return action.Kind == api.RequiredActionReconcileSubmission && action.Status == api.RequiredActionStatusPending
 	})
+	if len(stalePolicies) > 0 {
+		invalidateStaleTrackerPolicies(state, stalePolicies, nextRevision, now)
+	}
 	if err := m.invalidateUnavailablePrivateAuthority(ownerID, workflow, now); err != nil {
 		return err
 	}
@@ -7081,7 +7127,9 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 		}
 		switch artifact.Kind {
 		case api.MediaArtifactScreenshot:
-			selectedScreenshots++
+			if artifact.PackMemberID == "" && !artifact.AdditionalDisc {
+				selectedScreenshots++
+			}
 		case api.MediaArtifactComparison:
 			if _, reused := comparisonScreenshots[artifact.ID]; reused {
 				selectedScreenshots++
@@ -7101,7 +7149,8 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 		})
 		return
 	}
-	screenshotsReady := selectedScreenshots >= requiredScreenshots
+	sourceCoverageReady := LocalScreenshotSourceRequirementsMet(snapshot.Artifacts, readinessProjections)
+	screenshotsReady := selectedScreenshots >= requiredScreenshots && sourceCoverageReady
 	if snapshot.ImageRequirementsPrepared && !snapshot.ImageHostUploadSkipped {
 		screenshotsReady = !allTrackerHostsFailed && !unmatchedTrackerHostFailure &&
 			HostedScreenshotRequirementsMet(*snapshot, readinessProjections)
@@ -7114,6 +7163,8 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 			if len(comparisonScreenshots) > 0 {
 				prompt += fmt.Sprintf(" This includes %d from the main comparison column.", len(comparisonScreenshots))
 			}
+		case !sourceCoverageReady:
+			prompt = "Capture or select the required screenshots for each eligible source before upload."
 		case selectedMenus < requiredMenus:
 			prompt = fmt.Sprintf("Capture or select more DVD menu images before upload (%d of %d required).", selectedMenus, requiredMenus)
 		}
@@ -7133,6 +7184,57 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 		return
 	}
 	snapshot.Status = api.StageStatusCompleted
+}
+
+// LocalScreenshotSourceRequirementsMet checks the current selected local sources,
+// never an ordinary screenshot total or an unselected hosted variant.
+func LocalScreenshotSourceRequirementsMet(artifacts []api.MediaArtifact, projections []api.TrackerReleaseProjection) bool {
+	for _, projection := range projections {
+		if discs := projection.Artifacts.DiscScreenshots; discs != nil {
+			seen := make(map[api.PublicResourceID]bool)
+			counts := make(map[string]int)
+			for _, artifact := range artifacts {
+				if artifact.Selected && artifact.Kind == api.MediaArtifactScreenshot && artifact.Purpose == api.ScreenshotPurposeFinal && !seen[artifact.ID] {
+					seen[artifact.ID] = true
+					counts[artifact.DiscID]++
+				}
+			}
+			if !DiscScreenshotCountsCover(counts, discs, projection.Artifacts.ScreenshotCount) {
+				return false
+			}
+		}
+		pack := projection.Artifacts.PackScreenshots
+		if pack == nil {
+			continue
+		}
+		sources := make(map[string]map[api.PublicResourceID]struct{}, len(pack.MemberIDs))
+		for _, artifact := range artifacts {
+			if !artifact.Selected || artifact.Kind != api.MediaArtifactScreenshot ||
+				artifact.Purpose != api.ScreenshotPurposeFinal || !slices.Contains(pack.MemberIDs, artifact.PackMemberID) {
+				continue
+			}
+			byMember := sources[artifact.PackMemberID]
+			if byMember == nil {
+				byMember = make(map[api.PublicResourceID]struct{})
+				sources[artifact.PackMemberID] = byMember
+			}
+			byMember[artifact.ID] = struct{}{}
+		}
+		for _, member := range pack.MemberIDs {
+			if len(sources[member]) < pack.CountPerMember {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// DiscScreenshotCountsCover checks the projected quota independently for each prepared disc.
+func DiscScreenshotCountsCover(counts map[string]int, discs *api.DiscScreenshotRequirement, primaryCount int) bool {
+	if len(discs.DiscIDs) < 2 || counts[discs.DiscIDs[0]] < primaryCount {
+		return false
+	}
+	return !slices.ContainsFunc(discs.DiscIDs[1:], func(id string) bool { return counts[id] < discs.AdditionalCount })
 }
 
 func mediaHasUnscopedOrUnknownImageHostFailure(media api.MediaArtifactSet, projections []api.TrackerReleaseProjection) bool {
@@ -7169,12 +7271,15 @@ func HostedScreenshotRequirementsMet(snapshot api.MediaArtifactSet, projections 
 		artifacts[artifact.ID] = artifact
 	}
 	for _, projection := range projections {
-		if projection.Artifacts.ScreenshotCount <= 0 && len(comparisonCells) == 0 {
+		pack, discs := projection.Artifacts.PackScreenshots, projection.Artifacts.DiscScreenshots
+		if projection.Artifacts.ScreenshotCount <= 0 && pack == nil && len(comparisonCells) == 0 {
 			continue
 		}
 		trackerID := normalizeDownstreamTrackerID(projection.TrackerID)
 		sources := make(map[api.PublicResourceID]struct{}, projection.Artifacts.ScreenshotCount)
 		comparisonCoverage := make(map[string]map[api.PublicResourceID]struct{})
+		packSources := make(map[string]map[string]map[api.PublicResourceID]struct{})
+		discSources := make(map[string]map[api.PublicResourceID]string)
 		for _, attempt := range snapshot.HostAttempts {
 			if !hostedAttemptAppliesToTracker(attempt, trackerID) {
 				continue
@@ -7200,15 +7305,67 @@ func HostedScreenshotRequirementsMet(snapshot api.MediaArtifactSet, projections 
 					comparisonCoverage[group][source.ID] = struct{}{}
 				}
 				_, reusedComparison := comparisonScreenshots[source.ID]
-				ordinaryScreenshot := source.Kind == api.MediaArtifactScreenshot && source.Purpose == api.ScreenshotPurposeFinal &&
+				final := source.Kind == api.MediaArtifactScreenshot && source.Purpose == api.ScreenshotPurposeFinal &&
 					hosted.Purpose == api.ScreenshotPurposeFinal
-				if hosted.Selected && hosted.Kind == api.MediaArtifactHostedImage && source.Selected &&
-					(ordinaryScreenshot || source.Kind == api.MediaArtifactComparison && reusedComparison && !comparisonHostFailed) {
+				if !hosted.Selected || hosted.Kind != api.MediaArtifactHostedImage || !source.Selected {
+					continue
+				}
+				if final && source.PackMemberID != "" {
+					if pack != nil && !comparisonHostFailed && host != "" && slices.Contains(pack.MemberIDs, source.PackMemberID) {
+						byMember := packSources[host]
+						if byMember == nil {
+							byMember = make(map[string]map[api.PublicResourceID]struct{})
+							packSources[host] = byMember
+						}
+						sources := byMember[source.PackMemberID]
+						if sources == nil {
+							sources = make(map[api.PublicResourceID]struct{})
+							byMember[source.PackMemberID] = sources
+						}
+						sources[source.ID] = struct{}{}
+					}
+				} else if final && (!source.AdditionalDisc || discs != nil) ||
+					source.Kind == api.MediaArtifactComparison && reusedComparison && !comparisonHostFailed {
 					sources[source.ID] = struct{}{}
+					if discs != nil && final && !comparisonHostFailed && host != "" {
+						if discSources[host] == nil {
+							discSources[host] = make(map[api.PublicResourceID]string)
+						}
+						discSources[host][source.ID] = source.DiscID
+					}
 				}
 			}
 		}
-		if len(sources) < projection.Artifacts.ScreenshotCount {
+		switch {
+		case pack != nil:
+			complete := false
+			for _, byMember := range packSources {
+				if !slices.ContainsFunc(pack.MemberIDs, func(member string) bool {
+					return len(byMember[member]) < pack.CountPerMember
+				}) {
+					complete = true
+					break
+				}
+			}
+			if !complete {
+				return false
+			}
+		case discs != nil:
+			complete := false
+			for _, ids := range discSources {
+				counts := make(map[string]int, len(discs.DiscIDs))
+				for _, discID := range ids {
+					counts[discID]++
+				}
+				if DiscScreenshotCountsCover(counts, discs, projection.Artifacts.ScreenshotCount) {
+					complete = true
+					break
+				}
+			}
+			if !complete {
+				return false
+			}
+		case len(sources) < projection.Artifacts.ScreenshotCount:
 			return false
 		}
 		if len(comparisonCells) > 0 {
@@ -9209,9 +9366,29 @@ func (m *Module) resolveAction(
 			Expected: expected,
 		}
 		if action.EffectKind == api.WorkflowExternalEffectImageHosting {
+			state.Workflow.RequiredActions = slices.Delete(state.Workflow.RequiredActions, index, index+1)
+			remainingActions := slices.Clone(state.Workflow.RequiredActions)
+			// Check deferred policy before publishing a revision of shared media.
+			if err := m.recheckReconciledTrackerPolicies(state, nextRevision, now); err != nil {
+				return CommandResult{}, err
+			}
 			result, err := m.resolveImageHostingAction(ctx, ownerID, state, nextRevision, now, action)
 			if err != nil {
 				return CommandResult{}, err
+			}
+			// Recovery can retain uncertain effects only on the workflow, outside
+			// the media snapshot. Publication must not discard those actions.
+			for _, pending := range remainingActions {
+				if pending.Kind != api.RequiredActionReconcileSubmission || pending.Status != api.RequiredActionStatusPending {
+					continue
+				}
+				if !slices.ContainsFunc(state.Workflow.RequiredActions, func(current api.RequiredAction) bool { return current.ID == pending.ID }) {
+					pending.WorkflowRevision = nextRevision
+					state.Workflow.RequiredActions = append(state.Workflow.RequiredActions, pending)
+				}
+			}
+			if hasPendingRequiredAction(state.Workflow.RequiredActions) {
+				state.Workflow.Status = api.WorkflowStatusBlocked
 			}
 			if err := m.invalidateUnavailablePrivateAuthority(ownerID, &state.Workflow, now); err != nil {
 				return CommandResult{}, fmt.Errorf("release workflow reconcile image-host private authority: %w", err)
@@ -9243,6 +9420,9 @@ func (m *Module) resolveAction(
 	}
 	state.Workflow.RequiredActions = slices.Delete(state.Workflow.RequiredActions, index, index+1)
 	if action.Kind == api.RequiredActionReconcileSubmission {
+		if err := m.recheckReconciledTrackerPolicies(state, nextRevision, now); err != nil {
+			return CommandResult{}, err
+		}
 		if err := m.invalidateUnavailablePrivateAuthority(ownerID, &state.Workflow, now); err != nil {
 			return CommandResult{}, fmt.Errorf("release workflow reconcile private authority: %w", err)
 		}
@@ -9365,6 +9545,10 @@ func (m *Module) resolveImageHostingAction(
 	if !ok || snapshot.Revision != mediaRef.Revision {
 		finishUnavailableImageHostingReconciliation(&state.Workflow, action)
 		return CommandResult{}, nil
+	}
+	snapshot, err := snapshot.Clone()
+	if err != nil {
+		return CommandResult{}, fmt.Errorf("release workflow clone reconciled media: %w", err)
 	}
 	value, err := m.private.Get(ownerID, state.Workflow.ID, mediaPrivateResourceID(mediaRef.ID), now)
 	if err != nil {

@@ -28,7 +28,7 @@ import (
 // selected tracker. Existing pieces are preferred; NoHash never generates missing
 // pieces. Selection prefers 1,000–2,000 pieces within each tracker's hard limits.
 // Only missing required artifacts are generated; no optional variants are made.
-func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.TorrentResult, error) {
+func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (_ api.TorrentResult, err error) {
 	if err := ctx.Err(); err != nil {
 		return api.TorrentResult{}, fmt.Errorf("torrent: create canceled: %w", err)
 	}
@@ -38,26 +38,70 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 	}
 	// Direct metainfo input has no local media from which to make another variant.
 	if strings.EqualFold(filepath.Ext(meta.SourcePath), ".torrent") {
-		return s.createSingle(ctx, meta)
+		return s.createSingle(ctx, meta, func(status, message string) {
+			emitTorrentProgress(ctx, meta, status, message)
+		})
 	}
 	logger := logging.FromContext(ctx, s.logger)
 	rehash := torrentOverrideEnabled(meta.TorrentOverrides.Rehash)
 	nohash := torrentOverrideEnabled(meta.TorrentOverrides.NoHash) && !rehash
-	candidates, err := reusableTorrentCandidates(s.tmpRoot, meta)
+	extractionCandidates, err := reusableTorrentCandidates(s.tmpRoot, meta)
 	if err != nil {
 		return api.TorrentResult{}, err
 	}
 	cache := make(map[string]error)
 	if rehash {
-		candidates = nil
+		extractionCandidates = nil
 	}
-	extractionCandidates := slices.Clone(candidates)
 	// Layout, captured-byte identity, and requested recheck are evaluated once per
 	// candidate; stale alternatives must not discard a verified reusable base.
 	// A failed explicit recheck remains fatal when no verified candidate survives.
-	valid := make([]string, 0, len(candidates))
+	extractionCandidates = slices.DeleteFunc(extractionCandidates, func(candidate string) bool {
+		info, statErr := os.Stat(candidate)
+		return statErr != nil || info.IsDir()
+	})
+	candidates := make([]string, 0, len(extractionCandidates))
 	var recheckErr error
-	for _, candidate := range candidates {
+	openScopes := make([]string, 0, len(meta.Trackers)+1)
+	failMessage := "Torrent preparation failed"
+	openScope := func(tracker string) {
+		if !slices.Contains(openScopes, tracker) {
+			openScopes = append(openScopes, tracker)
+		}
+	}
+	closeScope := func(tracker string, status string, message string) {
+		index := slices.Index(openScopes, tracker)
+		if index < 0 {
+			return
+		}
+		openScopes = slices.Delete(openScopes, index, index+1)
+		emitTorrentProgressForTracker(ctx, meta.SourcePath, tracker, status, message)
+	}
+	closeAllScopes := func(status string, message string) {
+		for _, tracker := range openScopes {
+			emitTorrentProgressForTracker(ctx, meta.SourcePath, tracker, status, message)
+		}
+		openScopes = openScopes[:0]
+	}
+	defer func() {
+		if len(openScopes) == 0 {
+			return
+		}
+		if ctx.Err() != nil {
+			closeAllScopes("canceled", "Torrent preparation canceled")
+			return
+		}
+		if meta.DeferWrapperConversion && errors.Is(err, internalerrors.ErrNotFound) {
+			// The caller owns the open scopes across discovery and retry.
+			return
+		}
+		closeAllScopes("failed", failMessage)
+	}()
+	if len(extractionCandidates) > 0 {
+		emitTorrentProgress(ctx, meta, "running", "Checking reusable torrent")
+		openScope(progressScopeTracker(meta))
+	}
+	for _, candidate := range extractionCandidates {
 		if err := ctx.Err(); err != nil {
 			return api.TorrentResult{}, fmt.Errorf("torrent: canceled while checking candidates: %w", err)
 		}
@@ -68,16 +112,34 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 			continue
 		}
 		if err == nil {
-			valid = append(valid, candidate)
+			candidates = append(candidates, candidate)
 		}
 	}
-	candidates = valid
 	result := api.TorrentResult{TrackerArtifacts: make(map[string]api.TorrentArtifact)}
+	closeResultScopes := func(pendingScopes []string) {
+		if len(openScopes) == 0 && len(pendingScopes) == 0 {
+			openScope(progressScopeTracker(meta))
+		}
+		for _, tracker := range openScopes {
+			if slices.Contains(pendingScopes, tracker) {
+				continue
+			}
+			status, message := PreparationProgressOutcome(result, tracker)
+			emitTorrentProgressForTracker(ctx, meta.SourcePath, tracker, status, message)
+		}
+		openScopes = openScopes[:0]
+	}
 	publications := &variantPublication{}
 	defer func() { _ = publications.Discard() }()
 	generated := make(map[string]bool)
 	selected := make(map[string]string)
 	extracted := make(map[string]bool)
+	findReusable := func(path string, policy *trackerTorrentPolicy, subject api.TorrentSubject) (string, error) {
+		if _, checked := cache[path]; subject.ForceRecheck && !checked {
+			openScope(progressScopeTracker(subject))
+		}
+		return findReusableTorrent(ctx, path, policy, subject, cache, logger)
+	}
 	choose := func(subject api.TorrentSubject) (string, error) {
 		policy := resolveTrackerPolicy(subject, s.registry)
 		allowHash := !nohash && !hasTracker(meta.SkipIfRehashTrackers, subject.Trackers)
@@ -106,12 +168,16 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		}
 		// A successful probe still ranks known metadata-only conversions against
 		// its usable artifacts; missing lanes retain the exact-layout search retry.
-		if s.tmpRoot != "" && (!meta.DeferWrapperConversion || len(choices) > 0) {
+		// A compatible full-disc choice already validates the inventory and cannot
+		// be converted to a single file. With no choice, retain source errors
+		// discovered by the extraction probe.
+		considerExtraction := strings.TrimSpace(subject.DiscType) == "" || len(choices) == 0
+		if s.tmpRoot != "" && considerExtraction && (!meta.DeferWrapperConversion || len(choices) > 0) {
 			for _, path := range extractionCandidates {
 				if extracted[path] {
 					continue
 				}
-				prepared, err := prepareSingleFileExtraction(path, subject, policy)
+				prepared, err := prepareSingleFileExtraction(path, subject, policy, logger)
 				if err != nil {
 					return "", err
 				}
@@ -139,11 +205,14 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		})
 		for _, candidate := range choices {
 			if candidate.extraction == nil {
-				path, err := findReusableTorrent(ctx, []string{candidate.path}, policy, subject, cache, logger)
+				path, err := findReusable(candidate.path, policy, subject)
 				if err != nil || path != "" {
 					return path, err
 				}
 				continue
+			}
+			if candidate.hashTail {
+				openScope(progressScopeTracker(subject))
 			}
 			conversion, err := candidate.extraction.publish(ctx, s.tmpRoot, subject)
 			if err != nil {
@@ -166,7 +235,7 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 				generated[converted] = true
 			}
 			extracted[candidate.path] = true
-			path, err := findReusableTorrent(ctx, []string{converted}, policy, subject, cache, logger)
+			path, err := findReusable(converted, policy, subject)
 			if path == "" && conversion.publication != nil {
 				if discardErr := conversion.publication.Discard(); discardErr != nil {
 					return "", errors.Join(err, discardErr)
@@ -192,11 +261,21 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		return "", nil
 	}
 	generate := func(subject api.TorrentSubject) (string, error) {
-		subject.TorrentOverrides.Rehash = new(true)
+		if err := ctx.Err(); err != nil {
+			return "", fmt.Errorf("torrent: canceled before generation: %w", err)
+		}
+		scope := progressScopeTracker(subject)
 		subject.TorrentOverrides.NoHash = nil
 		subject.SkipIfRehashTrackers = nil
 		subject.DeferGenerationPublication = true
-		created, err := s.createSingle(ctx, subject)
+		created, err := s.createSingle(ctx, subject, func(status, message string) {
+			if status == "running" {
+				openScope(scope)
+				emitTorrentProgressForTracker(ctx, subject.SourcePath, scope, status, message)
+				return
+			}
+			closeScope(scope, status, message)
+		})
 		if err != nil {
 			return "", err
 		}
@@ -248,6 +327,9 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 	}
 	// The search probe must discover alternatives before accepting partial lanes.
 	if meta.DeferWrapperConversion && (len(result.SkippedTrackers) != 0 || len(candidates) == 0) {
+		if err := ctx.Err(); err != nil {
+			return api.TorrentResult{}, fmt.Errorf("torrent: canceled after reusable variant probe: %w", err)
+		}
 		return api.TorrentResult{}, fmt.Errorf("torrent: reusable variants unavailable: %w", internalerrors.ErrNotFound)
 	}
 	var general string
@@ -266,7 +348,11 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		}
 	}
 	if general == "" && len(selected) == 0 {
+		if err := ctx.Err(); err != nil {
+			return api.TorrentResult{}, fmt.Errorf("torrent: canceled before variant selection: %w", err)
+		}
 		if len(result.SkippedTrackers) > 0 && !meta.DeferWrapperConversion {
+			closeResultScopes(nil)
 			return result, nil
 		}
 		return api.TorrentResult{}, fmt.Errorf("torrent: no reusable torrent found with nohash enabled: %w", internalerrors.ErrNotFound)
@@ -358,14 +444,45 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		if meta.DeferGenerationPublication {
 			result.PendingPublication = publications
 			publications = &variantPublication{} // ownership transferred to the caller.
+			closeResultScopes(PendingPreparationScopes(meta, result))
+			return result, nil
 		} else if _, err := publications.Publish(); err != nil {
+			failMessage = "Torrent publication failed"
 			return api.TorrentResult{}, err
 		}
 	}
-	if result.Path != "" && result.PendingPublication == nil && !meta.DeferWrapperConversion {
-		emitTorrentProgress(ctx, meta, "completed", "Torrent ready")
-	}
+	closeResultScopes(nil)
 	return result, nil
+}
+
+// PreparationProgressOutcome describes a settled scope in a successful Create result.
+func PreparationProgressOutcome(result api.TorrentResult, tracker string) (status, message string) {
+	tracker = strings.TrimSpace(tracker)
+	if tracker == "" {
+		if len(result.SkippedTrackers) > 0 && len(result.TrackerArtifacts) == 0 {
+			return "skipped", "Torrent skipped: rehash required"
+		}
+		if len(result.TrackerArtifacts) > 0 {
+			return "completed", "Reusable torrent check complete"
+		}
+	} else if slices.ContainsFunc(result.SkippedTrackers, func(skipped string) bool {
+		return strings.EqualFold(strings.TrimSpace(skipped), tracker)
+	}) {
+		return "skipped", "Torrent skipped: rehash required"
+	}
+	return "completed", "Torrent ready"
+}
+
+// PendingPreparationScopes identifies the torrent scopes owned by deferred publication.
+func PendingPreparationScopes(meta api.TorrentSubject, result api.TorrentResult) []string {
+	if result.PendingPublication == nil {
+		return nil
+	}
+	scopes := normalizedTrackerNames(result.RehashedTrackers)
+	if len(scopes) == 0 && len(result.SkippedTrackers) == 0 {
+		return []string{progressScopeTracker(meta)}
+	}
+	return scopes
 }
 
 // pieceCountDistance ranks reusable artifacts without making the preferred
@@ -457,6 +574,9 @@ func (p *variantPublication) Publish() (string, error) {
 	retainedVariantMu.Lock()
 	defer retainedVariantMu.Unlock()
 	for _, file := range p.files {
+		if err := file.checkCancellation(); err != nil {
+			return "", err
+		}
 		if existing, err := os.ReadFile(file.destination); err == nil {
 			staged, err := os.ReadFile(file.stage)
 			if err != nil {
@@ -464,6 +584,9 @@ func (p *variantPublication) Publish() (string, error) {
 			}
 			if !bytes.Equal(existing, staged) {
 				return "", errors.New("torrent: generated base destination changed")
+			}
+			if err := file.checkCancellation(); err != nil {
+				return "", err
 			}
 			if err := file.Discard(); err != nil {
 				return "", fmt.Errorf("torrent: retain base artifact: %w", err)

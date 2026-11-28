@@ -1304,6 +1304,7 @@ export type ScreenshotPlan = {
   SourcePath: string;
   /** Identifies the reviewed plan used to import saved tracker images. */
   SavedImagePlanID?: string;
+  AutomaticPackScreenshots?: boolean;
   DiscType: string;
   /** Independent prepared-disc timelines; absent for legacy single-source plans. */
   Discs?: ScreenshotDiscPlan[];
@@ -1405,6 +1406,7 @@ export type UploadImagesResult = {
 };
 
 export type HistoryEntry = {
+  LogsOnly?: boolean;
   SourcePath: string;
   ReleaseTitle: string;
   ReleaseSource: string;
@@ -1545,6 +1547,7 @@ export type FieldMeta = {
   label?: string;
   help?: string;
   type?: FieldType;
+  inputType?: "password";
   advanced?: boolean;
   sensitive?: boolean;
   commaSeparated?: boolean;

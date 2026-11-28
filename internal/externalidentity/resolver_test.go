@@ -195,7 +195,7 @@ func TestResolveCrossReferenceMetadataHonorsStoredProvenancePins(t *testing.T) {
 			metadataTVDBID := 0
 			identity := api.ExternalIdentity{
 				SourcePath: sourcePath,
-				Resolution: api.IdentityResolutionKey{ContractVersion: ContractVersion},
+				Resolution: api.IdentityResolutionKey{ContractVersion: ContractVersion, SourceFingerprint: "source-fingerprint"},
 				Overrides: api.IdentityOverrideState{
 					IMDB: api.OverrideStateUnset,
 					TVDB: api.OverrideStateUnset,
@@ -330,7 +330,7 @@ func TestResolveCategoryChangeRemovesClearedAutomaticEvidence(t *testing.T) {
 					IMDBID:     555002,
 					TVDBID:     555003,
 					TVmazeID:   555004,
-					Resolution: api.IdentityResolutionKey{ContractVersion: ContractVersion},
+					Resolution: api.IdentityResolutionKey{ContractVersion: ContractVersion, SourceFingerprint: "source-fingerprint"},
 				},
 				metadata: api.SourceScopedMetadata{
 					SourcePath: sourcePath,
@@ -445,16 +445,23 @@ func TestHasExplicitProviderCorrectionRecognizesZeroValuePins(t *testing.T) {
 
 func TestResolveClearOnlyCandidateReplacesAutomaticEvidenceWithinSource(t *testing.T) {
 	for _, tc := range []struct {
-		name            string
-		candidateSource func(string) string
-		wantTMDBID      int
-		wantTVDBID      int
-		wantMetadata    bool
+		name                 string
+		candidateSource      func(string) string
+		candidateFingerprint string
+		wantTMDBID           int
+		wantTVDBID           int
+		wantMetadata         bool
 	}{
 		{
-			name:            "same source clears automatic IDs and metadata",
-			candidateSource: func(sourcePath string) string { return sourcePath },
-			wantMetadata:    false,
+			name:                 "same source clears automatic IDs and metadata",
+			candidateFingerprint: "source-fingerprint",
+		},
+		{
+			name:                 "old fingerprint at the same path is ignored",
+			candidateFingerprint: "replaced-fingerprint",
+			wantTMDBID:           100,
+			wantTVDBID:           200,
+			wantMetadata:         true,
 		},
 		{
 			name: "other source is ignored",
@@ -475,7 +482,7 @@ func TestResolveClearOnlyCandidateReplacesAutomaticEvidenceWithinSource(t *testi
 						identity: api.ExternalIdentity{
 							SourcePath: sourcePath,
 							TMDBID:     100,
-							Resolution: api.IdentityResolutionKey{ContractVersion: ContractVersion},
+							Resolution: api.IdentityResolutionKey{ContractVersion: ContractVersion, SourceFingerprint: "source-fingerprint"},
 							IMDBID:     300,
 							TVDBID:     200,
 							Provenance: api.IdentityProvenanceSet{
@@ -495,10 +502,14 @@ func TestResolveClearOnlyCandidateReplacesAutomaticEvidenceWithinSource(t *testi
 					}, nil
 				}),
 				candidate: candidateSourceFunc(func(_ context.Context, request Request) (CandidateEvidence, error) {
-					candidateSource := tc.candidateSource(request.SourcePath)
+					candidateSource := request.SourcePath
+					if tc.candidateSource != nil {
+						candidateSource = tc.candidateSource(candidateSource)
+					}
 					return CandidateEvidence{
 						Identity: api.ExternalIdentity{
 							SourcePath: candidateSource,
+							Resolution: api.IdentityResolutionKey{SourceFingerprint: tc.candidateFingerprint},
 							Overrides:  api.IdentityOverrideState{TMDB: api.OverrideStateClear},
 						},
 						Metadata: api.SourceScopedMetadata{SourcePath: candidateSource},
@@ -530,20 +541,33 @@ func TestResolvePropagatesCandidateIdentityDependenciesWithinSource(t *testing.T
 	for _, tc := range []struct {
 		name            string
 		candidateSource func(string) string
+		candidateTVDBID int
+		withdrawn       bool
 		wantTVDBID      int
 		wantTVDB        api.IdentityDependency
 	}{
 		{
-			name:            "same source replaces TVDB dependency",
-			candidateSource: func(sourcePath string) string { return sourcePath },
+			name:            "accepted match supersedes withdrawn stored dependency",
+			candidateTVDBID: 300,
+			withdrawn:       true,
 			wantTVDBID:      300,
 			wantTVDB:        api.IdentityDependency{ID: 300, IMDBID: 200},
+		},
+		{
+			name:      "same source withdrawal without replacement",
+			withdrawn: true,
+		},
+		{
+			name:       "missing match keeps fallback without a withdrawal",
+			wantTVDBID: 100,
+			wantTVDB:   api.IdentityDependency{ID: 100, IMDBID: 200},
 		},
 		{
 			name: "other source retains stored dependency",
 			candidateSource: func(sourcePath string) string {
 				return filepath.Join(filepath.Dir(sourcePath), "Other.Release.2026.1080p-GRP.mkv")
 			},
+			withdrawn:  true,
 			wantTVDBID: 100,
 			wantTVDB:   api.IdentityDependency{ID: 100, IMDBID: 200},
 		},
@@ -555,7 +579,7 @@ func TestResolvePropagatesCandidateIdentityDependenciesWithinSource(t *testing.T
 				evidence: evidenceLoaderFunc(func(context.Context, string) (legacyEvidence, error) {
 					return legacyEvidence{identity: api.ExternalIdentity{
 						SourcePath: sourcePath,
-						Resolution: api.IdentityResolutionKey{ContractVersion: ContractVersion},
+						Resolution: api.IdentityResolutionKey{ContractVersion: ContractVersion, SourceFingerprint: "source-fingerprint"},
 						IMDBID:     200,
 						TVDBID:     100,
 						Dependencies: api.IdentityDependencySet{
@@ -565,13 +589,21 @@ func TestResolvePropagatesCandidateIdentityDependenciesWithinSource(t *testing.T
 					}, hasIDs: true}, nil
 				}),
 				candidate: candidateSourceFunc(func(_ context.Context, request Request) (CandidateEvidence, error) {
-					return CandidateEvidence{Identity: api.ExternalIdentity{
-						SourcePath: tc.candidateSource(request.SourcePath),
-						TVDBID:     300,
-						Dependencies: api.IdentityDependencySet{
-							TVDB: api.IdentityDependency{ID: 300, IMDBID: 200},
-						},
-					}}, nil
+					candidate := CandidateEvidence{Identity: api.ExternalIdentity{
+						SourcePath: request.SourcePath,
+						Category:   api.CanonicalCategoryTV,
+					}}
+					if tc.candidateTVDBID > 0 {
+						candidate.Identity.TVDBID = tc.candidateTVDBID
+						candidate.Identity.Dependencies.TVDB = api.IdentityDependency{ID: tc.candidateTVDBID, IMDBID: 200}
+					}
+					if tc.candidateSource != nil {
+						candidate.Identity.SourcePath = tc.candidateSource(request.SourcePath)
+					}
+					if tc.withdrawn {
+						candidate.WithdrawnStoredIDs = map[api.IdentityProvider]int{api.IdentityProviderTVDB: 100}
+					}
+					return candidate, nil
 				}),
 				now: time.Now,
 			}
@@ -585,7 +617,8 @@ func TestResolvePropagatesCandidateIdentityDependenciesWithinSource(t *testing.T
 				t.Fatalf("resolve: %v", err)
 			}
 			if result.Identity.TVDBID != tc.wantTVDBID || result.Identity.Dependencies.TVDB != tc.wantTVDB ||
-				result.Identity.Dependencies.IMDB != (api.IdentityDependency{ID: 200}) {
+				result.Identity.IMDBID != 200 || result.Identity.Dependencies.IMDB != (api.IdentityDependency{ID: 200}) ||
+				tc.wantTVDBID == 0 && result.Identity.Provenance.TVDB != api.IdentityProvenanceUnknown {
 				t.Fatalf("identity = %#v", result.Identity)
 			}
 		})
@@ -600,7 +633,7 @@ func TestResolveClearOnlyCandidateDropsTargetDependency(t *testing.T) {
 			return legacyEvidence{identity: api.ExternalIdentity{
 				SourcePath: sourcePath,
 				TMDBID:     100,
-				Resolution: api.IdentityResolutionKey{ContractVersion: ContractVersion},
+				Resolution: api.IdentityResolutionKey{ContractVersion: ContractVersion, SourceFingerprint: "source-fingerprint"},
 				IMDBID:     200,
 				Provenance: api.IdentityProvenanceSet{IMDB: api.IdentityProvenanceExplicit},
 				Overrides:  api.IdentityOverrideState{IMDB: api.OverrideStateValue},
@@ -837,7 +870,7 @@ func TestResolveResetKeepsAutomaticStoredEvidenceAndChangesIntentFingerprint(t *
 		evidence: evidenceLoaderFunc(func(context.Context, string) (legacyEvidence, error) {
 			return legacyEvidence{identity: api.ExternalIdentity{
 				SourcePath: sourcePath,
-				Resolution: api.IdentityResolutionKey{ContractVersion: ContractVersion},
+				Resolution: api.IdentityResolutionKey{ContractVersion: ContractVersion, SourceFingerprint: "source-fingerprint"},
 				TMDBID:     100,
 				Provenance: api.IdentityProvenanceSet{TMDB: api.IdentityProvenanceProvider},
 			}, hasIDs: true}, nil
@@ -968,7 +1001,7 @@ func TestResolveAppliesTriStateIntentWithoutPersisting(t *testing.T) {
 	if identity.Resolution.ContractVersion != ContractVersion || identity.Resolution.IntentFingerprint == "" || identity.ResolvedAt != fixedNow {
 		t.Fatalf("resolution lineage = %#v", identity.Resolution)
 	}
-	if len(result.EvidenceFingerprints) != 2 || len(result.Diagnostics) != 1 {
+	if len(result.EvidenceFingerprints) != 1 || result.EvidenceFingerprints[0].Kind != "stored_identity" || len(result.Diagnostics) != 1 {
 		t.Fatalf("evidence result = %#v", result)
 	}
 

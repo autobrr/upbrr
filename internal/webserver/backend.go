@@ -111,6 +111,7 @@ func newBackendWithLiveTest(ctx context.Context, cfg config.Config, hub *eventHu
 	if err != nil {
 		return nil, fmt.Errorf("web: %w", err)
 	}
+	logger.LogApplicationStart()
 
 	repo, err := db.OpenWithLoggerContext(ctx, cfg.MainSettings.DBPath, logger)
 	if err != nil {
@@ -842,13 +843,13 @@ func (b *Backend) GetImageHostPolicyMetadata() (imagehostpolicy.Metadata, error)
 }
 
 // ListHistory returns persisted release history in repository-defined order.
-func (b *Backend) ListHistory() ([]api.HistoryEntry, error) {
+func (b *Backend) ListHistory(ctx context.Context) ([]api.HistoryEntry, error) {
 	rt := b.runtimeSnapshot()
 	history, err := rt.historyCore()
 	if err != nil {
 		return nil, err
 	}
-	return wrapWebResult(history.ListHistory(context.Background()))
+	return wrapWebResult(history.ListHistory(ctx))
 }
 
 // GetHistoryOverview returns persisted upload and asset detail for one source path.
@@ -874,6 +875,15 @@ func (b *Backend) DeleteHistoryRelease(sourcePath string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
 	return wrapWebError(historyCore.DeleteHistoryRelease(ctx, strings.TrimSpace(sourcePath)))
+}
+
+// DeleteInputLogs removes input log associations matching sourcePath by host
+// lexical path equivalence without modifying stored release history or files.
+func (b *Backend) DeleteInputLogs(ctx context.Context, sourcePath string) error {
+	if b == nil || b.repo == nil {
+		return errors.New("config repository not initialized")
+	}
+	return wrapWebError(b.repo.DeleteInputLogs(ctx, sourcePath))
 }
 
 // GetLogPath returns the host filesystem path of the active application log.

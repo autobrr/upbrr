@@ -24,7 +24,7 @@ import (
 
 // ContractVersion changes whenever identity resolution semantics become
 // incompatible with a previously resolved identity.
-const ContractVersion = "external-identity-v17-tentative-imdb"
+const ContractVersion = "external-identity-v21-source-and-sibling-evidence"
 
 // CompatibleStoredIdentity preserves manual pins and clears while discarding
 // automatic IDs and dependencies produced before the current identity contract.
@@ -32,29 +32,95 @@ func CompatibleStoredIdentity(stored api.ExternalIdentity) api.ExternalIdentity 
 	if stored.Resolution.ContractVersion == ContractVersion {
 		return stored
 	}
+	return filterStoredIdentity(stored, false, api.ExternalIDOverrides{})
+}
+
+// StoredIdentityForSource admits same-source automatic matches and path-scoped
+// user choices. A previously kept match requires Keep to remain enabled or a
+// fresh automatic match to establish it again.
+func StoredIdentityForSource(stored api.ExternalIdentity, path, fingerprint string, overrides api.ExternalIDOverrides) api.ExternalIdentity {
+	if !sourceEvidenceMatches(stored.SourcePath, path) {
+		return api.ExternalIdentity{}
+	}
+	stored = CompatibleStoredIdentity(stored)
+	return filterStoredIdentity(stored, stored.Resolution.SourceFingerprint == fingerprint, overrides)
+}
+
+// StoredMetadataForSource admits provider snapshots paired with the same
+// source generation. Older snapshots retain display facts without superseded
+// naming and anime-ranking evidence.
+func StoredMetadataForSource(
+	metadata api.SourceScopedMetadata,
+	stored api.ExternalIdentity,
+	path, fingerprint string,
+) api.SourceScopedMetadata {
+	if !sourceEvidenceMatches(metadata.SourcePath, path) || !sourceEvidenceMatches(stored.SourcePath, path) ||
+		stored.Resolution.SourceFingerprint != fingerprint || metadata.Generation != stored.Generation {
+		return api.SourceScopedMetadata{}
+	}
+	if stored.Resolution.ContractVersion != ContractVersion {
+		return migrateStoredProviderNaming(metadata)
+	}
+	return metadata
+}
+
+func migrateStoredProviderNaming(metadata api.SourceScopedMetadata) api.SourceScopedMetadata {
+	if metadata.TMDB != nil {
+		current := *metadata.TMDB
+		current.MALID, current.AnimeSeason, current.RetrievedAKA = 0, "", ""
+		if current.OriginalTitle == current.Title {
+			current.OriginalTitle = ""
+		}
+		metadata.TMDB = &current
+	}
+	if metadata.IMDB != nil && metadata.IMDB.AKA != "" {
+		current := *metadata.IMDB
+		current.AKA = ""
+		metadata.IMDB = &current
+	}
+	if metadata.TVDB != nil && strings.TrimSpace(metadata.TVDB.Name) != "" {
+		// Older snapshots could promote a search result or an alias to Name.
+		current := *metadata.TVDB
+		if len(current.Aliases) == 0 || current.Aliases[0] != current.Name {
+			current.Aliases = append([]string{current.Name}, current.Aliases...)
+		}
+		current.Name = ""
+		metadata.TVDB = &current
+	}
+	return metadata
+}
+
+func filterStoredIdentity(stored api.ExternalIdentity, sameSource bool, overrides api.ExternalIDOverrides) api.ExternalIdentity {
 	providers := []struct {
 		id         *int
 		provenance *api.IdentityProvenance
 		override   api.OverrideState
 		dependency *api.IdentityDependency
+		keep       *bool
 	}{
-		{&stored.TMDBID, &stored.Provenance.TMDB, stored.Overrides.TMDB, &stored.Dependencies.TMDB},
-		{&stored.IMDBID, &stored.Provenance.IMDB, stored.Overrides.IMDB, &stored.Dependencies.IMDB},
-		{&stored.TVDBID, &stored.Provenance.TVDB, stored.Overrides.TVDB, &stored.Dependencies.TVDB},
-		{&stored.TVmazeID, &stored.Provenance.TVmaze, stored.Overrides.TVmaze, &stored.Dependencies.TVmaze},
-		{&stored.MALID, &stored.Provenance.MAL, stored.Overrides.MAL, &stored.Dependencies.MAL},
+		{&stored.TMDBID, &stored.Provenance.TMDB, stored.Overrides.TMDB, &stored.Dependencies.TMDB, overrides.KeepTMDB},
+		{&stored.IMDBID, &stored.Provenance.IMDB, stored.Overrides.IMDB, &stored.Dependencies.IMDB, overrides.KeepIMDB},
+		{&stored.TVDBID, &stored.Provenance.TVDB, stored.Overrides.TVDB, &stored.Dependencies.TVDB, overrides.KeepTVDB},
+		{&stored.TVmazeID, &stored.Provenance.TVmaze, stored.Overrides.TVmaze, &stored.Dependencies.TVmaze, overrides.KeepTVmaze},
+		{&stored.MALID, &stored.Provenance.MAL, stored.Overrides.MAL, &stored.Dependencies.MAL, overrides.KeepMAL},
 	}
 	for _, provider := range providers {
-		if !providerIdentityLocked(provider.override, *provider.provenance) {
-			*provider.id = 0
-			*provider.provenance = api.IdentityProvenanceUnknown
-			*provider.dependency = api.IdentityDependency{}
+		if providerIdentityLocked(provider.override, *provider.provenance) || sameSource && *provider.provenance != api.IdentityProvenanceRetained {
+			continue
 		}
+		if provider.keep != nil && *provider.keep && *provider.id > 0 {
+			*provider.provenance = api.IdentityProvenanceRetained
+			continue
+		}
+		*provider.id = 0
+		*provider.provenance = api.IdentityProvenanceUnknown
+		*provider.dependency = api.IdentityDependency{}
 	}
-	if !providerIdentityLocked(stored.Overrides.Category, stored.Provenance.Category) {
-		stored.Category = api.CanonicalCategoryUnknown
-		stored.Provenance.Category = api.IdentityProvenanceUnknown
+	if sameSource || providerIdentityLocked(stored.Overrides.Category, stored.Provenance.Category) || stored.HasRetainedProvider() {
+		return stored
 	}
+	stored.Category = api.CanonicalCategoryUnknown
+	stored.Provenance.Category = api.IdentityProvenanceUnknown
 	return stored
 }
 
@@ -111,6 +177,12 @@ type CandidateEvidence struct {
 	Identity   api.ExternalIdentity
 	Metadata   api.SourceScopedMetadata
 	Candidates []api.ExternalIdentityCandidate
+	// These flags allow the candidate to withdraw stored automatic provider IDs.
+	AuthoritativeIMDB   bool
+	AuthoritativeTVmaze bool
+	AuthoritativeMAL    bool
+	// WithdrawnStoredIDs identifies stored automatic matches disqualified by collection.
+	WithdrawnStoredIDs map[api.IdentityProvider]int
 }
 
 // CandidateSource supplies provider evidence without persistence. It exists
@@ -284,8 +356,16 @@ func (r *Resolver) resolveCandidate(
 	result := Result{Identity: identity, ProviderMetadata: metadata}
 
 	if evidence.hasIDs {
-		applyStoredIdentity(&result.Identity, evidence.identity.WithoutResetPins(request.Intent.IdentityResetFields))
-		if err := appendEvidenceFingerprint(&result, "stored_identity", evidence.identity); err != nil {
+		stored := StoredIdentityForSource(
+			evidence.identity.WithoutResetPins(
+				request.Intent.IdentityResetFields,
+			),
+			request.SourcePath,
+			request.SourceFingerprint,
+			request.Intent.ProviderOverrides,
+		)
+		applyStoredIdentity(&result.Identity, stored)
+		if err := appendEvidenceFingerprint(&result, "stored_identity", stored); err != nil {
 			return Result{}, err
 		}
 		result.Diagnostics = append(result.Diagnostics, api.PreparationDiagnostic{
@@ -294,13 +374,14 @@ func (r *Resolver) resolveCandidate(
 			Message:  "stored external identity was considered as resolution evidence",
 		})
 	}
-	if evidence.hasMeta && sourceEvidenceMatches(evidence.metadata.SourcePath, request.SourcePath) {
-		result.ProviderMetadata = sourceScopedMetadata(evidence.metadata, request.SourcePath, request.Generation, resolvedAt)
-		if err := appendEvidenceFingerprint(&result, "stored_provider_metadata", evidence.metadata); err != nil {
+	storedMetadata := StoredMetadataForSource(evidence.metadata, evidence.identity, request.SourcePath, request.SourceFingerprint)
+	if evidence.hasMeta && hasCandidateMetadata(storedMetadata) {
+		result.ProviderMetadata = sourceScopedMetadata(storedMetadata, request.SourcePath, request.Generation, resolvedAt)
+		if err := appendEvidenceFingerprint(&result, "stored_provider_metadata", storedMetadata); err != nil {
 			return Result{}, err
 		}
 	}
-	if err := applyCandidateEvidence(&result, candidate, request.SourcePath, request.Generation, resolvedAt); err != nil {
+	if err := applyCandidateEvidence(&result, candidate, request, resolvedAt); err != nil {
 		return Result{}, err
 	}
 	if err := applyResolutionIntent(&result.Identity, request.Intent); err != nil {
@@ -316,11 +397,10 @@ func (r *Resolver) resolveCandidate(
 func applyCandidateEvidence(
 	result *Result,
 	candidate CandidateEvidence,
-	sourcePath string,
-	generation api.PreparedGeneration,
+	request Request,
 	resolvedAt time.Time,
 ) error {
-	if result == nil {
+	if result == nil || candidate.Identity.Resolution.SourceFingerprint != "" && candidate.Identity.Resolution.SourceFingerprint != request.SourceFingerprint {
 		return nil
 	}
 	storedCategory, _ := api.NormalizeCanonicalCategory(string(result.Identity.Category))
@@ -328,21 +408,21 @@ func applyCandidateEvidence(
 	categoryChanged := storedCategory != api.CanonicalCategoryUnknown && candidateCategory != api.CanonicalCategoryUnknown &&
 		storedCategory != candidateCategory
 	authoritativeProviders := hasExplicitProviderCorrection(candidate.Identity) || categoryChanged
-	candidateIdentityApplies := hasCandidateIdentity(candidate.Identity) && sourceEvidenceMatches(candidate.Identity.SourcePath, sourcePath)
+	candidateIdentityApplies := hasCandidateIdentity(candidate.Identity) && sourceEvidenceMatches(candidate.Identity.SourcePath, request.SourcePath)
 	if candidateIdentityApplies {
 		if authoritativeProviders || hasExplicitProviderCorrection(result.Identity) {
 			applyAuthoritativeCandidateProviders(&result.Identity, candidate.Identity)
 			applyCandidateCategory(&result.Identity, candidate.Identity)
 		} else {
-			applyCandidateIdentity(&result.Identity, candidate.Identity)
+			applyCandidateIdentity(&result.Identity, candidate, request.Intent.ProviderOverrides)
 		}
 		if err := appendEvidenceFingerprint(result, "provider_candidate", candidate.Identity); err != nil {
 			return err
 		}
 	}
 	if (hasCandidateMetadata(candidate.Metadata) || authoritativeProviders && candidateIdentityApplies) &&
-		sourceEvidenceMatches(candidate.Metadata.SourcePath, sourcePath) {
-		result.ProviderMetadata = sourceScopedMetadata(candidate.Metadata, sourcePath, generation, resolvedAt)
+		sourceEvidenceMatches(candidate.Metadata.SourcePath, request.SourcePath) {
+		result.ProviderMetadata = sourceScopedMetadata(candidate.Metadata, request.SourcePath, request.Generation, resolvedAt)
 		if err := appendEvidenceFingerprint(result, "provider_metadata_candidate", candidate.Metadata); err != nil {
 			return err
 		}
@@ -454,51 +534,47 @@ func hasCandidateMetadata(value api.SourceScopedMetadata) bool {
 	return value.TMDB != nil || value.IMDB != nil || value.TVDB != nil || value.TVmaze != nil || value.AniList != nil || value.Bluray != nil
 }
 
-func applyCandidateIdentity(identity *api.ExternalIdentity, candidate api.ExternalIdentity) {
+func applyCandidateIdentity(identity *api.ExternalIdentity, evidence CandidateEvidence, overrides api.ExternalIDOverrides) {
 	if identity == nil {
 		return
 	}
-	applyCandidateProvider(
-		&identity.TMDBID,
-		&identity.Dependencies.TMDB,
-		&identity.Provenance.TMDB,
-		candidate.TMDBID,
-		candidate.Dependencies.TMDB,
-		candidate.Provenance.TMDB,
-	)
-	applyCandidateProvider(
-		&identity.IMDBID,
-		&identity.Dependencies.IMDB,
-		&identity.Provenance.IMDB,
-		candidate.IMDBID,
-		candidate.Dependencies.IMDB,
-		candidate.Provenance.IMDB,
-	)
-	applyCandidateProvider(
-		&identity.TVDBID,
-		&identity.Dependencies.TVDB,
-		&identity.Provenance.TVDB,
-		candidate.TVDBID,
-		candidate.Dependencies.TVDB,
-		candidate.Provenance.TVDB,
-	)
-	applyCandidateProvider(
-		&identity.TVmazeID,
-		&identity.Dependencies.TVmaze,
-		&identity.Provenance.TVmaze,
-		candidate.TVmazeID,
-		candidate.Dependencies.TVmaze,
-		candidate.Provenance.TVmaze,
-	)
-	applyCandidateProvider(
-		&identity.MALID,
-		&identity.Dependencies.MAL,
-		&identity.Provenance.MAL,
-		candidate.MALID,
-		candidate.Dependencies.MAL,
-		candidate.Provenance.MAL,
-	)
+	candidate := evidence.Identity
+	for _, provider := range []struct {
+		key                 api.IdentityProvider
+		id                  *int
+		dependency          *api.IdentityDependency
+		provenance          *api.IdentityProvenance
+		candidateID         int
+		candidateDependency api.IdentityDependency
+		candidateProvenance api.IdentityProvenance
+		keep                *bool
+		authoritative       bool
+	}{
+		{api.IdentityProviderTMDB, &identity.TMDBID, &identity.Dependencies.TMDB, &identity.Provenance.TMDB,
+			candidate.TMDBID, candidate.Dependencies.TMDB, candidate.Provenance.TMDB, overrides.KeepTMDB, false},
+		{api.IdentityProviderIMDB, &identity.IMDBID, &identity.Dependencies.IMDB, &identity.Provenance.IMDB,
+			candidate.IMDBID, candidate.Dependencies.IMDB, candidate.Provenance.IMDB, overrides.KeepIMDB, evidence.AuthoritativeIMDB},
+		{api.IdentityProviderTVDB, &identity.TVDBID, &identity.Dependencies.TVDB, &identity.Provenance.TVDB,
+			candidate.TVDBID, candidate.Dependencies.TVDB, candidate.Provenance.TVDB, overrides.KeepTVDB, false},
+		{api.IdentityProviderTVmaze, &identity.TVmazeID, &identity.Dependencies.TVmaze, &identity.Provenance.TVmaze,
+			candidate.TVmazeID, candidate.Dependencies.TVmaze, candidate.Provenance.TVmaze, overrides.KeepTVmaze, evidence.AuthoritativeTVmaze},
+		{api.IdentityProviderMAL, &identity.MALID, &identity.Dependencies.MAL, &identity.Provenance.MAL,
+			candidate.MALID, candidate.Dependencies.MAL, candidate.Provenance.MAL, overrides.KeepMAL, evidence.AuthoritativeMAL},
+	} {
+		withdrawnID := evidence.WithdrawnStoredIDs[provider.key]
+		withdraw := (provider.authoritative || withdrawnID > 0 && withdrawnID == *provider.id) &&
+			!candidateProviderRetained(*provider.provenance, provider.keep)
+		applyCandidateProvider(provider.id, provider.dependency, provider.provenance, provider.candidateID,
+			provider.candidateDependency, provider.candidateProvenance, withdraw)
+	}
 	applyCandidateCategory(identity, candidate)
+}
+
+func candidateProviderRetained(provenance api.IdentityProvenance, keep *bool) bool {
+	if keep != nil {
+		return *keep
+	}
+	return provenance == api.IdentityProvenanceRetained
 }
 
 func applyCandidateCategory(identity *api.ExternalIdentity, candidate api.ExternalIdentity) {
@@ -518,8 +594,14 @@ func applyCandidateProvider(
 	value int,
 	candidateDependency api.IdentityDependency,
 	source api.IdentityProvenance,
+	withdraw bool,
 ) {
 	if value <= 0 {
+		if withdraw && value == 0 {
+			*target = 0
+			*dependency = api.IdentityDependency{}
+			*provenance = api.IdentityProvenanceUnknown
+		}
 		return
 	}
 	*target = value
@@ -564,7 +646,6 @@ func applyStoredIdentity(identity *api.ExternalIdentity, stored api.ExternalIden
 	if identity == nil || !sourceEvidenceMatches(stored.SourcePath, identity.SourcePath) {
 		return
 	}
-	stored = CompatibleStoredIdentity(stored)
 	identity.TMDBID = stored.TMDBID
 	identity.IMDBID = stored.IMDBID
 	identity.TVDBID = stored.TVDBID

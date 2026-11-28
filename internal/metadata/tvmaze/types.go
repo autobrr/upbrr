@@ -3,6 +3,8 @@
 
 package tvmaze
 
+import "github.com/autobrr/upbrr/pkg/api"
+
 // SearchInput controls identifier precedence and name fallback. StrictIDOnly
 // disables name searches unless AllowNameFallback explicitly restores them;
 // ManualDate prevents ordinary candidate auto-selection.
@@ -21,11 +23,12 @@ type SearchInput struct {
 // SearchResult contains the selected TVmaze identity plus deduplicated provider
 // candidates. AutoSelected excludes manual-ID and manual-date results.
 type SearchResult struct {
-	SelectedID   int
-	IMDBID       int
-	TVDBID       int
-	Candidates   []Candidate
-	AutoSelected bool
+	SelectedID       int
+	IMDBID           int
+	TVDBID           int
+	Candidates       []Candidate
+	AutoSelected     bool
+	LookupDependency api.IdentityDependency
 }
 
 type Candidate struct {

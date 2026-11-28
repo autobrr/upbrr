@@ -223,6 +223,19 @@ func TestLateTVDBReverseLookupFinishesLinkedMetadata(t *testing.T) {
 }
 
 func TestTVDBEpisodeRemoteLinkCannotBecomeSeriesIdentity(t *testing.T) {
+	for _, matchedIMDb := range []bool{false, true} {
+		name := "TVmaze matched by TVDB"
+		if matchedIMDb {
+			name = "TVmaze matched by episode IMDb"
+		}
+		t.Run(name, func(t *testing.T) {
+			assertTVDBEpisodeRemoteLinkRejected(t, matchedIMDb)
+		})
+	}
+}
+
+func assertTVDBEpisodeRemoteLinkRejected(t *testing.T, matchedIMDb bool) {
+	t.Helper()
 	tvdbClient := &stubTVDB{seriesMetadata: tvdb.SeriesMetadata{
 		TVDBID: 303,
 		Name:   "Example Series",
@@ -237,11 +250,21 @@ func TestTVDBEpisodeRemoteLinkCannotBecomeSeriesIdentity(t *testing.T) {
 		Title:  "Example Episode",
 		Type:   "tvEpisode",
 	}}
-	tvmazeClient := &stubTVmaze{result: tvmaze.SearchResult{
-		SelectedID: 404,
-		TVDBID:     303,
-		IMDBID:     202,
-		Candidates: []tvmaze.Candidate{{ID: 404, Externals: tvmaze.Externals{TVDB: 303, IMDB: "tt0000202"}}},
+	tvmazeClient := &stubTVmaze{searchFn: func(input tvmaze.SearchInput) tvmaze.SearchResult {
+		result := tvmaze.SearchResult{
+			SelectedID:       404,
+			TVDBID:           303,
+			IMDBID:           202,
+			Candidates:       []tvmaze.Candidate{{ID: 404, Externals: tvmaze.Externals{TVDB: 303, IMDB: "tt0000202"}}},
+			LookupDependency: api.IdentityDependency{TVDBID: 303},
+		}
+		if matchedIMDb {
+			if input.ImdbID == "" {
+				return tvmaze.SearchResult{}
+			}
+			result.LookupDependency = api.IdentityDependency{IMDBID: 202}
+		}
+		return result
 	}}
 	service := newTestService(t, &fakeRepo{}, WithTMDBClient(&stubTMDB{}), WithIMDBClient(imdbClient), WithTVDBClient(tvdbClient), WithTVmazeClient(tvmazeClient))
 	result, err := service.resolveExternalIdentity(t.Context(), preparationstate.State{
@@ -256,8 +279,13 @@ func TestTVDBEpisodeRemoteLinkCannotBecomeSeriesIdentity(t *testing.T) {
 	if result.Identity.IMDBID != 0 || result.ProviderMetadata.IMDB != nil || result.ProviderMetadata.TVDB.RemoteLinks.Links[0].State != "unsupported" || imdbClient.infoCalls != 1 {
 		t.Fatalf("episode link survived as a series identity: %+v calls=%d", result.Identity, imdbClient.infoCalls)
 	}
-	if result.Identity.TVmazeID != 404 || result.ProviderMetadata.TVmaze == nil || tvmazeClient.calls != 2 || tvmazeClient.inputs[1].ImdbID != "" || tvmazeClient.inputs[1].TVDBID != "303" {
-		t.Fatalf("series metadata was not resolved again after episode rejection: %+v inputs=%+v", result.Identity, tvmazeClient.inputs)
+	if matchedIMDb {
+		if result.Identity.TVmazeID != 0 || result.ProviderMetadata.TVmaze != nil || tvmazeClient.calls != 2 ||
+			tvmazeClient.inputs[1].ImdbID != "" || tvmazeClient.inputs[1].TVDBID != "303" {
+			t.Fatalf("TVmaze metadata dependent on the IMDb episode survived: %+v inputs=%+v", result.Identity, tvmazeClient.inputs)
+		}
+	} else if result.Identity.TVmazeID != 404 || result.ProviderMetadata.TVmaze == nil || tvmazeClient.calls != 1 {
+		t.Fatalf("TVmaze metadata found through TVDB was lost or fetched twice: %+v inputs=%+v", result.Identity, tvmazeClient.inputs)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -28,10 +29,14 @@ func buildDescription(assets trackers.DescriptionAssets) string {
 		return strings.TrimSpace(assets.Description)
 	}
 	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
-	base := strings.ReplaceAll(strings.TrimSpace(assets.Description), "[img=250]", "[img=250x250]")
+	baseDescription, discReports := description.SplitLeadingDiscReports(assets.Description)
+	base := strings.ReplaceAll(strings.TrimSpace(baseDescription), "[img=250]", "[img=250x250]")
 	parts := make([]string, 0, 1+len(assets.Screenshots))
 	if base != "" {
 		parts = append(parts, base)
+	}
+	if discReports != "" {
+		parts = append(parts, discReports)
 	}
 	for _, image := range assets.Screenshots {
 		webURL := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.WebURL, image.RawURL))

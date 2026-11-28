@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/httpclient"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/redaction"
@@ -80,6 +81,7 @@ func submitPreparedUpload(
 	body []byte,
 	contentType string,
 ) (api.UploadSummary, error) {
+	req.Logger = logging.FromContext(ctx, req.Logger)
 	response, responseBody, err := sendUpload(ctx, body, contentType)
 	if err != nil {
 		return api.UploadSummary{}, err
@@ -220,6 +222,7 @@ func sendUpload(ctx context.Context, body []byte, contentType string) (uploadRes
 		return uploadResponse{}, nil, fmt.Errorf("trackers: BHDTV upload request: %w", err)
 	}
 	defer resp.Body.Close()
+	commonhttp.LogUploadResponse(ctx, "BHDTV", resp)
 
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {

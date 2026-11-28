@@ -18,6 +18,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/configstore"
 	"github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/core"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/livetest"
 	"github.com/autobrr/upbrr/internal/logging"
@@ -123,9 +124,8 @@ func (s storedConfigSnapshot) LoadFullConfig(_ context.Context, dest any) error 
 func (s storedConfigSnapshot) DBPath() string { return s.dbPath }
 
 // InitializeRuntimeConfigActivation binds a validated startup config to the
-// durable generation before CLI or WebUI Core admits effects. Uncertain
-// prior-process effects remain fenced; a changed config cannot activate until
-// those effects have been explicitly reconciled.
+// durable generation before CLI or WebUI Core admits effects. Interrupted
+// prior-process effects are reconciled locally before configuration activation.
 // A changed fingerprint advances the generation only while the stored config
 // matches the caller's runtime and unfinished work can be invalidated safely.
 // Busy leases are retried for up to 65 seconds, subject to ctx; other errors
@@ -204,11 +204,14 @@ func InitializeRuntimeConfigActivation(
 		attempts++
 		stage := "initialize"
 		var next api.ConfigActivation
-		var activationErr error
-		if changed {
+		activationErr := core.RecoverInterruptedWorkflows(ctx, repo, logger)
+		switch {
+		case activationErr != nil:
+			stage = "recover interrupted workflows"
+		case changed:
 			stage = "reconcile"
 			next, activationErr = repo.ReconcileConfigActivationWithImpacts(ctx, snapshot, activation, fingerprint, impacts, releaseworkflow.ApplyConfigImpact)
-		} else {
+		default:
 			next, activationErr = repo.InitializeConfigActivationFingerprint(ctx, fingerprint)
 		}
 		if activationErr == nil {
@@ -233,18 +236,7 @@ func InitializeRuntimeConfigActivation(
 				busy,
 				logging.SanitizeMessage(activationErr.Error()),
 			)
-			if errors.Is(activationErr, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
-				activationErr = fmt.Errorf(
-					"%w; run 'upbrr recover' with the same database configuration to reconcile interrupted effects after checking their remote outcome",
-					activationErr,
-				)
-			}
-			switch stage {
-			case "initialize":
-				return api.ConfigActivation{}, fmt.Errorf("initialize runtime config activation fingerprint: %w", activationErr)
-			default:
-				return api.ConfigActivation{}, fmt.Errorf("reconcile runtime config activation: %w", activationErr)
-			}
+			return api.ConfigActivation{}, fmt.Errorf("runtime config activation (%s): %w", stage, activationErr)
 		}
 		if attempts == 1 || attempts%10 == 0 {
 			logger.Debugf(
@@ -891,15 +883,14 @@ func persistRuntimeConfigAndCookiesWithPreSave(
 		return &runtimeCookiePersistenceError{err: fmt.Errorf("create cookie store: %w", err)}
 	}
 
-	migratedCount := 0
-	failedCookies := make([]cookies.FailedCookie, 0)
+	var migrated cookies.MigrationResult
 	err = save(func(ctx context.Context, tx *sql.Tx, key []byte) error {
 		if len(key) == 0 {
 			logger.Debugf("runtime activation: cookie migration skipped: web auth helper unavailable")
 			return runActivate(ctx, tx)
 		}
 		var migrateErr error
-		migratedCount, failedCookies, migrateErr = cookies.MigrateFromFilesToDBTx(ctx, cookiesDir, store, tx, key, logger)
+		migrated, migrateErr = cookies.MigrateFromFilesToDBTx(ctx, cookiesDir, store, tx, key, logger)
 		if migrateErr != nil {
 			return &runtimeCookiePersistenceError{err: fmt.Errorf("migrate cookies: %w", migrateErr)}
 		}
@@ -908,11 +899,8 @@ func persistRuntimeConfigAndCookiesWithPreSave(
 	if err != nil {
 		return fmt.Errorf("persist runtime config with cookie migration: %w", err)
 	}
-	if migratedCount == 0 || len(failedCookies) > 0 {
-		return nil
-	}
-	if err := cookies.DeleteMigratedCookieFiles(cookiesDir, logger); err != nil {
-		logger.Warnf("cookies: migration cleanup failed dir=%s migrated=%d: %v", cookiesDir, migratedCount, err)
+	if err := migrated.Cleanup(cookiesDir, logger); err != nil {
+		logger.Warnf("cookies: migration cleanup failed dir=%s migrated=%d: %v", cookiesDir, migrated.Count, err)
 	}
 	return nil
 }

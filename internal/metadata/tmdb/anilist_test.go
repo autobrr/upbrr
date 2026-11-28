@@ -5,9 +5,12 @@ package tmdb
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -335,7 +338,7 @@ func TestAniListRequestsUseInjectedEndpoint(t *testing.T) {
 				requested = append(requested, req.URL.String())
 				return &http.Response{
 					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(`{"data":{}}`)),
+					Body:       io.NopCloser(strings.NewReader(`{"data":{"Page":{"media":[]},"Media":null}}`)),
 					Header:     make(http.Header),
 				}, nil
 			}),
@@ -359,6 +362,50 @@ func TestAniListRequestsUseInjectedEndpoint(t *testing.T) {
 	}
 }
 
+func TestResolveAnimeDistinguishesGraphQLFailureFromEmptyPage(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, body string
+		failed     bool
+	}{
+		{
+			name:   "GraphQL errors",
+			body:   `{"data":null,"errors":[{"message":"synthetic failure"}]}`,
+			failed: true,
+		},
+		{
+			name:   "missing page",
+			body:   `{"data":{"Page":null}}`,
+			failed: true,
+		},
+		{
+			name:   "missing media",
+			body:   `{"data":{"Page":{"pageInfo":{"total":1}}}}`,
+			failed: true,
+		},
+		{
+			name:   "null media",
+			body:   `{"data":{"Page":{"media":null}}}`,
+			failed: true,
+		},
+		{name: "empty page", body: `{"data":{"Page":{"media":[]}}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &Client{
+				anilistURL: testAnilistURL,
+				logger:     api.NopLogger{},
+				http: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(test.body))}, nil
+				})},
+			}
+			result, err := client.ResolveAnime(t.Context(), "Example Anime", MetadataInput{})
+			if err != nil || result.MALID != 0 || result.LookupFailed != test.failed {
+				t.Fatalf("result = %+v, error = %v, want zero MAL and LookupFailed = %t", result, err, test.failed)
+			}
+		})
+	}
+}
+
 func TestResolveAnimeWarnsSanitizedOnSearchFailure(t *testing.T) {
 	logger := &captureTMDBLogger{}
 	client := &Client{
@@ -376,13 +423,13 @@ func TestResolveAnimeWarnsSanitizedOnSearchFailure(t *testing.T) {
 	}
 
 	result, err := client.ResolveAnime(context.Background(), "Example Anime", MetadataInput{
-		Filename: "Example.Anime.2026.S01.1080p.WEB-DL-GRP",
+		Filename: "Example.Other.Title.2026.S01.1080p.WEB-DL-GRP",
 	})
 	if err != nil {
 		t.Fatalf("expected best-effort resolve to succeed, got %v", err)
 	}
-	if result.MALID != 0 {
-		t.Fatalf("expected no MAL id without candidates, got %d", result.MALID)
+	if result.MALID != 0 || !result.LookupFailed {
+		t.Fatalf("expected a failed lookup without a MAL ID, got %+v", result)
 	}
 
 	warnings := logger.warnings()
@@ -396,6 +443,49 @@ func TestResolveAnimeWarnsSanitizedOnSearchFailure(t *testing.T) {
 		if strings.Contains(warning, "Example") || strings.Contains(warning, "GRP") {
 			t.Fatalf("expected warning to omit the search term, got %q", warning)
 		}
+	}
+}
+
+func TestResolveAnimePartialFailures(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name        string
+		failAttempt int
+		wantMAL     int
+	}{
+		{name: "failed primary, empty fallback", failAttempt: 1},
+		{name: "empty primary, failed fallback", failAttempt: 2},
+		{
+			name:        "failed primary, successful fallback",
+			failAttempt: 1,
+			wantMAL:     200,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			attempts := 0
+			client := &Client{
+				anilistURL: testAnilistURL,
+				logger:     api.NopLogger{},
+				http: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+					attempts++
+					if attempts == test.failAttempt {
+						return &http.Response{
+							StatusCode: http.StatusInternalServerError,
+							Body:       io.NopCloser(strings.NewReader("upstream failure")),
+						}, nil
+					}
+					body := `{"data":{"Page":{"media":[]}}}`
+					if test.wantMAL != 0 {
+						body = `{"data":{"Page":{"media":[{"idMal":200,"title":{"english":"Other Series"}}]}}}`
+					}
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+				})},
+			}
+			result, err := client.ResolveAnime(t.Context(), "Example Anime", MetadataInput{Filename: "Other.Series.S01.1080p.WEB-DL-GRP"})
+			if err != nil || result.LookupFailed != (test.wantMAL == 0) || result.MALID != test.wantMAL || attempts != 2 {
+				t.Fatalf("lookup = %+v after %d attempts, err=%v, want MAL %d", result, attempts, err, test.wantMAL)
+			}
+		})
 	}
 }
 
@@ -428,6 +518,181 @@ func TestResolveAnimeSearchesKnownMALIDOnce(t *testing.T) {
 	}
 	if result.MALID != 20 {
 		t.Fatalf("expected explicit MAL ID to be retained, got %d", result.MALID)
+	}
+}
+
+func TestResolveAnimeUsesNativeTitleEvidence(t *testing.T) {
+	t.Parallel()
+	client := &Client{
+		anilistURL: testAnilistURL,
+		logger:     api.NopLogger{},
+		http: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"data":{"Page":{"media":[
+				{"id":1,"idMal":100,"title":{"romaji":"Shiroi Tsuki Gaiden Season 2","native":"白い月外伝"}},
+				{"id":2,"idMal":200,"title":{"romaji":"Shiroi Tsuki","native":"白い月"}}
+			]}}}`))}, nil
+		})},
+	}
+	for _, test := range []struct {
+		name   string
+		input  MetadataInput
+		malID  int
+		romaji string
+	}{
+		{
+			name:   "白い月",
+			malID:  200,
+			romaji: "Shiroi Tsuki",
+		},
+		{name: "星夜"},
+		{
+			name:   "白い月",
+			input:  MetadataInput{ManualSeason: "S02"},
+			malID:  100,
+			romaji: "Shiroi Tsuki Gaiden Season 2",
+		},
+		{
+			name: "白い月",
+			input: MetadataInput{
+				ManualSeason: "S00",
+				Season:       "S02",
+				Filename:     "Shiroi.Tsuki.S02.1080p.WEB-DL-GRP.mkv",
+			},
+			malID:  200,
+			romaji: "Shiroi Tsuki",
+		},
+		{
+			name:   "白い月",
+			input:  MetadataInput{ManualSeason: "0", Season: "S02"},
+			malID:  200,
+			romaji: "Shiroi Tsuki",
+		},
+		{
+			name:   "白い月",
+			input:  MetadataInput{ManualSeason: "S01", Season: "S02"},
+			malID:  200,
+			romaji: "Shiroi Tsuki",
+		},
+		{
+			input:  MetadataInput{MALManual: 200},
+			malID:  200,
+			romaji: "Shiroi Tsuki",
+		},
+	} {
+		got, err := client.ResolveAnime(t.Context(), test.name, test.input)
+		if err != nil || got.MALID != test.malID || got.Romaji != test.romaji {
+			t.Errorf("%q resolves to %+v, error %v, want MAL %d and romaji %q", test.name, got, err, test.malID, test.romaji)
+		}
+	}
+}
+
+func TestResolveAnimeRanksTheCurrentQuery(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name      string
+		tmdbTitle string
+		filename  string
+		queries   []string
+	}{
+		{
+			name:      "empty primary response",
+			tmdbTitle: "Echo",
+			filename:  "月.S01E02.1080p.WEB-DL-GRP",
+			queries:   []string{"Echo", "月"},
+		},
+		{
+			name:      "cross-script mismatch",
+			tmdbTitle: "Night",
+			filename:  "月.S01E02.1080p.WEB-DL-GRP",
+			queries:   []string{"Night", "月"},
+		},
+		{
+			name:     "blank TMDB title",
+			filename: "月.S01E02.1080p.WEB-DL-GRP",
+			queries:  []string{"月"},
+		},
+		{
+			name:      "weak native match falls back to the filename",
+			tmdbTitle: "月",
+			filename:  "Tsuki.1080p.WEB-DL-GRP",
+			queries:   []string{"月", "Tsuki"},
+		},
+		{
+			name:      "SubsPlease filename priority",
+			tmdbTitle: "Echo",
+			filename:  "[SubsPlease] Tsuki - 02 (1080p).mkv",
+			queries:   []string{"Tsuki"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var queries []string
+			client := &Client{
+				anilistURL: testAnilistURL,
+				logger:     api.NopLogger{},
+				http: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					var payload struct {
+						Variables map[string]string
+					}
+					if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+						return nil, fmt.Errorf("decode AniList query: %w", err)
+					}
+					query := payload.Variables["search"]
+					queries = append(queries, query)
+					media := `[
+						{"idMal":100,"title":{"romaji":"Tsuki Gaiden","english":"Echo","native":"月外伝"}},
+						{"idMal":200,"title":{"romaji":"Tsuki","native":"月"}}
+					]`
+					switch query {
+					case "Echo":
+						media = "[]"
+					case "Night":
+						media = `[{"idMal":300,"title":{"native":"朝空"}}]`
+					case "月":
+						if test.tmdbTitle == "月" {
+							media = `[{"idMal":300,"title":{"native":"月外伝"}}]`
+						}
+					}
+					body := `{"data":{"Page":{"media":` + media + `}}}`
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+				})},
+			}
+			got, err := client.ResolveAnime(t.Context(), test.tmdbTitle, MetadataInput{Filename: test.filename})
+			if err != nil || got.MALID != 200 || got.Romaji != "Tsuki" || !slices.Equal(queries, test.queries) {
+				t.Fatalf("result = %+v, err = %v, queries = %q, want MAL 200 (Tsuki) from %q", got, err, queries, test.queries)
+			}
+		})
+	}
+}
+
+func TestResolveAnimeRanksFilmAgainstFullTitle(t *testing.T) {
+	t.Parallel()
+	var queries []string
+	client := &Client{
+		anilistURL: testAnilistURL,
+		logger:     api.NopLogger{},
+		http: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			var payload struct {
+				Variables map[string]string
+			}
+			if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+				return nil, fmt.Errorf("decode AniList query: %w", err)
+			}
+			queries = append(queries, payload.Variables["search"])
+			body := `{"data":{"Page":{"media":[
+				{"idMal":100,"title":{"romaji":"Example Saga","english":"Example Saga"}},
+				{"idMal":101,"title":{"romaji":"Example Saga Season 2","english":"Example Saga Season 2"}},
+				{"idMal":200,"title":{"romaji":"Example Saga The Movie","english":"Example Saga The Movie"}}
+			]}}}`
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+		})},
+	}
+
+	got, err := client.ResolveAnime(t.Context(), "Example Saga The Movie", MetadataInput{
+		Category: "MOVIE",
+		Filename: "Example.Saga.The.Movie.2026.S02.1080p.WEB-DL-GRP.mkv",
+	})
+	if err != nil || got.MALID != 200 || got.Romaji != "Example Saga The Movie" || !slices.Equal(queries, []string{"Example Saga"}) {
+		t.Fatalf("result = %+v, err = %v, queries = %q, want MAL 200 (Example Saga The Movie) from [\"Example Saga\"]", got, err, queries)
 	}
 }
 
@@ -524,4 +789,82 @@ func (e timeoutError) Timeout() bool {
 
 func (e timeoutError) Temporary() bool {
 	return true
+}
+
+func TestResolveAnimeMatchesOrdinalSeasonLabelsAndCanonicalUnicode(t *testing.T) {
+	t.Parallel()
+	client := &Client{
+		anilistURL: anilistURL,
+		logger:     api.NopLogger{},
+		http: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"data":{"Page":{"media":[
+				{"idMal":100,"title":{"native":"ガギゴ","english":"Example Saga"}},
+				{"idMal":200,"title":{"native":"カキコ","english":"Example Saga 2nd Season"}},
+				{"idMal":300,"title":{"english":"Example Saga 3rd Season"}},
+				{"idMal":400,"title":{"english":"Example Saga 4th Season"}},
+				{"idMal":401,"title":{"english":"Example Saga 2nd Movie"}}
+			]}}}`))}, nil
+		})},
+	}
+	for _, test := range []struct {
+		title string
+		input MetadataInput
+		malID int
+	}{
+		{"Example Saga", MetadataInput{Season: "S02"}, 200},
+		{"Example Saga", MetadataInput{Season: "S03"}, 300},
+		{"Example Saga", MetadataInput{Season: "S04"}, 400},
+		{"Example Saga", MetadataInput{Season: "S2"}, 200},
+		{"Example Saga", MetadataInput{ManualSeason: "Season 2"}, 200},
+		{"Example Saga", MetadataInput{Filename: "Example.Saga.S2E04.mkv"}, 100},
+		{"Example Saga", MetadataInput{Filename: "Example.Saga.S02E04.mkv"}, 200},
+		{"カ\u3099キ\u3099コ\u3099", MetadataInput{}, 100},
+		{"Example Saga 2nd Movie", MetadataInput{Season: "S02"}, 200},
+	} {
+		got, err := client.ResolveAnime(t.Context(), test.title, test.input)
+		if err != nil || got.MALID != test.malID {
+			t.Errorf("title %q input %+v selected MAL %d, error %v, want %d", test.title, test.input, got.MALID, err, test.malID)
+		}
+	}
+}
+
+func TestSelectAniListMediaRequiresCompatibleTitleForSeasonPriority(t *testing.T) {
+	t.Parallel()
+	media := []anilistMedia{
+		{IDMal: 100, Title: anilistTitle{English: "Q7"}},
+		{IDMal: 200, Title: anilistTitle{English: "Q7 2nd Season"}},
+		{IDMal: 300, Title: anilistTitle{English: "Q9 3rd Season"}},
+		{IDMal: 400, Title: anilistTitle{English: "Q9 2nd Season"}},
+	}
+	for _, test := range []struct {
+		title                   string
+		season, manualMAL, want int
+	}{
+		{
+			title:  "Q7",
+			season: 2,
+			want:   200,
+		},
+		{
+			title:  "Q7",
+			season: 3,
+			want:   100,
+		},
+		{
+			title:  "Q7 2nd Season",
+			season: 2,
+			want:   200,
+		},
+		{
+			title:     "Q7",
+			season:    2,
+			manualMAL: 400,
+			want:      400,
+		},
+	} {
+		got := selectAniListMedia(media, test.title, test.season, test.manualMAL)
+		if got == nil || got.IDMal != test.want {
+			t.Errorf("title %q, season %d, manual MAL %d selected %+v, want MAL %d", test.title, test.season, test.manualMAL, got, test.want)
+		}
+	}
 }

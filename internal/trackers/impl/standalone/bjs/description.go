@@ -62,7 +62,7 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 		}
 	}
 	if discType == "BDMV" {
-		bdinfo, _ := trackers.ReadBDInfo(req.Runtime.DBPath, meta)
+		bdinfo, _ := trackers.ReadBDInfoForDescription(req.Runtime.DBPath, meta)
 		parts = append(parts, "[hide=BDInfo][pre]"+bdinfo+"[/pre][/hide]")
 	}
 

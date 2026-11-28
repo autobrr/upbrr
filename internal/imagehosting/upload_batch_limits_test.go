@@ -19,16 +19,22 @@ import (
 )
 
 func TestUploadBatchRequestLimits(t *testing.T) {
-	const capBytes int64 = 100 << 20
+	t.Parallel()
+	if got := effectiveMaxBatchBytes(0); got != 100<<20 {
+		t.Fatalf("default max batch bytes = %d, want %d", got, 100<<20)
+	}
+	const capBytes int64 = 100 << 10
 	for _, host := range []string{"lostimg", "hdb"} {
 		t.Run(host, func(t *testing.T) {
+			t.Parallel()
 			countLimit := 50
 			if host == "hdb" {
 				countLimit = 9
 			}
 			for _, scenario := range []string{"size", "count and size", "exact boundary", "over boundary", "later failure"} {
 				t.Run(scenario, func(t *testing.T) {
-					sizes := []int64{60 << 20, 60 << 20, 1}
+					t.Parallel()
+					sizes := []int64{60 << 10, 60 << 10, 1}
 					expectedCounts := []int{1, 2}
 					wantError := false
 					switch scenario {
@@ -37,8 +43,8 @@ func TestUploadBatchRequestLimits(t *testing.T) {
 						for i := range sizes {
 							sizes[i] = 1
 						}
-						sizes[0], sizes[countLimit] = 60<<20, 60<<20
-						sizes[countLimit+1] = 60 << 20
+						sizes[0], sizes[countLimit] = 60<<10, 60<<10
+						sizes[countLimit+1] = 60 << 10
 						expectedCounts = []int{countLimit, 1, 2}
 					case "exact boundary", "over boundary":
 						// Measure the wire envelope independently, with the standard encoder.
@@ -69,7 +75,7 @@ func TestUploadBatchRequestLimits(t *testing.T) {
 							wantError = true
 						}
 					case "later failure":
-						sizes = []int64{60 << 20, 60 << 20, capBytes}
+						sizes = []int64{60 << 10, 60 << 10, capBytes}
 						expectedCounts = []int{1, 1}
 						wantError = true
 					}
@@ -144,12 +150,17 @@ func TestUploadBatchRequestLimits(t *testing.T) {
 					var results []uploadResult
 					var err error
 					if host == "lostimg" {
-						results, err = (&lostimgUploader{apiKey: "test", client: client}).UploadBatch(context.Background(), paths)
+						results, err = (&lostimgUploader{
+							apiKey:        "test",
+							client:        client,
+							maxBatchBytes: capBytes,
+						}).UploadBatch(context.Background(), paths)
 					} else {
 						results, err = (&hdbUploader{
-							username: "user",
-							passkey:  "pass",
-							client:   client,
+							username:      "user",
+							passkey:       "pass",
+							client:        client,
+							maxBatchBytes: capBytes,
 						}).UploadBatchWithName(context.Background(), paths, "release")
 					}
 					if wantError {

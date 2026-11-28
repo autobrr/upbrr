@@ -498,7 +498,7 @@ func newCLIWorkflowSession(
 			session.releaseActiveInput(ctx)
 		}
 	}()
-	if err := session.reconcileLegacyInputs(ctx, reader); err != nil {
+	if err := session.reconcileLegacyInputs(ctx); err != nil {
 		return nil, err
 	}
 	if err := session.continueUntilStable(ctx, api.ContinueReleaseWorkflowRequest{
@@ -1921,17 +1921,18 @@ func runCLIWorkflowUploadOnly(
 		streams,
 		logger,
 		func(itemCtx context.Context, item cliPreparationItem) (cliQueueOutcome, error) {
+			itemLogger := logging.FromContext(itemCtx, logger)
 			request := batch.defaults
 			request.SourcePath = item.originalPath
 			request.ExternalIDOverrides = item.externalIDs
 			request.PlaylistInstruction = item.playlistInstruction
-			session, err := newCLIWorkflowSession(itemCtx, coreSvc, request, api.PreparationIntentUpload, reader, cfg, streams, logger)
+			session, err := newCLIWorkflowSession(itemCtx, coreSvc, request, api.PreparationIntentUpload, reader, cfg, streams, itemLogger)
 			if err != nil {
 				return cliQueueOutcome{}, err
 			}
 			session.screenshotCountIsDefault = screenshotCountIsDefault
 			defer session.releaseActiveInput(itemCtx)
-			err = session.complete(itemCtx, debug, reader, cfg, logger)
+			err = session.complete(itemCtx, debug, reader, cfg, itemLogger)
 			return cliQueueWorkflowOutcome(session, false), err
 		},
 	)

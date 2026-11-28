@@ -856,11 +856,11 @@ test.describe("Contextual help outside Settings", () => {
       await expect(page.getByRole("radio", { name: "Primary", exact: true })).toBeChecked();
 
       await page.getByRole("button", { name: "Logging", exact: true }).click();
-      const level = page.getByRole("combobox", { name: "Runtime log level" });
-      const originalLevel = await level.inputValue();
-      await expect(level).toHaveAccessibleDescription(/after Save/);
-      await checkFloatingHelp("Runtime log level", level);
-      await expect(level).toHaveValue(originalLevel);
+      const budget = page.getByRole("spinbutton", { name: "Total log-file budget (MB)" });
+      const originalBudget = await budget.inputValue();
+      await expect(budget).toHaveAccessibleDescription(/approximate total file budget/i);
+      await checkFloatingHelp("Total log-file budget (MB)", budget);
+      await expect(budget).toHaveValue(originalBudget);
       await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
       expect(workspace.fake.counters).toEqual(before);
       // Entering HDR normally refreshes tracker requirements, without starting analysis.

@@ -26,6 +26,7 @@ func Profile() standalone.Profile {
 		ValidationPolicy:        validationPolicy(),
 		ReleaseNamePolicy:       trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/bt/v1", resolveUploadName, resolveSearchName),
 		NewDuplicateAdapter:     newDuplicateAdapter,
+		DupePolicy:              &trackers.DupePolicy{ID: "bt/duplicate/v2"},
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{Requirements: []trackers.MetadataRequirement{{
 			Scope:       trackers.MetadataScopeAny,
 			AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTMDBLocalizedPTBR},

@@ -4,10 +4,14 @@
 package imdb
 
 import (
+	"cmp"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +20,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -58,6 +64,32 @@ func TestGetInfoSpokenLanguages(t *testing.T) {
 			}
 			if !slices.Equal(info.SpokenLanguages, test.want) || info.OriginalLanguage != "ja" || info.Title != "Example Movie" {
 				t.Fatalf("title languages = %v, manual language = %q, title = %q", info.SpokenLanguages, info.OriginalLanguage, info.Title)
+			}
+		})
+	}
+}
+
+func TestGetInfoOnlyUsesVerifiedOriginalTitle(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, primaryFlag, suffix, want string
+	}{
+		{"display only", "false", "", ""},
+		{"verified display title", "true", "", "Daybreak"},
+		{"literal AKA in original", "false", `,"originalTitleText":{"text":"AKA Echo"}`, "AKA Echo"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{"data":{"title":{"id":"tt0555001","titleText":{"text":"Daybreak","isOriginalTitle":%s}%s}}}`,
+					test.primaryFlag, test.suffix)
+			}))
+			defer server.Close()
+			client := NewClient(server.Client(), nil)
+			client.baseURL = server.URL
+			got, err := client.GetInfo(t.Context(), "tt0555001", "", false)
+			if err != nil || got.Title != "Daybreak" || got.AKA != test.want {
+				t.Fatalf("title=%q original=%q error=%v, want Daybreak and original %q", got.Title, got.AKA, err, test.want)
 			}
 		})
 	}
@@ -482,6 +514,42 @@ func TestSearchSelectsOnlyRequestedCategory(t *testing.T) {
 	}
 }
 
+type searchRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f searchRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func TestSearchCancelsDuringFallbackPause(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		attempts := 0
+		client := NewClient(&http.Client{Transport: searchRoundTripper(func(_ *http.Request) (*http.Response, error) {
+			attempts++
+			body := `{"data":{"advancedTitleSearch":{"edges":[]}}}`
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+		})}, nil)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() {
+			_, err := client.Search(ctx, SearchInput{Filename: "The Example Film"})
+			done <- err
+		}()
+		synctest.Wait()
+		if attempts != 1 {
+			t.Fatalf("got %d requests before the fallback pause, want one", attempts)
+		}
+		canceledAt := time.Now()
+		cancel()
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Errorf("Search error = %v, want context.Canceled", err)
+		}
+		if elapsed := time.Since(canceledAt); elapsed != 0 || attempts != 1 {
+			t.Errorf("Search took %v after cancellation and made %d requests, want an immediate return after one request", elapsed, attempts)
+		}
+	})
+}
+
 func assertIMDbGraphQLHeaders(t *testing.T, request *http.Request) {
 	t.Helper()
 
@@ -533,7 +601,8 @@ func TestRankCandidates(t *testing.T) {
 			},
 		},
 	}
-	candidates := rankCandidates(results, "Example Title", 2020)
+	hits := []titleSearchHit{{edge: results[0]}, {edge: results[1]}}
+	candidates := rankCandidates(hits, "Example Title", "", 2020)
 	if len(candidates) == 0 {
 		t.Fatalf("expected candidates")
 	}
@@ -551,7 +620,7 @@ func TestRankCandidates(t *testing.T) {
 		{0, 0, 1},
 	} {
 		getMapFromMap(getMapFromMap(results[0], "node"), "title")["releaseYear"] = map[string]any{"year": test.year}
-		got := rankCandidates(results[:1], "Example Title", test.requested)
+		got := rankCandidates(hits[:1], "Example Title", "", test.requested)
 		if len(got) != 1 || math.Abs(got[0].Similarity-test.want) > 1e-10 {
 			t.Fatalf("candidate year %d requested %d: %+v, want %v", test.year, test.requested, got, test.want)
 		}
@@ -579,6 +648,183 @@ func TestSearchRetainsWeakSingleResult(t *testing.T) {
 	candidate := got.Candidates[0]
 	if candidate.IMDbID != 555001 || candidate.Confidence >= 0.85 || math.Abs(candidate.Similarity-candidate.Confidence-0.2) > 1e-10 {
 		t.Fatalf("candidate lost separate confidence and ranking: %+v", candidate)
+	}
+}
+
+func TestSearchRanksAlternateTitleWithCompatibleYear(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		year         int
+		titleType    string
+		input        SearchInput
+		selectID     bool
+		rejected     bool
+		displayTitle string
+		weakPrimary  bool
+		alternate    string
+		nearMatch    string
+	}{
+		{
+			name:     "exact alternate",
+			year:     2024,
+			input:    SearchInput{UntouchedFilename: "雪.aka.Hidden.Tide.2024.1080p.WEB-DL-GRP.mkv", Category: "MOVIE"},
+			selectID: true,
+		},
+		{
+			name:         "canonically equivalent alternate",
+			year:         2024,
+			input:        SearchInput{UntouchedFilename: "雪.aka.Café.2024.1080p.WEB-DL-GRP.mkv", Category: "MOVIE"},
+			selectID:     true,
+			displayTitle: "Cafe\u0301",
+			alternate:    "Café",
+			nearMatch:    "Cafés",
+		},
+		{
+			name:      "movie rejects tv episode alternate",
+			year:      2024,
+			titleType: "TV Episode",
+			input:     SearchInput{UntouchedFilename: "雪.aka.Hidden.Tide.2024.1080p.WEB-DL-GRP.mkv", Category: "MOVIE"},
+			rejected:  true,
+		},
+		{
+			name:      "movie rejects video game alternate",
+			year:      2024,
+			titleType: "Video Game",
+			input:     SearchInput{UntouchedFilename: "雪.aka.Hidden.Tide.2024.1080p.WEB-DL-GRP.mkv", Category: "MOVIE"},
+			rejected:  true,
+		},
+		{
+			name:  "wrong-year alternate",
+			year:  1980,
+			input: SearchInput{UntouchedFilename: "雪.aka.Hidden.Tide.2024.1080p.WEB-DL-GRP.mkv", Category: "MOVIE"},
+		},
+		{
+			name: "supplemental wrong-year exact primary",
+			year: 1980,
+			input: SearchInput{
+				Filename:       "Evening Sky",
+				AlternateTitle: "Hidden Tide",
+				SearchYear:     2024,
+			},
+			displayTitle: "Evening Sky",
+			weakPrimary:  true,
+		},
+		{
+			name: "supplemental compatible-year exact primary",
+			year: 2025,
+			input: SearchInput{
+				Filename:       "Evening Sky",
+				AlternateTitle: "Hidden Tide",
+				SearchYear:     2024,
+			},
+			displayTitle: "Evening Sky",
+			weakPrimary:  true,
+			selectID:     true,
+		},
+		{
+			name: "empty primary with wrong-year exact primary from AKA",
+			year: 1980,
+			input: SearchInput{
+				Filename:       "Evening Sky",
+				AlternateTitle: "Hidden Tide",
+				SearchYear:     2024,
+			},
+			displayTitle: "Evening Sky",
+		},
+		{
+			name: "empty primary with compatible-year exact primary from AKA",
+			year: 2025,
+			input: SearchInput{
+				Filename:       "Evening Sky",
+				AlternateTitle: "Hidden Tide",
+				SearchYear:     2024,
+			},
+			displayTitle: "Evening Sky",
+			selectID:     true,
+		},
+		{
+			name: "subtitle discovery",
+			year: 2024,
+			input: SearchInput{
+				Filename:   "雪",
+				Subtitle:   "Hidden Tide",
+				SearchYear: 2024,
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			titleType := test.titleType
+			if titleType == "" {
+				titleType = "Movie"
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request graphQLRequest
+				var err error
+				if r.Method == http.MethodGet {
+					err = json.Unmarshal([]byte(r.URL.Query().Get("variables")), &request.Variables)
+				} else {
+					err = json.NewDecoder(r.Body).Decode(&request)
+				}
+				if err != nil {
+					t.Error(err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				edges := "[]"
+				term := getStringFromMap(request.Variables, "constraints", "titleTextConstraint", "searchTerm")
+				if term == cmp.Or(test.alternate, "Hidden Tide") {
+					displayTitle := test.displayTitle
+					if displayTitle == "" {
+						displayTitle = term
+					}
+					edges = fmt.Sprintf(`[{"node":{"title":{"id":"tt0555001","titleText":{"text":%q},"releaseYear":{"year":%d},`+
+						`"titleType":{"text":%q}}}}]`, displayTitle, test.year, titleType)
+					if test.nearMatch != "" {
+						edges = strings.TrimSuffix(edges, "]") +
+							fmt.Sprintf(`,{"node":{"title":{"id":"tt0555003","titleText":{"text":%q},"releaseYear":{"year":%d},"titleType":{"text":%q}}}}]`,
+								test.nearMatch, test.year, titleType)
+					}
+				} else if test.weakPrimary && term == test.input.Filename {
+					edges = `[{"node":{"title":{"id":"tt0555002","titleText":{"text":"Cold Rain"},"releaseYear":{"year":2024},"titleType":{"text":"Movie"}}}}]`
+				}
+				_, _ = fmt.Fprintf(w, `{"data":{"advancedTitleSearch":{"edges":%s}}}`, edges)
+			}))
+			defer server.Close()
+			client := NewClient(server.Client(), nil)
+			client.baseURL = server.URL
+			result, err := client.Search(t.Context(), test.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch {
+			case test.selectID:
+				if result.IMDbID != 555001 || !result.AutoSelected {
+					t.Fatalf("exact alternate and year should select IMDb ID: %+v", result)
+				}
+				if test.nearMatch != "" && (len(result.Candidates) == 0 || result.Candidates[0].Title != test.displayTitle) {
+					t.Fatalf("selected candidate lost its provider display title: %+v", result.Candidates)
+				}
+			case test.rejected:
+				if result.IMDbID != 0 || result.AutoSelected || len(result.Candidates) != 0 {
+					t.Fatalf("incompatible title type must be excluded: %+v", result)
+				}
+			case test.displayTitle != "":
+				wantCandidates := 1
+				if test.weakPrimary {
+					wantCandidates++
+				}
+				if result.IMDbID != 0 || result.AutoSelected || !result.Tentative || len(result.Candidates) != wantCandidates ||
+					!slices.ContainsFunc(result.Candidates, func(candidate Candidate) bool {
+						return candidate.IMDbID == 555001 && candidate.Year == test.year &&
+							candidate.Confidence <= 0.75 && candidate.Similarity <= 0.75
+					}) {
+					t.Fatalf("incompatible exact match from AKA search should remain tentative: %+v", result)
+				}
+			case result.IMDbID != 0 || !result.Tentative || len(result.Candidates) != 1:
+				t.Fatalf("discovery-only result must remain tentative: %+v", result)
+			}
+		})
 	}
 }
 
@@ -688,6 +934,65 @@ func TestEpisodeSeasonKnown(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			if got := episodeSeasonKnown(test.value, toInt(test.value)); got != test.known {
 				t.Fatalf("season presence=%t want %t", got, test.known)
+			}
+		})
+	}
+}
+
+func TestSearchLooksUpDistinctAKAAfterWeakPrimary(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name        string
+		primary     string
+		wantQueries int
+	}{
+		{
+			name:        "weak primary with duplicate remote ID",
+			primary:     "Night Signal North",
+			wantQueries: 2,
+		},
+		{
+			name:        "confident primary",
+			primary:     "Night Signal",
+			wantQueries: 1,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var query graphQLRequest
+				var err error
+				if r.Method == http.MethodGet {
+					err = json.Unmarshal([]byte(r.URL.Query().Get("variables")), &query.Variables)
+				} else {
+					err = json.NewDecoder(r.Body).Decode(&query)
+				}
+				if err != nil {
+					t.Error(err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				calls.Add(1)
+				title := test.primary
+				if getStringFromMap(query.Variables, "constraints", "titleTextConstraint", "searchTerm") == "Hidden Tide" {
+					title = "Hidden Tide"
+				}
+				_, _ = fmt.Fprintf(w, `{"data":{"advancedTitleSearch":{"edges":[{"node":{"title":{"id":"tt0555001","titleText":{"text":%q},"releaseYear":{"year":2024},"titleType":{"text":"Movie"}}}}]}}}`, title)
+			}))
+			defer server.Close()
+			client := NewClient(server.Client(), nil)
+			client.baseURL = server.URL
+			got, err := client.Search(t.Context(), SearchInput{
+				Filename:       "Night Signal",
+				AlternateTitle: "Hidden Tide",
+				SearchYear:     2024,
+			})
+			if err != nil || got.IMDbID != 555001 || !got.AutoSelected || calls.Load() != int32(test.wantQueries) {
+				t.Fatalf("search result = %+v, error %v, queries %d, want %d", got, err, calls.Load(), test.wantQueries)
+			}
+			if test.wantQueries == 2 && (len(got.Candidates) != 1 || got.Candidates[0].Title != "Hidden Tide") {
+				t.Fatalf("merged candidates = %+v, want just the exact alternate", got.Candidates)
 			}
 		})
 	}

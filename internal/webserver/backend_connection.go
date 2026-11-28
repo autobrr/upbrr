@@ -180,8 +180,15 @@ func (b *Backend) TestConnection(ctx context.Context, owner string, req api.Conn
 			if parseErr != nil || endpoint.Hostname() == "" {
 				return api.ConnectionTestResult{Code: "unavailable", Message: "The tracker catalog endpoint is unavailable."}
 			}
+			var owner string
+			if descriptor.AuthPolicy != nil && descriptor.AuthPolicy.CookieOwner != nil {
+				// A cookie-only probe tests the saved session. Draft upload
+				// secrets are outside the scope of this request.
+				saved, _ := config.TrackerConfigByName(b.currentConfig().Trackers.Trackers, descriptor.Name)
+				owner = descriptor.AuthPolicy.CookieOwner(saved)
+			}
 			input.Cookies, err = readConnectionStorage(ctx, storageReads, func() (map[string]string, error) {
-				return cookies.SnapshotTrackerCookieMap(ctx, b.repo.RawDB(), b.repo.DBPath(), descriptor.Name, endpoint.Hostname())
+				return cookies.SnapshotTrackerCookieMap(ctx, b.repo.RawDB(), b.repo.DBPath(), descriptor.Name, endpoint.Hostname(), owner)
 			})
 			if ctx.Err() != nil {
 				return connectiontest.RequestFailure(ctx, ctx.Err())

@@ -6,6 +6,7 @@ package torrent
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -55,6 +56,37 @@ func TestSubmissionContentIdentityUsesCanonicalWantedInventory(t *testing.T) {
 		if expected[index].path != reversed.Files[index].TorrentPath || expected[index].length != reversed.Files[index].Size {
 			t.Fatalf("expected torrent file %d = %#v, inventory = %#v", index, expected[index], reversed.Files[index])
 		}
+	}
+}
+
+func TestSubmissionContentInventoryPreservesFirstSelectedAlias(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	sourceDir := filepath.Join(root, "episode")
+	aliasDir := filepath.Join(root, "selected")
+	source := filepath.Join(sourceDir, "video.mkv")
+	alias := filepath.Join(aliasDir, "video.mkv")
+	writeSubmissionIdentityFile(t, source, "synthetic media")
+	if runtime.GOOS == "windows" {
+		output, err := exec.CommandContext(t.Context(), "cmd.exe", "/d", "/c", "mklink", "/J", aliasDir, sourceDir).CombinedOutput()
+		if err != nil {
+			t.Skipf("junction creation is unavailable: %v: %s", err, output)
+		}
+	} else if err := os.Symlink(sourceDir, aliasDir); err != nil {
+		t.Skipf("symlink creation is unavailable: %v", err)
+	}
+
+	inventory, ok, err := ResolveSubmissionContentInventory(api.TorrentSubject{
+		SourcePath: root,
+		FileList:   []string{alias, source},
+	})
+	if err != nil || !ok || inventory.Scope != api.SubmissionContentScopeSingleFile || len(inventory.Files) != 1 {
+		t.Fatalf("selected alias inventory = %#v, %t, %v", inventory, ok, err)
+	}
+	file := inventory.Files[0]
+	if file.LocalPath != alias || file.TorrentPath != filepath.Base(alias) {
+		t.Fatalf("selected alias was changed: %#v", file)
 	}
 }
 

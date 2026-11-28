@@ -335,17 +335,14 @@ func logPathedSearchMatches(logger api.Logger, matches []api.TorrentMatch) {
 	}
 	for idx, match := range matches {
 		logger.Tracef(
-			"clients: pathed search match #%d name=%q hash=%s size=%d seeders=%d category=%q working_tracker=%t tracker_ids=%q save_path=%q content_path=%q",
+			"clients: pathed search match #%d name=%q hash=[REDACTED] size=%d seeders=[REDACTED] category=%q working_tracker=%t tracker_ids=%q save_path=[REDACTED] content_path=%q",
 			idx+1,
 			match.Name,
-			normalizeQbitHash(match.Hash),
 			match.Size,
-			match.Seeders,
 			match.Category,
 			match.HasWorkingTracker,
 			formatTrackerMatches(match.TrackerURLs),
-			match.SavePath,
-			match.ContentPath,
+			pathutil.Base(match.ContentPath),
 		)
 	}
 }
@@ -362,7 +359,7 @@ func formatTrackerMatches(matches []api.TrackerMatch) string {
 		}
 		trackerID := strings.TrimSpace(match.TrackerID)
 		if trackerID != "" {
-			formatted = append(formatted, id+":"+trackerID)
+			formatted = append(formatted, id+":[REDACTED]")
 			continue
 		}
 		formatted = append(formatted, id)

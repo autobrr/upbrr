@@ -33,7 +33,7 @@ Capability chips show whether the tracker supports cookie import, login, automat
 | **Submit 2FA**     | Completes an active manual 2FA challenge when the code field appears.                                            |
 | **Delete Auth**    | Deletes stored cookies and tracker-managed auth state; tracker configuration remains.                            |
 
-Automatic relogin uses saved tracker credentials only when the backend capability supports it. Upload preflight and **Check Auth** can reuse or refresh a session, log in automatically, use a configured TOTP, and update stored authentication state. Confirmed-invalid sessions can be removed. Manual login or 2FA that automatic recovery cannot complete requires this page before retrying preparation. Never share cookie files, 2FA codes, challenge details, or auth errors that may contain private tracker information.
+Automatic relogin uses saved tracker credentials only when the backend capability supports it. Upload preflight and **Check Auth** can reuse or refresh a session, log in automatically, use a configured TOTP, and update stored authentication state. Confirmed-invalid sessions can be removed. Duplicate search can also refresh the website session for trackers that support credential login there. If automatic recovery needs a manual 2FA code, use Check Auth on this page before retrying the workflow. Never share cookie files, 2FA codes, challenge details, or auth errors that may contain private tracker information.
 
 ## Export and import cookies
 
@@ -76,7 +76,9 @@ Use this route when you can access upbrr's application-state directory, includin
 
 For a standard Docker installation, the active database is normally `/config/upbrr/db.sqlite`, so the destination is `/config/upbrr/cookies/<tracker-id>.txt` **inside the container**. With the example bind mount `/path/to/config:/config`, copy the file to `/path/to/config/upbrr/cookies/<tracker-id>.txt` **on the host**. An older installation using `/config/.upbrr/db.sqlite` instead needs `/path/to/config/.upbrr/cookies/<tracker-id>.txt`. Check your actual Compose volume mapping and existing database before copying; `/data` is normally the media mount, not application state. See [Docker installation](../../getting-started/installation.md#docker-compose).
 
-On startup, eligible top-level cookie files are migrated into encrypted database storage. Cleanup is batch-wide: after at least one cookie is stored and no file has a parse or storage failure, upbrr removes the top-level `.txt` and `.json` files. Their disappearance is expected, not a lost session. Any parse or storage failure keeps all source files, including files whose cookies were stored. Cleanup permission failures can also leave files behind. Inspect the status/count and sanitized migration errors rather than using file presence alone as proof of success.
+On startup, eligible top-level cookie files are migrated into encrypted database storage. The tracker ID and file extension are matched without regard to case. If no file has a parse or storage failure, upbrr removes the unchanged files it successfully migrated. Changed exports and files that cannot be removed remain in the folder. Any parse or storage failure keeps all source files. Verify the result using the cookie count and status on the tracker card.
+
+For trackers that manage website sessions, upbrr can retain a superseded export and skip it during migration. See the tracker card for session handling. To replace a managed session or retained export through the folder, select **Delete Auth** before placing the new export there. **Import Cookies** can replace them directly.
 
 ### Accepted file formats
 
@@ -105,6 +107,8 @@ Folder migration supports the two object forms as `<tracker-id>.json`; use the W
 
 A successful import does not prove the cookies belong to the correct site/account or that the exported session remains valid. Even a successful remote check is only current at the time of that check.
 
+For modes that check only local credentials, preflight verifies the required configuration and stored credentials without contacting the tracker. Duplicate search may still need a current browser session even when the selected upload method uses only a passkey.
+
 ## Cookie troubleshooting
 
 ### No cookies, login required, or expired session
@@ -117,7 +121,7 @@ Inspect the file locally without sharing its values. Check the actual [format](#
 
 ### Folder import is not detected
 
-Check the active database directory, exact tracker-ID filename, lowercase `.txt` extension, and top-level `cookies` placement. Enable filename extensions in your file manager to catch names such as `<tracker-id>.txt.txt`. Verify process read/write permissions, the Docker host-to-container volume mapping, and that the intended instance restarted. If files remain, review migration/cleanup messages; if they disappear, check the stored count. See [Storage recovery](#storage-recovery) if encryption could not initialize.
+Check the active database directory, tracker-ID filename, `.txt` or `.json` extension, and top-level `cookies` placement. Enable filename extensions in your file manager to catch names such as `<tracker-id>.txt.txt`. Verify process read/write permissions, the Docker host-to-container volume mapping, and that the intended instance restarted. If files remain, review migration/cleanup messages; if they disappear, check the stored count. See [Storage recovery](#storage-recovery) if encryption could not initialize.
 
 ### Import Cookies is missing
 

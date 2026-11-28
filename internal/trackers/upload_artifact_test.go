@@ -397,8 +397,10 @@ func TestPrepareTrackerUploadTorrentFailsBTNWithoutRequiredAnnounceURL(t *testin
 	if err != nil {
 		t.Fatalf("resolve BTN artifact path: %v", err)
 	}
-	if _, err := os.Stat(artifactPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("expected no BTN artifact without announce URL")
+	for _, path := range []string{artifactPath, filepath.Join(filepath.Dir(artifactPath), "upload-torrents", filepath.Base(artifactPath))} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("expected no BTN artifact without announce URL: %v", err)
+		}
 	}
 }
 

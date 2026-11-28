@@ -15,7 +15,7 @@ import (
 
 func validationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID: "standalone-tl-constructibility-v1",
+		ID: "standalone-tl-constructibility-v2",
 		Check: func(ctx context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 			if err := ctx.Err(); err != nil {
 				return nil, fmt.Errorf("context canceled: %w", err)
@@ -35,6 +35,12 @@ func validationPolicy() trackers.ValidationPolicyBinding {
 				failures = append(failures, trackers.NewRuleFailure(
 					"required_provider_id",
 					"TL anime uploads require a MAL ID",
+					api.RuleDispositionStrict,
+				))
+			case meta.Anime && subject.APIUpload && animeIDURL(meta) == "":
+				failures = append(failures, trackers.NewRuleFailure(
+					"required_anilist_mapping",
+					"TL API anime uploads require matching AniList metadata; refresh metadata for the selected MAL ID",
 					api.RuleDispositionStrict,
 				))
 			case !meta.Anime && category == api.CanonicalCategoryMovie && meta.Identity.IMDBID <= 0:

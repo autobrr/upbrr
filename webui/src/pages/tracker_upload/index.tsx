@@ -193,6 +193,7 @@ export default function TrackerUploadPage({ facet }: Props) {
               value={view.options.runLogLevel}
               onChange={(event) => facet.changeOptions({ runLogLevel: event.target.value })}
             >
+              <option value="">Default (server setting)</option>
               {["trace", "debug", "info", "warn", "error"].map((level) => (
                 <option key={level} value={level}>
                   {level}

@@ -72,7 +72,7 @@ func (r *SQLiteRepository) ListOrphanedHistoryPaths(ctx context.Context) ([]stri
 	if r == nil || r.db == nil {
 		return nil, nil, errors.New("db: repository not initialized")
 	}
-	storedPaths, err := r.ListStoredReleasePaths(ctx)
+	storedPaths, err := r.listStoredReleasePaths(ctx, false)
 	if err != nil {
 		return nil, nil, fmt.Errorf("db list orphaned history stored paths: %w", err)
 	}

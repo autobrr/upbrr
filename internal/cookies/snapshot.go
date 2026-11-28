@@ -20,7 +20,7 @@ import (
 // Connection tests run this under bounded storage admission and stop waiting
 // when canceled without starting replacement readers.
 // The returned map is detached from persistence and must never be logged.
-func SnapshotTrackerCookieMap(ctx context.Context, db *sql.DB, dbPath, trackerID, domain string) (map[string]string, error) {
+func SnapshotTrackerCookieMap(ctx context.Context, db *sql.DB, dbPath, trackerID, domain string, expectedOwner ...string) (map[string]string, error) {
 	if ctx == nil {
 		return nil, ErrNilContext
 	}
@@ -35,9 +35,18 @@ func SnapshotTrackerCookieMap(ctx context.Context, db *sql.DB, dbPath, trackerID
 		return nil, fmt.Errorf("cookies: snapshot: %w", err)
 	}
 	fileValues := httpCookiesToMap(fileCookies)
+	delete(fileValues, trackerCookieOwnerKey)
 	var present bool
 	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tracker_cookies WHERE tracker_id = ?)`, trackerID).Scan(&present); err != nil {
 		return nil, fmt.Errorf("cookies: snapshot presence: %w", err)
+	}
+	var managed bool
+	if present && len(expectedOwner) == 1 && expectedOwner[0] != "" {
+		var err error
+		managed, err = hasManagedTrackerCookies(ctx, db, trackerID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	state, err := getAuthStateFromDB(ctx, db)
 	if err != nil {
@@ -54,7 +63,7 @@ func SnapshotTrackerCookieMap(ctx context.Context, db *sql.DB, dbPath, trackerID
 		return nil, fmt.Errorf("cookies: snapshot: %w", ctx.Err())
 	}
 	if err != nil {
-		if errors.Is(err, ErrAuthHelperUnavailable) && len(fileValues) > 0 {
+		if errors.Is(err, ErrAuthHelperUnavailable) && !managed && len(fileValues) > 0 {
 			return fileValues, nil
 		}
 		return nil, err
@@ -76,7 +85,7 @@ func SnapshotTrackerCookieMap(ctx context.Context, db *sql.DB, dbPath, trackerID
 		return nil, err
 	}
 	if salt == "" {
-		if len(fileValues) > 0 {
+		if !managed && len(fileValues) > 0 {
 			return fileValues, nil
 		}
 		return nil, ErrAuthHelperUnavailable
@@ -92,6 +101,9 @@ func SnapshotTrackerCookieMap(ctx context.Context, db *sql.DB, dbPath, trackerID
 	values, err := store.GetAllTrackerCookies(ctx, trackerID, key)
 	if err != nil {
 		return nil, err
+	}
+	if owned, managed, err := managedTrackerCookies(values, expectedOwner); managed {
+		return owned, err
 	}
 	return mergeCookieMaps(fileValues, values), nil
 }

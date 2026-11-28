@@ -348,6 +348,62 @@ func TestUploadImagesFallbackStartsBeforeUnrelatedPrimaryCompletes(t *testing.T)
 	}
 }
 
+func TestUploadFallbackContinuesPastAnAlreadyFailedSharedLane(t *testing.T) {
+	t.Parallel()
+	registry := mediaImageHostRegistry(t)
+	if err := registry.RegisterDescriptor(trackers.Descriptor{
+		Name:              "ALSO",
+		Definition:        mediaImageHostDefinition("ALSO"),
+		Family:            trackers.FamilyStandalone,
+		BaseURL:           "https://also.example.invalid",
+		UploadContentMode: trackers.UploadContentModeScreenshots,
+		ImageHost:         &trackers.ImageHostPolicy{AllowedHosts: []string{"pixhost", "imgbb", "sharex"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	release := make(chan struct{})
+	close(release)
+	service := &barrierImageHostingService{
+		entered: make(chan imageHostCall, 3),
+		behaviors: map[string]imageHostBehavior{
+			"pixhost": {release: release, err: errors.New("first host failed")},
+			"imgbb":   {release: release, err: errors.New("second host failed")},
+			"sharex":  {release: release},
+		},
+	}
+	module := &mediaModule{
+		cfg: config.Config{ImageHosting: config.ImageHostingConfig{
+Host1: "pixhost",
+ Host2: "imgbb",
+ Host3: "sharex",
+}},
+		images: service,
+		logger: api.NopLogger{},
+		registry: registry,
+	}
+	result, err := module.uploadImagesToTargetsWithFallback(t.Context(), api.UploadSubject{}, "", nil,
+		[]trackers.ImageUploadTarget{
+			{
+Host: "pixhost",
+ UsageScope: "global",
+ Trackers: []string{"ONE"},
+},
+			{
+Host: "imgbb",
+ UsageScope: "global",
+ Trackers: []string{"ALSO"},
+},
+		}, []api.ScreenshotImage{{Path: "screen.png", Purpose: api.ScreenshotPurposeFinal}}, nil, nil)
+	if err != nil || len(result.Failures) != 0 || len(result.Attempts) != 3 {
+		t.Fatalf("fallback did not reach the working third host: %+v, err = %v", result, err)
+	}
+	fallback := result.Attempts[2]
+	if fallback.Host != "sharex" || !fallback.Fallback || fallback.Failure != nil || len(fallback.Links) != 1 ||
+		!slices.Contains(fallback.Trackers, "ONE") || !slices.Contains(fallback.Trackers, "ALSO") {
+		t.Fatalf("third host did not cover both trackers: %+v", fallback)
+	}
+}
+
 func TestUploadImagesUnresolvedOutcomeStopsFallbackAndPartialAcceptance(t *testing.T) {
 	t.Parallel()
 
@@ -854,7 +910,7 @@ func TestAudioAnalysisIncompleteHostBatchReportsFailedProgress(t *testing.T) {
 		Host:       "pixhost",
 		UsageScope: "global",
 		Trackers:   []string{"ONE"},
-	}, images, nil, nil, false)
+	}, images, nil, nil, "test-attempt", false)
 	if err == nil || !strings.Contains(err.Error(), "analysis image upload is incomplete") || len(links) != 1 {
 		t.Fatalf("incomplete audio upload: links=%#v err=%v", links, err)
 	}
@@ -895,6 +951,306 @@ func TestAudioAnalysisRequiresCompleteHostBatchAndFallsBack(t *testing.T) {
 	if len(result.Attempts) != 2 || result.Attempts[0].Failure == nil || result.Attempts[1].Failure != nil ||
 		result.Attempts[1].Host != "imgbb" || len(result.Attempts[1].Links) != len(images) || len(result.Failures) != 0 {
 		t.Fatalf("incomplete audio batch was accepted or fallback failed: %#v", result)
+	}
+}
+
+func TestAdditionalDiscFramesStayWithTheTrackersThatNeedThem(t *testing.T) {
+	t.Parallel()
+	registry := mediaImageHostRegistry(t)
+	if err := registry.RegisterDescriptor(trackers.Descriptor{
+		Name:              "DISC",
+		Definition:        mediaImageHostDefinition("DISC"),
+		Family:            trackers.FamilyStandalone,
+		BaseURL:           "https://disc.example.invalid",
+		UploadContentMode: trackers.UploadContentModeScreenshots,
+		ImageHost:         &trackers.ImageHostPolicy{AllowedHosts: []string{"onlyimage"}},
+		WorkflowMedia:     &trackers.WorkflowMediaRequirements{AdditionalDiscScreenshots: 2},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	images := []api.ScreenshotImage{
+		{
+Path: "main.png",
+ DiscID: "a",
+ Purpose: api.ScreenshotPurposeFinal,
+},
+		{
+Path: "extra-1.png",
+ DiscID: "b",
+ Purpose: api.ScreenshotPurposeFinal,
+ AdditionalDisc: true,
+},
+		{
+Path: "extra-2.png",
+ DiscID: "b",
+ Purpose: api.ScreenshotPurposeFinal,
+ AdditionalDisc: true,
+},
+	}
+	module := &mediaModule{
+		cfg:      config.Config{ImageHosting: config.ImageHostingConfig{Host1: "pixhost", Host2: "imgbb"}},
+		images:   &partialImageHostingService{failHost: "pixhost"},
+		logger:   api.NopLogger{},
+		registry: registry,
+	}
+	subject := api.UploadSubject{Trackers: []string{"ONE", "DISC"}, Discs: []api.DiscEvidenceResource{{ID: "a"}, {ID: "b"}}}
+	result, err := module.uploadImagesToTargetsWithFallback(t.Context(), subject, "", nil,
+		[]trackers.ImageUploadTarget{
+			{
+Host: "pixhost",
+ UsageScope: "global",
+ Trackers: []string{"ONE"},
+},
+			{
+Host: "onlyimage",
+ UsageScope: "global",
+ Trackers: []string{"DISC"},
+},
+		}, images, nil, nil)
+	if err != nil || len(result.Attempts) != 3 || len(result.Failures) != 0 {
+		t.Fatalf("upload routing = %+v, err = %v", result, err)
+	}
+	disc, fallback := result.Attempts[1], result.Attempts[2]
+	if disc.Host != "onlyimage" || len(disc.Links) != 3 ||
+		fallback.Host != "imgbb" || !fallback.Fallback || len(fallback.Links) != 1 || fallback.Links[0].ImagePath != "main.png" {
+		t.Fatalf("extra images crossed host lanes: disc = %+v, ordinary fallback = %+v", disc, fallback)
+	}
+	ordinary, err := module.uploadImagesToTargetsWithFallback(t.Context(), subject, "imgbb", nil,
+		[]trackers.ImageUploadTarget{{
+Host: "imgbb",
+ UsageScope: "global",
+ Trackers: []string{"ONE"},
+}}, images, nil, nil)
+	if err != nil || len(ordinary.Links) != 1 || ordinary.Links[0].ImagePath != "main.png" {
+		t.Fatalf("explicit ordinary host retry sent extra images: %+v, err = %v", ordinary, err)
+	}
+}
+
+func TestDiscUploadUsesProjectedQuotasRatherThanEverySelectedFrame(t *testing.T) {
+	t.Parallel()
+	images := make([]api.ScreenshotImage, 0, 8)
+	for index, disc := range []string{"first", "first", "first", "second", "second", "third", "third", "first"} {
+		images = append(images, api.ScreenshotImage{
+			Path:    fmt.Sprintf("frame-%d.png", index),
+			DiscID:  disc,
+			Purpose: api.ScreenshotPurposeFinal,
+		})
+	}
+	target := trackers.ImageUploadTarget{
+		Host:       "imgbb",
+		UsageScope: "global",
+		Trackers:   []string{"PTP"},
+	}
+	for _, test := range []struct {
+		requested, published int
+		ok                   bool
+	}{
+		{
+			requested: 8,
+			published: 7,
+			ok:        true,
+		},
+		{requested: 8, published: 6},
+		{
+			requested: 5,
+			published: 5,
+			ok:        true,
+		},
+	} {
+		module := &mediaModule{
+			cfg:    config.Config{ScreenshotHandling: config.ScreenshotHandlingConfig{MinSuccessfulUploads: 3}},
+			images: &partialImageHostingService{published: test.published},
+			logger: api.NopLogger{},
+			uploadProjections: []api.TrackerReleaseProjection{{
+				TrackerID: "PTP",
+				Artifacts: api.TrackerArtifactRequirements{
+					ScreenshotCount: 3,
+					DiscScreenshots: &api.DiscScreenshotRequirement{DiscIDs: []string{"first", "second", "third"}, AdditionalCount: 2},
+				},
+			}},
+		}
+		links, err := module.uploadImagesToTarget(t.Context(), api.UploadSubject{}, target, images[:test.requested], nil, nil, "test", false)
+		if len(links) != test.published || (err == nil) != test.ok {
+			t.Fatalf("requested=%d published=%d; got %d results and error %v", test.requested, test.published, len(links), err)
+		}
+	}
+}
+
+type ordinaryLaneFailingImageHost struct{ partialImageHostingService }
+
+func (s ordinaryLaneFailingImageHost) Upload(
+	ctx context.Context, subject api.ImageHostingSubject, host, scope string, images []api.ScreenshotImage,
+) ([]api.UploadedImageLink, error) {
+	target, _ := api.ImageUploadProgressTargetFromContext(ctx)
+	if host == "pixhost" && slices.Contains(target.Trackers, "ONE") {
+		return nil, errors.New("ordinary host request failed")
+	}
+	s.published = len(images)
+	return s.partialImageHostingService.Upload(ctx, subject, host, scope, images)
+}
+
+func TestOrdinaryHostFailureDoesNotInvalidateSuccessfulDiscLane(t *testing.T) {
+	t.Parallel()
+	registry := mediaImageHostRegistry(t)
+	if err := registry.RegisterDescriptor(trackers.Descriptor{
+		Name:              "DISC",
+		Definition:        mediaImageHostDefinition("DISC"),
+		Family:            trackers.FamilyStandalone,
+		BaseURL:           "https://disc.example.invalid",
+		UploadContentMode: trackers.UploadContentModeScreenshots,
+		ImageHost:         &trackers.ImageHostPolicy{AllowedHosts: []string{"pixhost"}},
+		WorkflowMedia:     &trackers.WorkflowMediaRequirements{AdditionalDiscScreenshots: 2},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	module := &mediaModule{
+		cfg:      config.Config{ImageHosting: config.ImageHostingConfig{Host1: "pixhost", Host2: "imgbb"}},
+		images:   &ordinaryLaneFailingImageHost{},
+		logger:   api.NopLogger{},
+		registry: registry,
+	}
+	subject := api.UploadSubject{Trackers: []string{"ONE", "DISC"}, Discs: []api.DiscEvidenceResource{{ID: "first"}, {ID: "second"}}}
+	images := []api.ScreenshotImage{
+		{
+Path: "main.png",
+ DiscID: "first",
+ Purpose: api.ScreenshotPurposeFinal,
+},
+		{
+Path: "extra-1.png",
+ DiscID: "second",
+ Purpose: api.ScreenshotPurposeFinal,
+ AdditionalDisc: true,
+},
+		{
+Path: "extra-2.png",
+ DiscID: "second",
+ Purpose: api.ScreenshotPurposeFinal,
+ AdditionalDisc: true,
+},
+	}
+	result, err := module.uploadImagesToTargetsWithFallback(t.Context(), subject, "", nil,
+		[]trackers.ImageUploadTarget{
+			{
+Host: "pixhost",
+ UsageScope: "global",
+ Trackers: []string{"DISC"},
+},
+			{
+Host: "pixhost",
+ UsageScope: "global",
+ Trackers: []string{"ONE"},
+},
+		}, images, nil, nil)
+	if err != nil || len(result.Attempts) != 3 {
+		t.Fatalf("lane recovery = %+v, err = %v", result, err)
+	}
+	disc, ordinary, fallback := result.Attempts[0], result.Attempts[1], result.Attempts[2]
+	if disc.Failure != nil || len(disc.Links) != 3 || ordinary.Failure == nil || fallback.Host != "imgbb" || fallback.Failure != nil ||
+		len(fallback.Links) != 1 || len(result.FailedHosts) != 0 || len(result.Failures) != 0 {
+		t.Fatalf("ordinary lane contaminated successful disc coverage: %+v", result)
+	}
+}
+
+func TestPackScreenshotIncompleteUploadFallsBackDespiteOrdinaryMinimum(t *testing.T) {
+	t.Parallel()
+	registry := mediaImageHostRegistry(t)
+	if err := registry.RegisterDescriptor(trackers.Descriptor{
+		Name:              "PACK",
+		Definition:        mediaImageHostDefinition("PACK"),
+		Family:            trackers.FamilyStandalone,
+		BaseURL:           "https://pack.example.invalid",
+		UploadContentMode: trackers.UploadContentModeScreenshots,
+		ImageHost:         &trackers.ImageHostPolicy{AllowedHosts: []string{"pixhost", "imgbb"}},
+		WorkflowMedia:     &trackers.WorkflowMediaRequirements{PackScreenshotsPerMember: 2},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	images := []api.ScreenshotImage{
+		{Path: "ordinary.png", Purpose: api.ScreenshotPurposeFinal},
+		{
+			Path:         "a1.png",
+			Purpose:      api.ScreenshotPurposeFinal,
+			PackMemberID: "a",
+		},
+		{
+			Path:         "a2.png",
+			Purpose:      api.ScreenshotPurposeFinal,
+			PackMemberID: "a",
+		},
+		{
+			Path:         "b1.png",
+			Purpose:      api.ScreenshotPurposeFinal,
+			PackMemberID: "b",
+		},
+		{
+			Path:         "b2.png",
+			Purpose:      api.ScreenshotPurposeFinal,
+			PackMemberID: "b",
+		},
+	}
+	for _, silent := range []bool{false, true} {
+		module := &mediaModule{
+			cfg: config.Config{
+				ImageHosting:       config.ImageHostingConfig{Host1: "pixhost", Host2: "imgbb"},
+				ScreenshotHandling: config.ScreenshotHandlingConfig{MinSuccessfulUploads: 3},
+			},
+			images: &partialImageHostingService{
+				published:     3,
+				failHost:      "pixhost",
+				silentPartial: silent,
+			},
+			logger:   &recordingMediaLogger{},
+			registry: registry,
+		}
+		var progressMu sync.Mutex
+		var completed []api.ImageUploadProgressUpdate
+		ctx := api.WithImageUploadProgressReporter(t.Context(), func(update api.ImageUploadProgressUpdate) {
+			if update.Host == "imgbb" && update.Status == api.ImageUploadProgressCompleted {
+				progressMu.Lock()
+				completed = append(completed, update)
+				progressMu.Unlock()
+			}
+		})
+		subject := api.UploadSubject{Trackers: []string{"PACK", "ONE"}, FileList: []string{"Movie.cd1.mkv", "Movie.cd2.mkv"}}
+		result, err := module.uploadImagesToTargetsWithFallback(ctx, subject, "", nil,
+			[]trackers.ImageUploadTarget{
+				{
+					Host:       "pixhost",
+					UsageScope: "global",
+					Trackers:   []string{"PACK"},
+				},
+				{
+					Host:       "imgbb",
+					UsageScope: "global",
+					Trackers:   []string{"ONE"},
+				},
+			}, images, nil, nil)
+		if err != nil || len(result.Attempts) != 3 || result.Attempts[0].Failure == nil || result.Attempts[1].Failure != nil ||
+			result.Attempts[2].Failure != nil || result.Attempts[2].Host != "imgbb" ||
+			len(result.Attempts[1].Links) != 1 || result.Attempts[1].Links[0].ImagePath != "ordinary.png" ||
+			len(result.Attempts[2].Links) != len(images)-1 || len(result.Failures) != 0 {
+			t.Fatalf("fallback lost a pack or ordinary upload (silent=%t): result=%+v, error=%v", silent, result, err)
+		}
+		if len(completed) != 2 || completed[0].AttemptID == "" || completed[1].AttemptID == "" ||
+			completed[0].AttemptID == completed[1].AttemptID || completed[0].Fallback == completed[1].Fallback {
+			t.Fatalf("same-host fallback progress was not independent: %+v", completed)
+		}
+		target := trackers.ImageUploadTarget{
+Host: "imgbb",
+ UsageScope: "global",
+ Trackers: []string{"ONE"},
+}
+		for range 2 {
+			if _, err := module.uploadImagesToTargetsWithFallback(ctx, subject, "imgbb", nil,
+				[]trackers.ImageUploadTarget{target}, images, nil, nil); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if len(completed) != 4 || completed[2].AttemptID == "" || completed[3].AttemptID == "" ||
+			completed[2].AttemptID == completed[3].AttemptID {
+			t.Fatalf("separate batches in the same progress scope reused an attempt ID: %+v", completed)
+		}
 	}
 }
 

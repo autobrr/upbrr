@@ -1174,13 +1174,16 @@ func logPathedTrackerDetails(meta preparationstate.State, logger api.Logger) {
 			name = strings.TrimSpace(match.Hash)
 		}
 		urls := redactStrings(match.TrackerURLsRaw)
-		comment := redaction.RedactValue(strings.TrimSpace(match.Comment), nil)
+		ids := make([]string, 0, len(match.TrackerURLs))
+		for _, tracker := range match.TrackerURLs {
+			ids = append(ids, strings.ToUpper(tracker.ID))
+		}
 		logger.Tracef(
-			"metadata: torrent %s trackers=%v extracted_ids=%v comment=%q",
+			"metadata: torrent %s trackers=%v extracted_trackers=%v comment_present=%t",
 			name,
 			urls,
-			match.TrackerURLs,
-			comment,
+			ids,
+			strings.TrimSpace(match.Comment) != "",
 		)
 	}
 }
@@ -1204,7 +1207,7 @@ func logClientSearchIDs(meta preparationstate.State, logger api.Logger) {
 		if value == "" {
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("%s=%s", strings.ToUpper(key), redaction.RedactValue(value, nil)))
+		parts = append(parts, strings.ToUpper(key)+"=[REDACTED]")
 	}
 	if len(parts) == 0 {
 		return

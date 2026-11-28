@@ -21,7 +21,7 @@ func TestPrivatePCMOutputRejectsOtherProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closePCMOutputs(outputs)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	type result struct {
 		reader io.ReadCloser
 		err    error

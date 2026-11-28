@@ -61,6 +61,8 @@ func TestSafeTrackerConfigFingerprintTracksGroupPolicies(t *testing.T) {
 		"duplicate bypass": {DupeBypassGroups: config.CSVList{"GRP"}},
 		"personal release": {PersonalReleaseGroups: config.CSVList{"GRP"}},
 		"internal":         {InternalGroups: config.CSVList{"GRP"}},
+		"API upload":       {APIUpload: true},
+		"native images":    {ImgRehost: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			fingerprint, fingerprintErr := safeTrackerConfigFingerprint(trackerConfig)

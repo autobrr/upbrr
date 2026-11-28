@@ -13,6 +13,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -149,6 +150,30 @@ func (p *WorkflowProjector) CatalogCurrent(retained api.TrackerCatalogSnapshot) 
 		return false, err
 	}
 	return retained.Fingerprint == current.Fingerprint, nil
+}
+
+// StaleTrackerPolicies identifies selected lanes whose tracker-owned policy
+// changed without invalidating unrelated catalog entries.
+func (p *WorkflowProjector) StaleTrackerPolicies(retained api.TrackerCatalogSnapshot, selected []api.TrackerID) ([]api.TrackerID, error) {
+	current, err := p.catalogSnapshot()
+	if err != nil {
+		return nil, err
+	}
+	previous := make(map[api.TrackerID]api.WorkflowFingerprint, len(retained.Trackers))
+	for _, descriptor := range retained.Trackers {
+		previous[descriptor.TrackerID] = descriptor.PolicyFingerprint
+	}
+	policies := make(map[api.TrackerID]api.WorkflowFingerprint, len(current.Trackers))
+	for _, descriptor := range current.Trackers {
+		policies[descriptor.TrackerID] = descriptor.PolicyFingerprint
+	}
+	var stale []api.TrackerID
+	for _, trackerID := range selected {
+		if fingerprint := policies[trackerID]; fingerprint == "" || retained.CatalogVersion != current.CatalogVersion || fingerprint != previous[trackerID] {
+			stale = append(stale, trackerID)
+		}
+	}
+	return stale, nil
 }
 
 func (p *WorkflowProjector) catalogSnapshot() (api.TrackerCatalogSnapshot, error) {
@@ -396,6 +421,28 @@ func applyWorkflowProjectionRequirements(
 	}
 	if descriptor.WorkflowMedia != nil {
 		projection.Artifacts.DVDMenuCount = max(projection.Artifacts.DVDMenuCount, descriptor.WorkflowMedia.DVDMenuCount)
+		if count := descriptor.WorkflowMedia.AdditionalDiscScreenshots; count > 0 && len(subject.Discs) > 1 &&
+			projection.Artifacts.ScreenshotCount > 0 {
+			ids := make([]string, len(subject.Discs))
+			for index, disc := range subject.Discs {
+				ids[index] = disc.ID
+			}
+			projection.Artifacts.DiscScreenshots = &api.DiscScreenshotRequirement{DiscIDs: ids, AdditionalCount: count}
+		}
+		if count := descriptor.WorkflowMedia.PackScreenshotsPerMember; count > 0 && strings.TrimSpace(subject.DiscType) == "" {
+			members := mediafacts.PackScreenshotMembers(subject.FileList)
+			if len(members) > 1 {
+				ids := make([]string, len(members))
+				for i, member := range members {
+					ids[i] = member.ID
+				}
+				projection.Artifacts.ScreenshotCount = 0
+				projection.Artifacts.PackScreenshots = &api.PackScreenshotRequirement{
+					MemberIDs:      ids,
+					CountPerMember: count,
+				}
+			}
+		}
 	}
 	projection.Artifacts.Description = descriptor.UploadContentMode.UsesDescription()
 	projection.Artifacts.AllowEmptyDescription = descriptor.UploadContentMode == UploadContentModeOptionalDescription

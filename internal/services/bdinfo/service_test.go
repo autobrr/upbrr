@@ -335,11 +335,11 @@ func TestEmitDetailedProgressEventFormatsCounts(t *testing.T) {
 		TotalBytes:     1000,
 	})
 
-	if len(lines) != 1 {
-		t.Fatalf("expected one line, got %d", len(lines))
-	}
-	if lines[0] != "STREAM: 4/10 (50.0%)" {
-		t.Fatalf("unexpected line: %q", lines[0])
+	emitProgressEvent(reporter, bdrunner.ProgressEvent{Stage: bdrunner.StageScanning, Path: t.TempDir()})
+
+	want := []string{"STREAM: 4/10 (50.0%)", "Scanning Blu-ray disc"}
+	if !slices.Equal(lines, want) {
+		t.Fatalf("unexpected progress: %#v, want %#v", lines, want)
 	}
 }
 

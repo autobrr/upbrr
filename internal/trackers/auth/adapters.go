@@ -73,7 +73,7 @@ func (a trackerAdapter) Validate(ctx context.Context, cfg config.TrackerConfig, 
 	if a.resolve == nil {
 		return Session{}, &UnsupportedAuthError{TrackerID: a.capability.TrackerID, Reason: "remote validation unavailable"}
 	}
-	if err := a.resolve(ctx, cfg, dbPath, api.TrackerAuthLoginRequest{}); err != nil {
+	if err := a.resolve(ctx, cfg, dbPath, api.TrackerAuthLoginRequest{ValidateStoredOnly: true}); err != nil {
 		return Session{}, classifyAdapterError(a.capability.TrackerID, err)
 	}
 	return Session{

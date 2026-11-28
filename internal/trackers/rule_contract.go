@@ -187,6 +187,7 @@ func EvaluatePreparationRules(
 	subject api.TrackerValidationSubject,
 	fallback ValidationPolicyBinding,
 ) ([]api.RuleFailure, error) {
+	subject.APIUpload = input.TrackerConfig.APIUpload
 	if input.Projection != nil {
 		subject.FinalizedUploadName = input.Projection.UploadReleaseName
 	}

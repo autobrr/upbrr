@@ -47,13 +47,15 @@ func TestConsoleLevelDoesNotChangeApplicationLogging(t *testing.T) {
 	subscriptionID, subscription := logger.Subscribe(2)
 	defer logger.Unsubscribe(subscriptionID)
 
+	logger.Tracef("disk-only trace")
 	logger.Infof("console-only detail")
 	logger.Errorf("application failure")
 	if err := logger.Close(); err != nil {
 		t.Fatalf("close logger: %v", err)
 	}
 
-	if !strings.Contains(stdout.String(), "console-only detail") || !strings.Contains(stderr.String(), "application failure") {
+	if !strings.Contains(stdout.String(), "console-only detail") || !strings.Contains(stderr.String(), "application failure") ||
+		strings.Contains(stdout.String()+stderr.String(), "disk-only trace") {
 		t.Fatalf("console output: stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 	entries := logger.Recent(10)
@@ -81,7 +83,8 @@ func TestConsoleLevelDoesNotChangeApplicationLogging(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read log: %v", err)
 	}
-	if strings.Contains(string(contents), "console-only detail") || !strings.Contains(string(contents), "application failure") {
+	if !strings.Contains(string(contents), "disk-only trace") || !strings.Contains(string(contents), "console-only detail") ||
+		!strings.Contains(string(contents), "application failure") {
 		t.Fatalf("application log = %q", contents)
 	}
 }

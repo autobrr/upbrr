@@ -9,8 +9,6 @@ const field = (label: string, help: string): Presentation => ({ label, help });
 /** Controls omitted from Settings; stored values and secret metadata remain intact. */
 export const hiddenSettingsFields: Record<string, readonly string[]> = {
   Metadata: ["BTNAPI"],
-  Description: ["MultiScreens", "PackThumbSize", "CharLimit", "FileLimit", "ProcessLimit"],
-  ArrIntegration: ["EmbyDir", "EmbyTVDir"],
 };
 
 /** Display-only metadata: configuration keys and values remain owned by the existing schema. */
@@ -26,7 +24,7 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
     ),
     MaxTotalSizeMB: field(
       "Total log-file budget (MB)",
-      "Approximate total file budget in megabytes. Default: 20; must be positive when file logging is enabled. The per-file rotation threshold is this value divided by Retained log files.",
+      "Approximate total file budget in megabytes. Default: 50; must be positive when file logging is enabled. The per-file rotation threshold is this value divided by Retained log files.",
     ),
     MaxFiles: field(
       "Retained log files",

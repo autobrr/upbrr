@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -62,9 +61,8 @@ func InitializeEncryptionKeyTx(ctx context.Context, tx *sql.Tx, dbPath string) (
 // EnsureCookieMigration imports top-level .txt and .json cookie files into the
 // encrypted database. Missing or unreadable legacy directories are treated as
 // having no files. Storage failures retain every legacy file but are logged
-// rather than returned. When at least one cookie is stored and no storage
-// failure occurs, all top-level .txt and .json files are removed; parse and
-// cleanup failures are logged rather than returned.
+// rather than returned. After successful migration, only the migrated source
+// files are removed. Parse and cleanup failures are logged rather than returned.
 func EnsureCookieMigration(ctx context.Context, db *sql.DB, dbPath string, cookiesDir string, logger api.Logger) error {
 	if ctx == nil {
 		return errors.New("cookies: context is required")
@@ -92,21 +90,12 @@ func EnsureCookieMigration(ctx context.Context, db *sql.DB, dbPath string, cooki
 	}
 
 	// Perform migration
-	migratedCount, failedCookies, err := MigrateFromFilesToDB(ctx, cookiesDir, store, encryptionKey, logger)
+	result, err := MigrateFromFilesToDB(ctx, cookiesDir, store, encryptionKey, logger)
 	if err != nil {
 		return fmt.Errorf("failed to migrate cookies from files to DB: %w", err)
 	}
-	if len(failedCookies) > 0 {
-		return nil
-	}
-
-	// Only delete old files if migration was successful
-	if migratedCount > 0 {
-		if err := deleteMigratedCookieFiles(cookiesDir, logger); err != nil {
-			logger.Warnf("cookies: migration cleanup failed dir=%s migrated=%d: %v", cookiesDir, migratedCount, err)
-			// Don't return error here - migration was successful, cleanup is secondary
-			return nil
-		}
+	if err := result.Cleanup(cookiesDir, logger); err != nil {
+		logger.Warnf("cookies: migration cleanup failed dir=%s migrated=%d: %v", cookiesDir, result.Count, err)
 	}
 
 	return nil
@@ -134,9 +123,7 @@ func HasLegacyCookieFiles(cookiesDir string) bool {
 			continue
 		}
 
-		name := entry.Name()
-		ext := filepath.Ext(name)
-		if ext == ".txt" || ext == ".json" {
+		if stem, _ := legacyCookieFilename(entry.Name()); stem != "" {
 			return true
 		}
 	}

@@ -14,7 +14,7 @@ pnpm --dir webui run test:e2e:full
 
 `make e2e` is preferred full local command. Installs frontend deps, builds frontend, syncs embedded assets, builds `dist/upbrr-e2e` (`.exe` on Windows) with `e2e` tag, runs all Playwright projects.
 
-CI splits the full suite across four Playwright test shards, each fully parallel with two workers; the local default is eight workers. Developers on smaller or busy systems should reduce workers with `--workers=2` or `--workers=1`. The audio-analysis scenarios require FFmpeg on `PATH` (`ffmpeg -version`); CI installs the Ubuntu distribution package. To compare test-level parallel execution locally, build once with `make e2e-build`, then run these commands separately:
+CI splits the full suite across four Playwright test shards, each fully parallel with two workers; the local default is eight workers. Developers on smaller or busy systems should reduce workers with `--workers=2` or `--workers=1`. The audio-analysis scenarios require FFmpeg on `PATH` (`ffmpeg -version`). See the [E2E workflow](../../.github/workflows/e2e.yml) for the pinned CI build and its verification. To compare test-level parallel execution locally, build once with `make e2e-build`, then run these commands separately:
 
 ```bash
 pnpm --dir webui exec playwright test --workers=1
@@ -43,7 +43,7 @@ pnpm --dir webui exec playwright show-report
 
 ## Projects
 
-- `web-smoke`: embedded server at `http://localhost:7480`; nav/settings/invalid-input and authenticated appearance coverage, including palette contrast and mobile overflow.
+- `web-smoke`: embedded server coverage for navigation, settings, invalid input, and authenticated appearance, including palette contrast and mobile overflow.
 - `web-base-path-smoke`: embedded server under configured base path; asset, navigation, API, event-stream routing coverage.
 - `web-full-upload`: metadata, screenshot/image upload, tracker dry-run/upload, history, source MediaInfo, and mixed BBCode/HTML description preview and recovery through embedded Web UI.
 - `cli-full-upload`: full CLI upload path against local fakes + temp config/DB.
@@ -72,7 +72,7 @@ Use `--grep` to run a focused visual scenario while iterating. The capture suite
 - Auth/questionnaire failure blocks only affected tracker; other runnable lanes continue. Across continuation/restart, assert downstream work uses exact approved or stage-controlled tracker subset. Never implement tracker semantics in fake frontend.
 - No real tracker, image host, torrent client, TMDB, or credentials in E2E.
 - Service seams test-only or config/test fixture driven; production defaults unchanged.
-- Process manager cleans up `dist/upbrr-e2e serve --config <temp>/config.yaml --dev-no-auth` (using the native `.exe` and path separators on Windows).
+- The harness starts and cleans up the native E2E binary with an isolated config and a dynamically allocated `127.0.0.1` port. It adds `--dev-no-auth` only for scenarios that bypass web authentication. Use the origin returned by the harness.
 
 ## Generated Artifacts
 

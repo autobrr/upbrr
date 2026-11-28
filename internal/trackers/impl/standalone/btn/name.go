@@ -56,10 +56,15 @@ func btnExactName(meta api.UploadSubject, _ config.TrackerConfig) string {
 
 // applyBTNNameDefaults expresses BTN's generated-name conventions by role.
 func applyBTNNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
+	dailyDate := strings.TrimSpace(meta.DailyEpisodeDate)
+	if dailyDate == "" {
+		// Compare title evidence before BTN formatting changes its wording or layout.
+		editor.OmitRepeatedEpisodeTitle()
+	}
 	if err := normalizeBTNComponents(editor); err != nil {
 		return btnNameEditorError("normalize components", err)
 	}
-	if strings.TrimSpace(meta.DailyEpisodeDate) != "" {
+	if dailyDate != "" {
 		if err := editor.Omit(api.NameRoleSeason); err != nil {
 			return btnNameEditorError("omit daily season", err)
 		}
@@ -69,7 +74,7 @@ func applyBTNNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _
 		if err := editor.Include(api.NameRoleDailyDate); err != nil {
 			return btnNameEditorError("include daily date", err)
 		}
-		if err := editor.Set(api.NameRoleDailyDate, strings.ReplaceAll(strings.TrimSpace(meta.DailyEpisodeDate), "-", ".")); err != nil {
+		if err := editor.Set(api.NameRoleDailyDate, strings.ReplaceAll(dailyDate, "-", ".")); err != nil {
 			return btnNameEditorError("set daily date", err)
 		}
 	} else if !releaseTitleContainsYear(meta.Release.Title) {
@@ -202,15 +207,27 @@ func resolveSearchName(meta api.UploadSubject) string {
 		return strings.TrimSpace(meta.EffectiveMetadata.Title)
 	}
 	candidates := []string{strings.TrimSpace(meta.Release.Title)}
-	if meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) && meta.ProviderMetadata.TVDB != nil {
-		candidates = append(candidates, strings.TrimSpace(meta.ProviderMetadata.TVDB.Name), strings.TrimSpace(meta.ProviderMetadata.TVDB.NameEnglish))
-	}
-	if meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) && meta.ProviderMetadata.TVmaze != nil {
-		candidates = append(candidates, strings.TrimSpace(meta.ProviderMetadata.TVmaze.Name))
+	if meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) {
+		candidates = append(candidates, btnTVDBSearchTitle(meta.ProviderMetadata.TVDB))
+		if meta.ProviderMetadata.TVmaze != nil {
+			candidates = append(candidates, strings.TrimSpace(meta.ProviderMetadata.TVmaze.Name))
+		}
 	}
 	for _, candidate := range candidates {
 		if candidate != "" {
 			return candidate
+		}
+	}
+	return ""
+}
+
+func btnTVDBSearchTitle(tvdb *api.TVDBMetadata) string {
+	if tvdb == nil {
+		return ""
+	}
+	for _, candidate := range []string{tvdb.Name, tvdb.NameEnglish, tvdb.DisplayName()} {
+		if trimmed := strings.TrimSpace(candidate); trimmed != "" {
+			return trimmed
 		}
 	}
 	return ""

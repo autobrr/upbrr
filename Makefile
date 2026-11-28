@@ -16,9 +16,9 @@ endif
 
 CLI_OUT := dist/upbrr$(EXE)
 E2E_CLI_OUT := dist/upbrr-e2e$(EXE)
-GO_TEST_FLAGS := -race -v -timeout 20m
-# Per-binary limits; package test concurrency remains Go's default -p.
-GO_TEST_SCHEDULER_FLAGS := -cpu=4 -parallel=4
+GO_TEST_FLAGS := -race -timeout 20m
+# Bound both package concurrency and per-binary workers to avoid GOMAXPROCS*4 oversubscription.
+GO_TEST_SCHEDULER_FLAGS := -p=4 -cpu=4 -parallel=4
 GO_TEST_FAST_FLAGS := -timeout 20m
 GOLANGCI_FLAGS := --timeout=5m
 help:
@@ -90,7 +90,7 @@ dev-frontend:
 
 test: test-go test-frontend
 
-# GO_TEST_SCHEDULER_FLAGS limits each package's test binary, not package concurrency.
+# GO_TEST_SCHEDULER_FLAGS bounds package concurrency and per-binary workers.
 test-go:
 	go test $(GO_TEST_SCHEDULER_FLAGS) $(GO_TEST_FLAGS) ./...
 

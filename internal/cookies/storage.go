@@ -8,14 +8,30 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 type cookieStoreExecer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
+type cookieStoreQuerier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+// lockCookieWrites takes SQLite's write lock before inspecting cookie sources.
+func lockCookieWrites(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `DELETE FROM tracker_cookies WHERE 0`)
+	if err != nil {
+		return fmt.Errorf("lock cookie writes: %w", err)
+	}
+	return nil
+}
+
 // ErrCookieNotFound indicates that a requested cookie does not exist in storage.
 var ErrCookieNotFound = errors.New("cookie not found")
+
+var errLegacyCookieRetained = errors.New("cookies: managed session supersedes the legacy file")
 
 // CookieStore provides database access for encrypted cookies.
 type CookieStore struct {
@@ -33,7 +49,7 @@ func NewCookieStore(db *sql.DB) (*CookieStore, error) {
 
 // SaveCookie saves or updates an encrypted cookie in the database.
 func (cs *CookieStore) SaveCookie(ctx context.Context, trackerID, cookieName, cookieValue string, key []byte) error {
-	return cs.saveCookie(ctx, cs.db, trackerID, cookieName, cookieValue, key)
+	return cs.saveCookie(ctx, cs.db, trackerID, cookieName, cookieValue, key, false)
 }
 
 // SaveCookieTx saves or updates an encrypted cookie inside an existing transaction.
@@ -42,10 +58,10 @@ func (cs *CookieStore) SaveCookieTx(ctx context.Context, tx *sql.Tx, trackerID, 
 		return errors.New("SaveCookieTx: transaction is required")
 	}
 
-	return cs.saveCookie(ctx, tx, trackerID, cookieName, cookieValue, key)
+	return cs.saveCookie(ctx, tx, trackerID, cookieName, cookieValue, key, false)
 }
 
-func (cs *CookieStore) saveCookie(ctx context.Context, execer cookieStoreExecer, trackerID, cookieName, cookieValue string, key []byte) error {
+func (cs *CookieStore) saveCookie(ctx context.Context, execer cookieStoreExecer, trackerID, cookieName, cookieValue string, key []byte, legacy bool) error {
 	if ctx == nil {
 		return errors.New("SaveCookie: context is required")
 	}
@@ -55,6 +71,10 @@ func (cs *CookieStore) saveCookie(ctx context.Context, execer cookieStoreExecer,
 	}
 	if len(key) != 32 {
 		return errors.New("SaveCookie: invalid encryption key")
+	}
+
+	if legacy && strings.TrimSpace(cookieName) == trackerCookieOwnerKey {
+		return errLegacyCookieRetained
 	}
 
 	// Encrypt the cookie value
@@ -67,7 +87,18 @@ func (cs *CookieStore) saveCookie(ctx context.Context, execer cookieStoreExecer,
 
 	query := `
 		INSERT INTO tracker_cookies (tracker_id, cookie_name, encrypted_value, nonce, auth_tag, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`
+	args := []any{trackerID, cookieName, encoded.CiphertextB64, encoded.NonceB64, encoded.AuthTagB64}
+	if legacy {
+		query += `SELECT ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+		WHERE NOT EXISTS (
+			SELECT 1 FROM tracker_cookies WHERE tracker_id = ? COLLATE NOCASE AND cookie_name = ?
+		)`
+		args = append(args, trackerID, trackerCookieOwnerKey)
+	} else {
+		query += `VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+	}
+	query += `
 		ON CONFLICT(tracker_id, cookie_name) DO UPDATE SET
 			encrypted_value = excluded.encrypted_value,
 			nonce = excluded.nonce,
@@ -75,11 +106,19 @@ func (cs *CookieStore) saveCookie(ctx context.Context, execer cookieStoreExecer,
 			updated_at = CURRENT_TIMESTAMP
 	`
 
-	_, err = execer.ExecContext(ctx, query, trackerID, cookieName, encoded.CiphertextB64, encoded.NonceB64, encoded.AuthTagB64)
+	result, err := execer.ExecContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("failed to save cookie: %w", err)
 	}
-
+	if legacy {
+		n, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("cookies: determine legacy import result: %w", err)
+		}
+		if n == 0 {
+			return errLegacyCookieRetained
+		}
+	}
 	return nil
 }
 
@@ -125,13 +164,17 @@ func (cs *CookieStore) GetCookie(ctx context.Context, trackerID, cookieName stri
 // GetAllTrackerCookies retrieves and decrypts all cookies for a tracker.
 // Returns a map[cookieName]cookieValue.
 func (cs *CookieStore) GetAllTrackerCookies(ctx context.Context, trackerID string, key []byte) (map[string]string, error) {
+	return getAllTrackerCookies(ctx, cs.db, trackerID, key)
+}
+
+func getAllTrackerCookies(ctx context.Context, querier cookieStoreQuerier, trackerID string, key []byte) (map[string]string, error) {
 	if ctx == nil {
 		return nil, errors.New("GetAllTrackerCookies: context is required")
 	}
 
 	query := `SELECT cookie_name, encrypted_value, nonce, auth_tag FROM tracker_cookies WHERE tracker_id = ?`
 
-	rows, err := cs.db.QueryContext(ctx, query, trackerID)
+	rows, err := querier.QueryContext(ctx, query, trackerID)
 	if err != nil {
 		return nil, fmt.Errorf("database query failed: %w", err)
 	}

@@ -156,6 +156,8 @@ func (b workflowPreflightBuilder) Build(
 				checkedSubject,
 			)
 			validationSubject := api.NewTrackerValidationSubject(trackerSubject, string(projection.TrackerID))
+			trackerConfig, _ := config.TrackerConfigByName(b.config.Trackers.Trackers, string(projection.TrackerID))
+			validationSubject.APIUpload = trackerConfig.APIUpload
 			validationSubject.FinalizedUploadName = projection.UploadReleaseName
 			if projection.QuestionnaireAnswers != nil {
 				validationSubject.QuestionnaireAnswers = maps.Clone(projection.QuestionnaireAnswers)

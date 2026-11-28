@@ -315,6 +315,12 @@ type AuthRequirementsResolver func(config.Config, config.TrackerConfig) Effectiv
 // AuthPolicy declares coordinator behavior that cannot be inferred from the
 // user-facing auth capability alone.
 type AuthPolicy struct {
+	// CookieOwner binds automatically created cookies to the credentials that
+	// created them. User-imported sessions have no owner.
+	CookieOwner func(config.TrackerConfig) string
+	// LockCookieSession serializes explicit cookie changes with this
+	// tracker's equivalent automatic operations.
+	LockCookieSession func(context.Context) (release func(), err error)
 	// APIKeyGuidance observes account expiry without contributing auth requirements.
 	APIKeyGuidance *APIKeyGuidance
 	// ResolveRequirements returns the secret-free auth facts for the effective
@@ -519,6 +525,8 @@ type UploadArtifactPolicy struct {
 	UseMyAnnounce bool
 	// RequireAnnounce prevents artifact preparation without an announce URL.
 	RequireAnnounce bool
+	// OmitAnnounceList keeps only the primary announce in the upload artifact.
+	OmitAnnounceList bool `json:",omitempty"`
 }
 
 // UploadArtifactPolicyProvider declares tracker-owned personalization policy.
@@ -942,6 +950,11 @@ type ClaimPolicyProvider interface {
 // WorkflowMediaRequirements declares tracker-owned media minimums and reuse policy.
 // Capture preferences and global caps do not belong here.
 type WorkflowMediaRequirements struct {
+	// PackScreenshotsPerMember is the site-owned count for each eligible video
+	// in a multi-file pack, where a release-level count is not sufficient.
+	PackScreenshotsPerMember int
+	// AdditionalDiscScreenshots fixes the number of screenshots on each disc after the first.
+	AdditionalDiscScreenshots int
 	// DVDMenuCount is the minimum selected DVD-menu image count.
 	DVDMenuCount int
 	// AllowImportedScreenshotReferences permits current, host-compatible imported

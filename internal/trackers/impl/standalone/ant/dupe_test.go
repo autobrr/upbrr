@@ -6,12 +6,14 @@ package ant
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -180,71 +182,85 @@ func TestANTExactPageTotalRetainsStaffTokenBoundary(t *testing.T) {
 	}
 	previous := http.DefaultTransport
 	t.Cleanup(func() { http.DefaultTransport = previous })
-	for _, tc := range []struct {
-		name          string
-		total, offset int
-		complete      bool
-	}{
-		{
-			name:     "exact cumulative total",
-			total:    100,
-			offset:   100,
-			complete: true,
-		},
-		{
-			name:     "empty page total",
-			total:    0,
-			offset:   100,
-			complete: true,
-		},
-		{
-			name:   "decreased total",
-			total:  99,
-			offset: 100,
-		},
-		{
-			name:   "unseen result",
-			total:  101,
-			offset: 100,
-		},
-		{
-			name:   "incorrect offset",
-			total:  100,
-			offset: 99,
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			first := antSearchPageJSON(t, 0, 100, 100, true)
-			last := antSearchPageJSON(t, tc.offset, tc.total, 0, true)
-			requests := 0
-			http.DefaultTransport = roundTripFunc(func(*http.Request) (*http.Response, error) {
-				requests++
-				body := first
-				if requests > 1 {
-					body = last
+	type paginationCaseKey struct{}
+	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		handler, ok := req.Context().Value(paginationCaseKey{}).(roundTripFunc)
+		if !ok {
+			return nil, errors.New("missing ANT pagination fixture")
+		}
+		if id := req.URL.Query().Get("tmdbid"); id != "123" {
+			return nil, fmt.Errorf("unexpected ANT pagination TMDB ID %q", id)
+		}
+		return handler(req)
+	})
+	first := antSearchPageJSON(t, 0, 100, 100, true)
+	t.Run("cases", func(t *testing.T) {
+		for _, tc := range []struct {
+			name          string
+			total, offset int
+			complete      bool
+		}{
+			{
+				name:     "exact cumulative total",
+				total:    100,
+				offset:   100,
+				complete: true,
+			},
+			{
+				name:     "empty page total",
+				total:    0,
+				offset:   100,
+				complete: true,
+			},
+			{
+				name:   "decreased total",
+				total:  99,
+				offset: 100,
+			},
+			{
+				name:   "unseen result",
+				total:  101,
+				offset: 100,
+			},
+			{
+				name:   "incorrect offset",
+				total:  100,
+				offset: 99,
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				last := antSearchPageJSON(t, tc.offset, tc.total, 0, true)
+				var requests atomic.Int32
+				handler := roundTripFunc(func(*http.Request) (*http.Response, error) {
+					body := first
+					if requests.Add(1) > 1 {
+						body = last
+					}
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(body)),
+					}, nil
+				})
+				service := dupe.NewServiceWithRegistry(antDupeTestConfig(t), api.NopLogger{}, registry)
+				ctx := context.WithValue(t.Context(), paginationCaseKey{}, handler)
+				summary, err := service.Check(ctx, api.DuplicateSubject{
+					SourcePath: "proposed.mkv",
+					Identity:   api.ExternalIdentity{TMDBID: 123},
+					Projection: &api.TrackerReleaseProjection{
+						DuplicateTarget: api.TrackerDuplicateTarget{TrackerSlot: "Encode/1080/SDR//", Resolution: "1080p"},
+					},
+				}, []string{"ANT"})
+				if err != nil || len(summary.Results) != 1 {
+					t.Fatalf("search failed: summary=%+v err=%v", summary, err)
 				}
-				return &http.Response{
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(body)),
-				}, nil
+				result := summary.Results[0]
+				if requests.Load() != 2 || result.Search.CandidateCount != 100 || result.Search.Complete != tc.complete || result.RequiresStaffToken != !tc.complete {
+					t.Fatalf("wrong exact-page result: requests=%d result=%+v", requests.Load(), result)
+				}
 			})
-			service := dupe.NewServiceWithRegistry(antDupeTestConfig(t), api.NopLogger{}, registry)
-			summary, err := service.Check(t.Context(), api.DuplicateSubject{
-				SourcePath: "proposed.mkv",
-				Identity:   api.ExternalIdentity{TMDBID: 123},
-				Projection: &api.TrackerReleaseProjection{
-					DuplicateTarget: api.TrackerDuplicateTarget{TrackerSlot: "Encode/1080/SDR//", Resolution: "1080p"},
-				},
-			}, []string{"ANT"})
-			if err != nil || len(summary.Results) != 1 {
-				t.Fatalf("search failed: summary=%+v err=%v", summary, err)
-			}
-			result := summary.Results[0]
-			if requests != 2 || result.Search.CandidateCount != 100 || result.Search.Complete != tc.complete || result.RequiresStaffToken != !tc.complete {
-				t.Fatalf("wrong exact-page result: requests=%d result=%+v", requests, result)
-			}
-		})
-	}
+		}
+	})
 }
 
 func TestDupeSearcherANTPaginationBoundFailsClosed(t *testing.T) {

@@ -26,6 +26,7 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -64,6 +65,7 @@ func TestMergeTrackerImagesIntoFinalSelectionsReindexesSparseIndices(t *testing.
 }
 
 func TestPlanFindsHashedTrackerArtifactsAndDeletesOnlyMatchingURL(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	sourcePath := filepath.Join(root, "Example.Release.2026.mkv")
 	if err := os.WriteFile(sourcePath, []byte("synthetic video"), 0o600); err != nil {
@@ -704,6 +706,46 @@ func TestPlanAllocatesScreenshotsAcrossEveryDisc(t *testing.T) {
 		if plan.SuggestedSelections[index].DiscID != wantDiscID {
 			t.Fatalf("suggestion[%d] = %#v, want disc %q", index, plan.SuggestedSelections[index], wantDiscID)
 		}
+	}
+}
+
+func TestPlanKeepsConfiguredCountOnFirstDiscAndTwoOnExtras(t *testing.T) {
+	t.Parallel()
+
+	subject, _, _ := multiDiscScreenshotSubject(t)
+	third := subject.Discs[1]
+	third.ID = "disc-c"
+	subject.Discs = append(subject.Discs, third)
+	subject.AdditionalDiscCount = 2
+	service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), nil)
+	for _, tc := range []struct {
+		name   string
+		manual []int
+	}{
+		{name: "automatic"},
+		{name: "first disc manual", manual: []int{240, 480, 720, 960}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			subject.ManualFrames = tc.manual
+			plan, err := service.Plan(t.Context(), subject, 4)
+			if err != nil {
+				t.Fatal(err)
+			}
+			counts := make([]int, 0, len(plan.Discs))
+			for _, disc := range plan.Discs {
+				counts = append(counts, len(disc.SuggestedSelections))
+				if disc.DiscID != "disc-a" {
+					for _, frame := range disc.SuggestedSelections {
+						if frame.Source == "manual" {
+							t.Fatalf("first disc manual frames leaked to %s", disc.DiscID)
+						}
+					}
+				}
+			}
+			if !slices.Equal(counts, []int{4, 2, 2}) {
+				t.Fatalf("planned frame counts = %v", counts)
+			}
+		})
 	}
 }
 
@@ -1663,14 +1705,8 @@ func TestDeleteReportsIncompleteCleanupAndConvergesOnRetry(t *testing.T) {
 func openScreenshotTestRepository(t *testing.T) *db.SQLiteRepository {
 	t.Helper()
 
-	repo, err := db.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate repository: %v", err)
-	}
+	dbPath := filepath.Join(t.TempDir(), "screenshots.sqlite")
+	repo := dbfixture.OpenMigrated(t, dbPath)
 	return repo
 }
 
@@ -1679,5 +1715,84 @@ func screenshotTestBinding(sourcePath string) api.PreparedMediaBinding {
 		SourcePath:               sourcePath,
 		PreparedMediaFingerprint: "test-prepared-media",
 		PreparedGeneration:       1,
+	}
+}
+
+func TestPackMemberCaptureIsBoundToFileAndSourceVersion(t *testing.T) {
+	release, videoA, videoB := multiDiscScreenshotSubject(t)
+	root := t.TempDir()
+	if err := writeTestBundledFFmpeg(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	runner := &writingScreenshotRunner{payload: testPNGBytes(t, color.RGBA{
+		R: 16,
+		G: 16,
+		B: 16,
+		A: 255,
+	})}
+	service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), runner)
+	ordinary := release
+	ordinary.Discs = nil
+	ordinary.VideoPath = videoA
+	ordinary.MediaInfoJSONPath = release.Discs[0].MediaInfoJSONPath
+	for _, member := range []string{"first", "second"} {
+		subject := ordinary
+		subject.PackMemberID = member
+		subject.MediaBinding.CompatibilityKey = api.MediaCompatibilityKey(strings.Repeat("a", 64))
+		if member == "second" {
+			subject.VideoPath = videoB
+			subject.MediaInfoJSONPath = release.Discs[1].MediaInfoJSONPath
+		}
+		selection := api.ScreenshotSelection{Index: 0, TimestampSeconds: 10}
+		result, err := service.Capture(t.Context(), subject, []api.ScreenshotSelection{selection}, api.ScreenshotPurposeFinal)
+		if err != nil || len(result.Images) != 1 {
+			t.Fatalf("capture for %s: result=%+v, err=%v", member, result, err)
+		}
+		image := result.Images[0]
+		memberBase := screenshotBaseName(subject)
+		tmpDir := filepath.Dir(image.Path)
+		if image.PackMemberID != member || ffmpegInputArg(runner.calls[len(runner.calls)-1].args) != subject.VideoPath ||
+			len(listExistingScreens(tmpDir, memberBase)) != 1 || len(listExistingScreens(tmpDir, screenshotBaseName(ordinary))) != 0 {
+			t.Fatalf("member scope leaked or rendered wrong source: %+v", image)
+		}
+		subject.MediaBinding.CompatibilityKey = api.MediaCompatibilityKey(strings.Repeat("b", 64))
+		if len(listExistingScreens(tmpDir, screenshotBaseName(subject))) != 0 {
+			t.Fatal("bytes captured for the previous source version matched the new source")
+		}
+	}
+}
+
+func TestAdditionalDiscCaptureDoesNotFillOrdinaryScreenshotSlot(t *testing.T) {
+	release, _, _ := multiDiscScreenshotSubject(t)
+	root := t.TempDir()
+	if err := writeTestBundledFFmpeg(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	runner := &writingScreenshotRunner{payload: testPNGBytes(t, color.RGBA{
+		R: 16,
+		G: 16,
+		B: 16,
+		A: 255,
+	})}
+	service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), runner)
+	extra := release
+	extra.AdditionalDiscCount = 1
+	plan, err := service.Plan(t.Context(), extra, 1)
+	if err != nil || len(plan.Discs) != 2 || len(plan.Discs[1].SuggestedSelections) != 1 {
+		t.Fatalf("initial extra-disc plan = %+v, err = %v", plan, err)
+	}
+	capture, err := service.Capture(t.Context(), extra, plan.Discs[1].SuggestedSelections, api.ScreenshotPurposeFinal)
+	if err != nil || len(capture.Images) != 1 {
+		t.Fatalf("extra-disc capture = %+v, err = %v", capture, err)
+	}
+	reused, err := service.Plan(t.Context(), extra, 1)
+	if err != nil || len(reused.ExistingScreenshots) != 1 || reused.ExistingScreenshots[0].Path != capture.Images[0].Path {
+		t.Fatalf("extra-disc retry plan = %+v, err = %v", reused, err)
+	}
+	ordinary, err := service.Plan(t.Context(), release, 2)
+	if err != nil || len(ordinary.ExistingScreenshots) != 0 || len(ordinary.Discs[1].SuggestedSelections) != 1 {
+		t.Fatalf("ordinary plan used a PTP-only capture: %+v, err = %v", ordinary, err)
 	}
 }

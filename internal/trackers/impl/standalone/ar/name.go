@@ -58,7 +58,7 @@ func resolveARSearchNameParts(release api.ReleaseInfo, releaseName string, metad
 	if title == "" && metadata.TVDB != nil {
 		title = strings.TrimSpace(metadata.TVDB.NameEnglish)
 		if title == "" {
-			title = strings.TrimSpace(metadata.TVDB.Name)
+			title = metadata.TVDB.DisplayName()
 		}
 	}
 	if title == "" {

@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -21,15 +20,9 @@ import (
 )
 
 func TestConfigActivationPendingAndCommit(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
-	repo, err := Open(filepath.Join(t.TempDir(), "config-activation.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.MigrateContext(ctx); err != nil {
-		t.Fatal(err)
-	}
+	repo := openMigratedTestRepo(t)
 	if err := migrateAddConfigActivation(ctx, repo.RawDB()); err != nil {
 		t.Fatal(err)
 	}
@@ -108,17 +101,12 @@ func TestConfigActivationPendingAndCommit(t *testing.T) {
 }
 
 func TestConfigActivationRejectsReplacedCandidate(t *testing.T) {
+	t.Parallel()
 	for _, consumePending := range []bool{false, true} {
 		t.Run(fmt.Sprintf("pending=%t", consumePending), func(t *testing.T) {
+			t.Parallel()
 			ctx := t.Context()
-			repo, err := Open(filepath.Join(t.TempDir(), "activation.db"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = repo.Close() })
-			if err := repo.MigrateContext(ctx); err != nil {
-				t.Fatal(err)
-			}
+			repo := openMigratedTestRepo(t)
 			expected, err := repo.LoadConfigActivation(ctx)
 			if err != nil {
 				t.Fatal(err)
@@ -194,14 +182,7 @@ func TestConfigActivationReadsUseConsistentSnapshot(t *testing.T) {
 				}
 			}()
 
-			repo, err := Open(filepath.Join(t.TempDir(), "config-activation-consistent-read.sqlite"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = repo.Close() })
-			if err := repo.MigrateContext(t.Context()); err != nil {
-				t.Fatal(err)
-			}
+			repo := openMigratedTestRepo(t)
 			pending, err := repo.SavePendingConfigActivation(
 				t.Context(),
 				"owner",
@@ -343,15 +324,9 @@ func installConfigActivationReadHookView(t *testing.T, repo *SQLiteRepository) e
 }
 
 func TestConfigActivationFailureClearsCandidateAndAllowsReplacement(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
-	repo, err := Open(filepath.Join(t.TempDir(), "config-activation-failure.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.MigrateContext(ctx); err != nil {
-		t.Fatal(err)
-	}
+	repo := openMigratedTestRepo(t)
 	pending, err := repo.SavePendingConfigActivation(
 		ctx,
 		"session-owner",
@@ -387,15 +362,9 @@ func TestConfigActivationFailureClearsCandidateAndAllowsReplacement(t *testing.T
 }
 
 func TestInitializeConfigActivationFingerprintOnlyFillsLegacyBlankValue(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
-	repo, err := Open(filepath.Join(t.TempDir(), "config-activation-fingerprint.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.MigrateContext(ctx); err != nil {
-		t.Fatal(err)
-	}
+	repo := openMigratedTestRepo(t)
 	activation, err := repo.InitializeConfigActivationFingerprint(ctx, "active")
 	if err != nil {
 		t.Fatal(err)
@@ -409,8 +378,10 @@ func TestInitializeConfigActivationFingerprintOnlyFillsLegacyBlankValue(t *testi
 }
 
 func TestReconcileConfigActivationRetainsPendingAndFailure(t *testing.T) {
+	t.Parallel()
 	for _, failed := range []bool{false, true} {
 		t.Run(fmt.Sprint("failed=", failed), func(t *testing.T) {
+			t.Parallel()
 			ctx := t.Context()
 			repo, snapshot, _ := newConfigActivationUpgradeFixture(t)
 			candidate := []byte(`{"stored":"candidate"}`)
@@ -454,6 +425,7 @@ func TestReconcileConfigActivationRetainsPendingAndFailure(t *testing.T) {
 }
 
 func TestReconcileConfigActivationRejectsChangedSnapshotAndBusyInput(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	repo, snapshot, expected := newConfigActivationUpgradeFixture(t)
 	stale := json.RawMessage(`{"MainSettings":{"TMDBAPI":"other"}}`)
@@ -480,6 +452,7 @@ func TestReconcileConfigActivationRejectsChangedSnapshotAndBusyInput(t *testing.
 }
 
 func TestReconcileConfigActivationAcceptsExpiredOpeningInput(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	repo, snapshot, expected := newConfigActivationUpgradeFixture(t)
 	prior := api.ActiveInputRecord{
@@ -515,6 +488,7 @@ func TestReconcileConfigActivationAcceptsExpiredOpeningInput(t *testing.T) {
 }
 
 func TestReconcileConfigActivationExpiredOperation(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name           string
 		workLease      time.Duration
@@ -572,6 +546,7 @@ func TestReconcileConfigActivationExpiredOperation(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			ctx := t.Context()
 			repo, snapshot, expected := newConfigActivationUpgradeFixture(t)
 			now := time.Now().UTC().Truncate(time.Second)
@@ -672,6 +647,7 @@ func TestReconcileConfigActivationExpiredOperation(t *testing.T) {
 }
 
 func TestDiscardUnresolvedWorkflowEffectsOnStartupRespectsLeases(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name       string
 		inputLease time.Duration
@@ -697,6 +673,7 @@ func TestDiscardUnresolvedWorkflowEffectsOnStartupRespectsLeases(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			ctx := t.Context()
 			repo, _, _ := newConfigActivationUpgradeFixture(t)
 			now := time.Now().UTC().Truncate(time.Second)
@@ -818,6 +795,7 @@ func TestDiscardUnresolvedWorkflowEffectsOnStartupRespectsLeases(t *testing.T) {
 }
 
 func TestDiscardUnresolvedWorkflowEffectsOnStartupRollsBackFailedFenceDelete(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	repo, _, _ := newConfigActivationUpgradeFixture(t)
 	now := time.Now().UTC().Truncate(time.Second)
@@ -862,6 +840,7 @@ func TestDiscardUnresolvedWorkflowEffectsOnStartupRollsBackFailedFenceDelete(t *
 }
 
 func TestReconcileConfigActivationInvalidatesIdleWorkflow(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	repo, snapshot, expected := newConfigActivationUpgradeFixture(t)
 	now := time.Now().UTC().Truncate(time.Second)
@@ -913,14 +892,7 @@ func TestReconcileConfigActivationInvalidatesIdleWorkflow(t *testing.T) {
 func newConfigActivationUpgradeFixture(t *testing.T) (*SQLiteRepository, json.RawMessage, api.ConfigActivation) {
 	t.Helper()
 	ctx := t.Context()
-	repo, err := Open(filepath.Join(t.TempDir(), "config-activation-upgrade.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.MigrateContext(ctx); err != nil {
-		t.Fatal(err)
-	}
+	repo := openMigratedTestRepo(t)
 	if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO config_settings (section, data, updated_at) VALUES (?, ?, ?)`,
 		"MainSettings", `{"TMDBAPI":"synthetic-key"}`, "2026-01-01T00:00:00Z"); err != nil {
 		t.Fatal(err)
@@ -941,15 +913,9 @@ func newConfigActivationUpgradeFixture(t *testing.T) (*SQLiteRepository, json.Ra
 }
 
 func TestConfigActivationSafeAllowsIdleWorkflowSlot(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
-	repo, err := Open(filepath.Join(t.TempDir(), "config-activation-safe.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.MigrateContext(ctx); err != nil {
-		t.Fatal(err)
-	}
+	repo := openMigratedTestRepo(t)
 	if err := migrateAddConfigActivation(ctx, repo.RawDB()); err != nil {
 		t.Fatal(err)
 	}
@@ -970,15 +936,9 @@ func TestConfigActivationSafeAllowsIdleWorkflowSlot(t *testing.T) {
 }
 
 func TestActivateConfigTxTransformsIdleActiveWorkflowAndAdvancesSlot(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
-	repo, err := Open(filepath.Join(t.TempDir(), "config-activation-idle.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.MigrateContext(ctx); err != nil {
-		t.Fatal(err)
-	}
+	repo := openMigratedTestRepo(t)
 	if err := migrateAddConfigActivation(ctx, repo.RawDB()); err != nil {
 		t.Fatal(err)
 	}

@@ -5,8 +5,11 @@
 package filelock
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
+	"time"
 )
 
 // Acquire opens a lock file, creating it with mode 0600 if needed, and takes
@@ -15,6 +18,28 @@ import (
 // may hold or acquire it.
 func Acquire(path string) (*os.File, error) {
 	return acquire(path, false)
+}
+
+// AcquireContext waits for an existing owner within the lifetime of ctx.
+func AcquireContext(ctx context.Context, path string) (*os.File, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("acquire process lock: %w", err)
+	}
+	file, err := Acquire(path)
+	if !errors.Is(err, errLockBusy) {
+		return file, err
+	}
+	retry := time.NewTicker(25 * time.Millisecond)
+	defer retry.Stop()
+	for errors.Is(err, errLockBusy) {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("wait for process lock: %w", ctx.Err())
+		case <-retry.C:
+			file, err = Acquire(path)
+		}
+	}
+	return file, err
 }
 
 // AcquireBlocking is Acquire but waits for an existing owner to release the lock.

@@ -65,7 +65,7 @@ func ptpReviewedLanguageFixture(meta api.UploadSubject, language string) api.Upl
 func TestBuildDescriptionPreservesAudioGraphsBeforeScreenshots(t *testing.T) {
 	t.Parallel()
 	const audio = "[spoiler=Audio Plots]\n[img]https://images.example.invalid/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]"
-	got := buildDescription(api.UploadSubject{}, config.TrackerConfig{}, config.Config{}, trackers.DescriptionAssets{
+	got := mustBuildDescription(t, api.UploadSubject{}, config.TrackerConfig{}, trackers.DescriptionAssets{
 		Description: "Notes\n\n" + audio,
 	})
 	if !strings.Contains(got, "[hide=Audio Plots]") || !strings.Contains(got, "audio.png") || !strings.Contains(got, "Peak: -1 dB") {
@@ -79,7 +79,7 @@ func TestBuildDescriptionPreservesAudioGraphsBeforeScreenshots(t *testing.T) {
 func TestBuildDescriptionPreservesImportedComparisonMarkup(t *testing.T) {
 	const block = "[comparison=Source, Encode]\r\n[center][img]https://img.onlyimage.org/Compare.png[/img][/center]\r\n[/comparison]"
 	const description = "Notes\n\n" + block + "\n\nAfter"
-	got := buildDescription(api.UploadSubject{}, config.TrackerConfig{}, config.Config{}, trackers.DescriptionAssets{
+	got := mustBuildDescription(t, api.UploadSubject{}, config.TrackerConfig{}, trackers.DescriptionAssets{
 		Description: description,
 	})
 	if got != description {
@@ -90,7 +90,7 @@ func TestBuildDescriptionPreservesImportedComparisonMarkup(t *testing.T) {
 func TestBuildDescriptionPreservesCenteredComparison(t *testing.T) {
 	t.Parallel()
 	const block = "[comparison=Source, Encode]\n[img]https://img.onlyimage.org/Compare.png[/img]\n[/comparison]"
-	got := buildDescription(api.UploadSubject{}, config.TrackerConfig{}, config.Config{}, trackers.DescriptionAssets{
+	got := mustBuildDescription(t, api.UploadSubject{}, config.TrackerConfig{}, trackers.DescriptionAssets{
 		Description: "[center]\n" + block + "\n[/center]",
 	})
 	if got != "[align=center]\n"+block+"\n[/align]" {
@@ -100,11 +100,11 @@ func TestBuildDescriptionPreservesCenteredComparison(t *testing.T) {
 
 func TestBuildDescriptionRemovesImportedUpbrrSignature(t *testing.T) {
 	const original = "Release notes\n[right][url=https://github.com/autobrr/upbrr][size=4]Uploaded by upbrr[/size][/url][/right]"
-	got := buildDescription(api.UploadSubject{}, config.TrackerConfig{}, config.Config{}, trackers.DescriptionAssets{Description: original})
+	got := mustBuildDescription(t, api.UploadSubject{}, config.TrackerConfig{}, trackers.DescriptionAssets{Description: original})
 	if got != "Release notes" {
 		t.Fatalf("unexpected cleaned description: %q", got)
 	}
-	got = buildDescription(api.UploadSubject{}, config.TrackerConfig{}, config.Config{}, trackers.DescriptionAssets{Description: original, Final: true})
+	got = mustBuildDescription(t, api.UploadSubject{}, config.TrackerConfig{}, trackers.DescriptionAssets{Description: original, Final: true})
 	if got != original {
 		t.Fatalf("reviewed description changed: %q", got)
 	}

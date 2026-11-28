@@ -20,7 +20,8 @@ func buildDescription(meta api.UploadSubject, cfg config.TrackerConfig, addLogo 
 		return strings.TrimSpace(assets.Description)
 	}
 	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
-	baseDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(assets.Description)
+	baseDescription, discReports := description.SplitLeadingDiscReports(assets.Description)
+	baseDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(baseDescription)
 	assets.Description = baseDescription
 	parts := make([]string, 0, 6)
 	if addLogo {
@@ -42,6 +43,9 @@ func buildDescription(meta api.UploadSubject, cfg config.TrackerConfig, addLogo 
 	}
 	if audioAnalysis != "" {
 		parts = append(parts, strings.ReplaceAll(audioAnalysis, "[img]", "[img=350]"))
+	}
+	if discReports != "" {
+		parts = append(parts, discReports)
 	}
 	if shots := screenshotBlock(assets.Screenshots, maxInt(cfg.ImageCount, 2)); shots != "" {
 		parts = append(parts, "[center]"+shots+"[/center]")

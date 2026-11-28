@@ -238,6 +238,7 @@ func TestNativeDiscRetrySelectsOnlyTargetsNeedingSource(t *testing.T) {
 }
 
 func TestNativeHDRWorkflowCheckpointArtifactsAndReuse(t *testing.T) {
+	t.Parallel()
 	builder, resolver, _ := hdrFixture(t)
 	data, err := os.ReadFile(filepath.Join("..", "services", "hdranalysis", "testdata", "reordered-hybrid.mkv"))
 	if err != nil {

@@ -22,6 +22,7 @@ import (
 )
 
 func TestDVSidecarCompressionAndRetainedRestoreBudget(t *testing.T) {
+	t.Parallel()
 	data, err := os.ReadFile(filepath.Join("testdata", "reordered-hybrid.mkv"))
 	if err != nil {
 		t.Fatal(err)

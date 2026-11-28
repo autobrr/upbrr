@@ -215,7 +215,7 @@ func TestBTNStructuredNamePolicyUsesSemanticGroupAndSearch(t *testing.T) {
 
 func TestBTNNamingPolicyVersion(t *testing.T) {
 	t.Parallel()
-	if got := New().ReleaseNamePolicy().ID; got != "standalone/btn/v5" {
+	if got := New().ReleaseNamePolicy().ID; got != "standalone/btn/v6" {
 		t.Fatalf("BTN naming policy ID = %q", got)
 	}
 }
@@ -317,4 +317,119 @@ func btnReviewedName(t *testing.T, subject api.UploadSubject, requested *string)
 		t.Fatal(err)
 	}
 	return name
+}
+
+func TestBTNComparesEpisodeTitleBeforeAndAfterFormatting(t *testing.T) {
+	t.Parallel()
+	registry := trackers.NewRegistry()
+	if err := registry.Register(New()); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, err := api.CanonicalWorkflowFingerprint("btn-episode-title")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name          string
+		primary       string
+		alternate     string
+		episode       string
+		date          string
+		manual        bool
+		manualEpisode bool
+		want          string
+	}{
+		{
+			name:      "dot-delimited AKA",
+			primary:   "Blue Sky",
+			alternate: "AKA Sora no Ao",
+			episode:   "Sora no Ao",
+			want:      "Blue.Sky.AKA.Sora.no.Ao.S01E02-NOGRP",
+		},
+		{
+			name:      "AKA repeats after formatting",
+			primary:   "Blue Sky",
+			alternate: "AKA Café & Bar",
+			episode:   "Cafe and Bar",
+			want:      "Blue.Sky.AKA.Cafe.and.Bar.S01E02-NOGRP",
+		},
+		{
+			name:      "episode title starts with AKA",
+			primary:   "Blue Sky",
+			alternate: "AKA Echo",
+			episode:   "AKA Echo",
+			want:      "Blue.Sky.AKA.Echo.S01E02.AKA.Echo-NOGRP",
+		},
+		{
+			name:      "episode title starts with A.K.A.",
+			primary:   "Blue Sky",
+			alternate: "AKA Echo",
+			episode:   "A.K.A. Echo",
+			want:      "Blue.Sky.AKA.Echo.S01E02.A.K.A.Echo-NOGRP",
+		},
+		{
+			name:          "manual episode title can repeat formatted AKA",
+			primary:       "Blue Sky",
+			alternate:     "AKA Café & Bar",
+			episode:       "Cafe and Bar",
+			manualEpisode: true,
+			want:          "Blue.Sky.AKA.Cafe.and.Bar.S01E02.Cafe.and.Bar-NOGRP",
+		},
+		{
+			name:      "daily date replaces episode numbering and retains title",
+			primary:   "Blue Sky",
+			alternate: "AKA Sora no Ao",
+			episode:   "Sora no Ao",
+			date:      "2026-08-08",
+			want:      "Blue.Sky.AKA.Sora.no.Ao.2026.08.08.Sora.no.Ao-NOGRP",
+		},
+		{
+			name:    "manual title escapes normalization",
+			primary: "Café & Bar",
+			episode: "Café & Bar",
+			manual:  true,
+			want:    "Café.&.Bar.S01E02-NOGRP",
+		},
+		{
+			name:    "distinct automatic title still gets BTN formatting",
+			primary: "Blue Sky",
+			episode: "Café & Bar",
+			want:    "Blue.Sky.S01E02.Cafe.and.Bar-NOGRP",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := btnGeneratedSubject(t, api.ReleaseNameRequest{
+				Category:     "TV",
+				Type:         "ENCODE",
+				Title:        test.primary,
+				AltTitle:     test.alternate,
+				Season:       "S01",
+				Episode:      "E02",
+				DailyDate:    test.date,
+				EpisodeTitle: test.episode,
+			})
+			subject.Identity.Category = api.CanonicalCategoryTV
+			subject.DailyEpisodeDate = test.date
+			for index := range subject.GeneratedName.Components {
+				component := &subject.GeneratedName.Components[index]
+				if component.Role == api.NameRoleTitle {
+					component.Manual = test.manual
+				}
+				if component.Role == api.NameRoleEpisodeTitle {
+					component.Manual = test.manualEpisode
+				}
+			}
+			projection, failure := registry.ProjectRelease(t.Context(), trackers.PreparationInput{
+				Tracker: "BTN",
+				Meta:    subject,
+			}, fingerprint, fingerprint, fingerprint)
+			if failure != nil {
+				t.Fatal(failure)
+			}
+			if got := projection.UploadReleaseName; got != test.want {
+				t.Errorf("BTN name = %q, want %q", got, test.want)
+			}
+		})
+	}
 }

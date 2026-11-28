@@ -9,6 +9,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/languageutil"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -158,13 +159,14 @@ func normalizeLocalizedGroup(editor *trackers.NameEditor, meta api.UploadSubject
 
 func applyLocalizedAlternateTitle(editor *trackers.NameEditor, meta api.UploadSubject) error {
 	alternate, ok := editor.Component(api.NameRoleAlternateTitle)
-	if !ok || !alternate.Present {
+	if !ok || !alternate.Present || alternate.Manual {
 		return nil
 	}
-	_, portuguese := portugueseLanguageNames[strings.ToLower(resolveOriginalLanguage(meta))]
-	portuguese = portuguese || languageutil.SameLanguage(resolveOriginalLanguage(meta), "pt")
+	language := resolveOriginalLanguage(meta)
+	_, portuguese := portugueseLanguageNames[strings.ToLower(language)]
+	portuguese = portuguese || languageutil.SameLanguage(language, "pt")
 	if portuguese {
-		title := strings.TrimSpace(strings.TrimPrefix(alternate.Value, "AKA"))
+		title := metautil.TrimAKAPrefix(alternate.Value)
 		if title != "" {
 			if err := editor.Set(api.NameRoleTitle, title); err != nil {
 				return fmt.Errorf("set localized Portuguese title: %w", err)

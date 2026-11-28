@@ -13,7 +13,7 @@ import (
 )
 
 func readBDSummary(meta api.UploadSubject, dbPath string) (string, error) {
-	text, err := trackers.ReadBDInfo(dbPath, meta)
+	text, err := trackers.ReadBDInfoForDescription(dbPath, meta)
 	if err != nil {
 		return "", fmt.Errorf("trackers: AR read BDInfo: %w", err)
 	}

@@ -852,8 +852,20 @@ func (m SourceScopedMetadata) IsCurrentFor(sourcePath string, identity ExternalI
 // available TVDB data; an ID without usable metadata is not.
 func (m SourceScopedMetadata) TVDBNamingAvailable(source string, identity ExternalIdentity) bool {
 	return sourceScopedPathMatches(identity.SourcePath, source) && sourceScopedPathMatches(m.SourcePath, source) &&
-		m.TVDB != nil && identity.TVDBID > 0 && m.TVDB.TVDBID == identity.TVDBID &&
-		(strings.TrimSpace(m.TVDB.NameEnglish) != "" || strings.TrimSpace(m.TVDB.Name) != "")
+		m.TVDB != nil && identity.TVDBID > 0 && m.TVDB.TVDBID == identity.TVDBID && m.TVDB.DisplayName() != ""
+}
+
+// DisplayName falls back to an alias or English title when TVDB omits its primary name.
+func (m TVDBMetadata) DisplayName() string {
+	if name := strings.TrimSpace(m.Name); name != "" {
+		return name
+	}
+	for _, alias := range m.Aliases {
+		if name := strings.TrimSpace(alias); name != "" {
+			return name
+		}
+	}
+	return strings.TrimSpace(m.NameEnglish)
 }
 
 func sourceScopedPathMatches(scopedPath string, currentPath string) bool {

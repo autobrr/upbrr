@@ -18,6 +18,9 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// ReleaseNameContractID versions shared release-name projection semantics independently of site policies.
+const ReleaseNameContractID = "release-name/aka-episode-evidence/v1"
+
 const (
 	releaseNamePolicyCanonicalV1  = "standalone/canonical/v1"
 	releaseNamePolicySceneFirstV1 = "standalone/scene-first/v1"

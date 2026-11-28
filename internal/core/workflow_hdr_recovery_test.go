@@ -282,7 +282,7 @@ func TestHDRStoredPlotRestoresWithoutMetadataAndReusesHostedLinks(t *testing.T) 
 			images,
 			nil,
 			nil,
-			false,
+			"test-attempt", false,
 		)
 		if err != nil || len(reused) != 1 || len(host.images) != 0 || reused[0].RawURL != links[0].RawURL {
 			t.Fatalf("existing upload not reused: %#v err=%v", reused, err)
@@ -296,7 +296,7 @@ func TestHDRStoredPlotRestoresWithoutMetadataAndReusesHostedLinks(t *testing.T) 
 		images,
 		nil,
 		nil,
-		false,
+		"test-attempt", false,
 	); err != nil ||
 		len(host.images) != 1 {
 		t.Fatalf("changed account reused old upload: calls=%d err=%v", len(host.images), err)

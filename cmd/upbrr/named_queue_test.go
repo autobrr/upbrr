@@ -796,7 +796,8 @@ func TestNamedQueueUnresolvedRecoveryRetryRemainsInterrupted(t *testing.T) {
 				queue.inventory.Items[i].Status = "completed"
 			}
 			core := &cliWorkflowCoreFake{
-				activeInput: api.ActiveInputSnapshot{State: api.ActiveInputEmpty, RecoveryWorkflowIDs: []api.WorkflowID{"workflow-A"}},
+				reconcileError: api.ErrReleaseWorkflowEffectOutcomeUnknown,
+				activeInput:    api.ActiveInputSnapshot{State: api.ActiveInputEmpty, RecoveryWorkflowIDs: []api.WorkflowID{"workflow-A"}},
 				recoveryInput: api.ActiveInputSnapshot{
 					State:    api.ActiveInputRecovering,
 					Revision: 11,
@@ -815,7 +816,7 @@ func TestNamedQueueUnresolvedRecoveryRetryRemainsInterrupted(t *testing.T) {
 			batch := newCLIPreparationBatch(api.Request{Options: api.UploadOptions{InteractionMode: test.mode}}, queue.paths(true, 0))
 			batch.queue = queue
 			err = runCLIWorkflowUploadOnly(t.Context(), core, batch, false, true, true, config.Config{}, cliIO{in: strings.NewReader(test.input), out: io.Discard}, api.NopLogger{})
-			if !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) || len(core.uploadRequests) != 0 || len(core.reconcileRequests) != 0 {
+			if !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) || len(core.uploadRequests) != 0 || len(core.reconcileRequests) != 1 {
 				t.Fatalf("unresolved retry lost typed uncertainty or executed work: err=%v uploads=%d reconciles=%d", err, len(core.uploadRequests), len(core.reconcileRequests))
 			}
 			if err := queue.Close(); err != nil {

@@ -70,6 +70,7 @@ func TestAutomaticSceneSheetShowsMetadataPairWhenPictureCutIsOffset(t *testing.T
 }
 
 func TestAutomaticPlotLayoutsMatchGuideFamilies(t *testing.T) {
+	t.Parallel()
 	report := automaticReportFixture()
 	for i := range report.Automatic.Frames {
 		report.Automatic.Frames[i].DVKnown = true
