@@ -170,7 +170,8 @@ func TestInputLogExportSanitizesFreshAndLegacyDiagnostics(t *testing.T) {
 			if mode == "legacy" {
 				details = append([]string{"trackers: EXAMPLE response body: <html>\n<meta name=\"csrf-token\" content=\"synthetic-hidden-form-value\">\n</html>"}, details...)
 				at := time.Now()
-				const id = "legacy"
+				// The public attempt ID can contain the same digits as a private field.
+				const id = "legacy-847"
 				stored.attempts = []db.InputLogAttempt{{
 					ID:         id,
 					SourcePath: source,
@@ -200,13 +201,13 @@ func TestInputLogExportSanitizesFreshAndLegacyDiagnostics(t *testing.T) {
 				"private-config", "private-server", "private-share", "Hidden Destination", "Private Destination", "Private Group", "Collection=Archive",
 				"private collection", "Root Relative Library", "Bracketed Library", "Library Collection", "Season 01", "tvdb-123", "synthetic-api", "synthetic-passkey", "synthetic-bearer",
 				"synthetic-cookie", "synthetic-hidden-form-value", "synthetic-description-secret", "synthetic-user", "synthetic-password", "0123456789abcdef",
-				"791223", "791224", "847"} {
+				"791223", "791224", "seeders=847"} {
 				if strings.Contains(result.Text, private) {
 					t.Errorf("retained private fixture value %d", i)
 				}
 			}
 			for _, detail := range []string{"preparing Example Release.mkv (phase=metadata)", "{db}/tmp/Example.Release (text=false json=false)",
-				"content_path=\"Example Release.mkv\"", "ffmpeg=ffmpeg.exe selected_path=Example Release.mkv", "copying File.mkv",
+				"clients: match seeders=[REDACTED]", "content_path=\"Example Release.mkv\"", "ffmpeg=ffmpeg.exe selected_path=Example Release.mkv", "copying File.mkv",
 				"analyzing File.mkv (1080p/24)", "save_path=[REDACTED] content_path=File.mkv", `path="Example.mkv" category="movies"`,
 				"preparing Rooted.mkv (phase=metadata)", "preparing a (phase=metadata)", `literal escapes: \n\t and \r`, "tmdb: metadata loaded id=172233", "candidate[id=[REDACTED],size=123,kind=encode]",
 				"candidate={1080p}", "injection input source=File.mkv tracker=EXAMPLE", "mediainfo: analyzing File.mkv", "linked example save_path=[REDACTED]",

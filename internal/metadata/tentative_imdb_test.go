@@ -26,7 +26,7 @@ func TestPreparedTentativeIMDbKeepsIndependentEvidenceAcrossRestart(t *testing.T
 	for _, tc := range []struct {
 		name, sceneID, imdbType, tvdbIMDb, tmdbEvidence string
 		wantID                                          int
-		linkTVDB, weakTMDB                              bool
+		linkTVDB, weakTMDB, upgrade                     bool
 	}{
 		{
 			name:     "independent agreement",
@@ -36,6 +36,7 @@ func TestPreparedTentativeIMDbKeepsIndependentEvidenceAcrossRestart(t *testing.T
 		},
 		{
 			name:     "TMDB-anchored TVDB series supplies its own agreeing IMDb link",
+			upgrade:  true,
 			imdbType: "tvMiniseries",
 			linkTVDB: true,
 			tvdbIMDb: "tt0555002",
@@ -206,16 +207,38 @@ func TestPreparedTentativeIMDbKeepsIndependentEvidenceAcrossRestart(t *testing.T
 			input := fixture.input
 			inherit := api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit}
 			var generation api.PreparedGeneration
-			for _, phase := range []string{"initial", "restart"} {
-				if phase == "restart" {
+			phases := []string{"initial", "restart"}
+			if tc.upgrade {
+				phases = append(phases, "upgrade")
+			}
+			for _, phase := range phases {
+				if phase != "initial" {
+					if phase == "upgrade" {
+						stale, err := repo.LoadPreparedRelease(t.Context(), input.SourcePath)
+						if err != nil {
+							t.Fatal(err)
+						}
+						stale.Compatibility.ContractVersion = "prepared-release-v92-source-and-sibling-evidence"
+						stale.Identity.Resolution.ContractVersion = "external-identity-v21-source-and-sibling-evidence"
+						stale.Identity.IMDBID = 0
+						stale.Identity.Provenance.IMDB = ""
+						stale.Identity.Dependencies.IMDB = api.IdentityDependency{}
+						stale.ProviderMetadata.IMDB = nil
+						if err := repo.CommitPreparedRelease(t.Context(), stale); err != nil {
+							t.Fatal(err)
+						}
+					}
 					if err := repo.Close(); err != nil {
 						t.Fatal(err)
 					}
-					module, _ = fixture.open(t)
+					module, repo = fixture.open(t)
 					input.ExternalFreshness = api.ExternalFreshnessReuse
 				}
 				got := prepareCorrectionEvidence(t, module, input, inherit).Release
-				if got.Identity.IMDBID != tc.wantID || phase == "restart" && got.Generation != generation {
+				if phase == "upgrade" {
+					generation++
+				}
+				if got.Identity.IMDBID != tc.wantID || phase != "initial" && got.Generation != generation {
 					t.Fatalf("%s: IMDb %d, generation %d (previous %d)", phase, got.Identity.IMDBID, got.Generation, generation)
 				}
 				generation = got.Generation
