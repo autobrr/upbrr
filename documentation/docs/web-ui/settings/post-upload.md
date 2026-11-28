@@ -7,10 +7,10 @@ description: Configure client-injection delay and concurrent tracker submissions
 
 Use **Settings → Post Upload** for timing and concurrency around tracker submission and torrent-client injection.
 
-| Field                                | Default | Effect                                                                                                  |
-| ------------------------------------ | ------- | ------------------------------------------------------------------------------------------------------- |
-| **Client injection delay (seconds)** | `0`     | Waits this many seconds before each torrent-client injection. A tracker-specific value can override it. |
-| **Concurrent tracker uploads**       | `4`     | Caps simultaneous tracker uploads. `0` uses the built-in limit of `4`; negative values are rejected.    |
+| Field                                | Default | Effect                                                                                                |
+| ------------------------------------ | ------- | ----------------------------------------------------------------------------------------------------- |
+| **Client injection delay (seconds)** | `0`     | Waits this many whole seconds before handing off a torrent. A tracker-specific value can override it. |
+| **Concurrent tracker uploads**       | `4`     | Caps simultaneous tracker uploads. `0` uses the built-in limit of `4`; negative values are rejected.  |
 
 Set a tracker-specific **Client injection delay (seconds)** under [Trackers](./trackers.md) when only one tracker needs extra time before client injection.
 

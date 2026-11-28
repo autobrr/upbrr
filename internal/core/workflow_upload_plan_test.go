@@ -1505,12 +1505,16 @@ func TestWorkflowUploadExecutionInjectsExactRegisteredTrackerTorrent(t *testing.
 				t.Fatal("registered artifact was not retained")
 			}
 			watch := t.TempDir()
-			clients := torrentclient.NewService(config.Config{TorrentClients: map[string]config.TorrentClientConfig{
-				"watch": {Type: "watch", WatchFolder: watch},
-			}}, nil)
+			clients := torrentclient.NewService(config.Config{
+				PostUpload: config.PostUploadConfig{InjectDelay: 60},
+				TorrentClients: map[string]config.TorrentClientConfig{
+					"watch": {Type: "watch", WatchFolder: watch},
+				},
+			}, nil)
 			execution := &workflowUploadExecution{
 				plan: &workflowRetainedUploadPlanFake{results: []trackers.RetainedTrackerResult{{
-					Tracker: test.tracker,
+					Tracker:          test.tracker,
+					UploadAcceptedAt: time.Now().Add(-2 * time.Minute),
 					Summary: api.UploadSummary{
 						Uploaded:           1,
 						PendingPublication: test.pending,
@@ -1523,7 +1527,9 @@ func TestWorkflowUploadExecutionInjectsExactRegisteredTrackerTorrent(t *testing.
 				}}},
 				clients: clients,
 			}
-			results, err := execution.Execute(t.Context(), nil)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			results, err := execution.Execute(ctx, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

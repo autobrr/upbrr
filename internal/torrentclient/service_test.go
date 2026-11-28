@@ -3334,50 +3334,81 @@ func TestInjectHonorsGlobalDelayCancellation(t *testing.T) {
 
 func TestInjectDelaySelectionBeforeClientDispatch(t *testing.T) {
 	t.Parallel()
-
 	for _, tc := range []struct {
-		name     string
-		override *int
-		elapsed  time.Duration
-		wantErr  error
+		name        string
+		override    *float64
+		acceptedAgo time.Duration
+		timeout     time.Duration
+		elapsed     time.Duration
+		wantErr     error
 	}{
 		{
-			name:    "global delay",
+			name:    "inherited global delay canceled",
+			timeout: 100 * time.Millisecond,
 			elapsed: 100 * time.Millisecond,
 			wantErr: context.DeadlineExceeded,
 		},
 		{
-			name:     "zero tracker override",
-			override: new(int),
+			name:     "explicit zero",
+			override: new(float64),
+			timeout:  time.Second,
+		},
+		{
+			name:     "fractional delay once for both clients",
+			override: new(0.5),
+			timeout:  time.Second,
+			elapsed:  500 * time.Millisecond,
+		},
+		{
+			name:        "time since acceptance counts",
+			override:    new(0.5),
+			acceptedAgo: 350 * time.Millisecond,
+			timeout:     time.Second,
+			elapsed:     150 * time.Millisecond,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			folders := []string{t.TempDir(), t.TempDir()}
+			source := filepath.Join(t.TempDir(), "fixture.torrent")
+			if err := os.WriteFile(source, []byte("fixture"), 0o600); err != nil {
+				t.Fatal(err)
+			}
 			synctest.Test(t, func(t *testing.T) {
-				// Disabled clients still pass through Inject's shared pre-dispatch delay.
-				// The global control prevents this no-I/O fixture from bypassing that policy.
 				svc := NewService(config.Config{
-					PostUpload: config.PostUploadConfig{InjectDelay: 1},
+					PostUpload:  config.PostUploadConfig{InjectDelay: 1},
+					ClientSetup: config.ClientSetupConfig{InjectClients: config.CSVList{"first", "second"}},
 					Trackers: config.TrackersConfig{
 						Trackers: map[string]config.TrackerConfig{
 							"AITHER": {InjectDelay: tc.override},
 						},
 					},
 					TorrentClients: map[string]config.TorrentClientConfig{
-						"noop": {Type: "disabled"},
+						"first":  {Type: "watch", WatchFolder: folders[0]},
+						"second": {Type: "watch", WatchFolder: folders[1]},
 					},
 				}, nil)
-				ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+				ctx, cancel := context.WithTimeout(t.Context(), tc.timeout)
 				defer cancel()
 
 				start := time.Now()
-				err := svc.Inject(ctx, api.ClientSubject{}, api.TorrentResult{Path: "fixture.torrent", Tracker: "aither"})
-				if !errors.Is(err, tc.wantErr) {
+				torrent := api.TorrentResult{
+					Path:             source,
+					Tracker:          "aither",
+					UploadAcceptedAt: start.Add(-tc.acceptedAgo),
+				}
+				if err := svc.Inject(ctx, api.ClientSubject{}, torrent); !errors.Is(err, tc.wantErr) {
 					t.Fatalf("inject error = %v, want %v", err, tc.wantErr)
 				}
 				if elapsed := time.Since(start); elapsed != tc.elapsed {
 					t.Fatalf("injection delay = %v, want %v", elapsed, tc.elapsed)
 				}
 			})
+			for _, folder := range folders {
+				_, err := os.Stat(filepath.Join(folder, filepath.Base(source)))
+				if (tc.wantErr == nil && err != nil) || (tc.wantErr != nil && !os.IsNotExist(err)) {
+					t.Fatalf("unexpected watch folder result: %v", err)
+				}
+			}
 		})
 	}
 }
@@ -3405,7 +3436,7 @@ func TestInjectTrackerDelayOverrideBeatsGlobalDelay(t *testing.T) {
 	}))
 	defer server.Close()
 
-	overrideDelay := 0
+	overrideDelay := 0.0
 	svc := NewService(config.Config{
 		PostUpload: config.PostUploadConfig{InjectDelay: 1},
 		Trackers: config.TrackersConfig{

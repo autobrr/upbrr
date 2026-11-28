@@ -81,6 +81,7 @@ type trackerPlanSlot struct {
 	alreadySucceeded         bool
 	resolving                bool
 	summary                  api.UploadSummary
+	uploadAcceptedAt         time.Time
 	submissionOutcome        submission.Outcome
 	submissionReceiptID      string
 	submissionOperationID    api.WorkflowOperationID
@@ -326,9 +327,10 @@ type RetainedTrackerPreparation struct {
 
 // RetainedTrackerResult is one tracker outcome produced by a retained operation.
 type RetainedTrackerResult struct {
-	Tracker string
-	Summary api.UploadSummary
-	Failure *TrackerFailure
+	Tracker          string
+	Summary          api.UploadSummary
+	Failure          *TrackerFailure
+	UploadAcceptedAt time.Time
 	// SubmissionOutcome is independent of retaining the local terminal receipt.
 	SubmissionOutcome     submission.Outcome
 	SubmissionReceiptID   string
@@ -593,6 +595,7 @@ func (p *RetainedUploadPlan) execute(
 		result := RetainedTrackerResult{
 			Tracker:               slot.tracker,
 			Summary:               slot.summary,
+			UploadAcceptedAt:      slot.uploadAcceptedAt,
 			AlreadySucceeded:      slot.alreadySucceeded,
 			SubmissionOutcome:     slot.submissionOutcome,
 			SubmissionReceiptID:   slot.submissionReceiptID,
@@ -901,6 +904,7 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 			if err == nil {
 				// Receipt persistence failure must not erase established acceptance.
 				slot.summary = summary
+				slot.uploadAcceptedAt = time.Now()
 			}
 			// Only adapter-owned evidence can release a failed submission fence.
 			// Unclassified errors retain exact-attempt protection for reconciliation.

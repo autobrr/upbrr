@@ -2938,6 +2938,8 @@ type TorrentResult struct {
 	// URL-only qBittorrent adds cannot provide that proof. Workflow callers set
 	// this explicitly; false preserves legacy qBittorrent add behavior.
 	VerifyInjection bool
+	// UploadAcceptedAt anchors the injection delay for a newly accepted upload.
+	UploadAcceptedAt time.Time `json:"-"`
 	// PendingPublication owns an unpublished generated file, never a reused artifact.
 	PendingPublication TorrentPublication `json:"-"`
 	// RehashedTrackers lists selected trackers whose preparation required the

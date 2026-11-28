@@ -179,7 +179,7 @@ const trackerFieldMeta: Record<string, FieldMeta> = {
   InjectDelay: numberField("InjectDelay", {
     label: "Client injection delay (seconds)",
     advanced: true,
-    help: "Override the global client-injection delay for this tracker. An unset value inherits globally; entering zero or a negative value requests no wait.",
+    help: "Override the global client-injection delay for this tracker. Use seconds, for example 0.5. Leave blank to inherit the global delay, or enter 0 for no wait.",
   }),
   ImageCount: numberField("ImageCount", {
     label: "Tracker screenshot count",
