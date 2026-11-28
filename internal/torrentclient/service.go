@@ -187,6 +187,7 @@ func (s *Service) Inject(ctx context.Context, meta api.ClientSubject, torrent ap
 		}
 	}()
 	skippedURLOnlyClients := 0
+	delayApplied := false
 	for _, name := range clientNames {
 		client := applyClientOverrides(clients[name], clientOverrides)
 		clientType := strings.ToLower(strings.TrimSpace(client.ClientType()))
@@ -199,8 +200,11 @@ func (s *Service) Inject(ctx context.Context, meta api.ClientSubject, torrent ap
 			skippedURLOnlyClients++
 			continue
 		}
-		if err := s.waitInjectDelay(ctx, torrent.Tracker); err != nil {
-			return err
+		if !delayApplied && (clientType == "watch" || clientType == "qbit" || clientType == "qbittorrent" || clientType == "qui") {
+			if err := s.waitInjectDelay(ctx, torrent); err != nil {
+				return err
+			}
+			delayApplied = true
 		}
 		switch clientType {
 		case "none", "disabled":
@@ -306,18 +310,29 @@ func (s *Service) trackerConfig(tracker string) (config.TrackerConfig, bool) {
 	return config.TrackerConfig{}, false
 }
 
-func (s *Service) waitInjectDelay(ctx context.Context, tracker string) error {
+func (s *Service) waitInjectDelay(ctx context.Context, torrent api.TorrentResult) error {
 	logger := logging.FromContext(ctx, s.logger)
-	delay := s.cfg.PostUpload.InjectDelay
-	if trackerCfg, ok := s.trackerConfig(tracker); ok && trackerCfg.InjectDelay != nil {
+	delay := float64(s.cfg.PostUpload.InjectDelay)
+	if trackerCfg, ok := s.trackerConfig(torrent.Tracker); ok && trackerCfg.InjectDelay != nil {
 		delay = *trackerCfg.InjectDelay
 	}
 	if delay <= 0 {
 		return nil
 	}
+	nanoseconds := delay * float64(time.Second)
+	if !(nanoseconds < float64(1<<63)) {
+		return fmt.Errorf("clients: injection delay is out of range: %w", internalerrors.ErrInvalidInput)
+	}
+	remaining := time.Duration(nanoseconds)
+	if !torrent.UploadAcceptedAt.IsZero() {
+		remaining = time.Until(torrent.UploadAcceptedAt.Add(remaining))
+	}
+	if remaining <= 0 {
+		return nil
+	}
 
-	logger.Debugf("clients: waiting %ds before injection for tracker %s", delay, strings.TrimSpace(tracker))
-	timer := time.NewTimer(time.Duration(delay) * time.Second)
+	logger.Debugf("clients: waiting %s before injection for tracker %s", remaining, strings.TrimSpace(torrent.Tracker))
+	timer := time.NewTimer(remaining)
 	defer timer.Stop()
 
 	select {

@@ -386,7 +386,9 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
       );
     }
     if (typeHint === "number" || typeof value === "number") {
-      const numericValue = typeof value === "number" && Number.isFinite(value) ? value : 0;
+      const optionalDelay = path[0] === "Trackers" && label === "InjectDelay";
+      const numericValue =
+        typeof value === "number" && Number.isFinite(value) ? value : optionalDelay ? "" : 0;
       return (
         <div className={settingsStyle.field} key={path.join(".")}>
           {heading}
@@ -395,7 +397,13 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
             className={settingsInputClass}
             type="number"
             value={numericValue}
-            onChange={(event) => updateConfigValue(path, Number(event.target.value))}
+            step={optionalDelay ? 0.1 : undefined}
+            onChange={(event) =>
+              updateConfigValue(
+                path,
+                optionalDelay && event.target.value === "" ? null : Number(event.target.value),
+              )
+            }
           />
         </div>
       );

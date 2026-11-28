@@ -129,6 +129,7 @@ func submitUnit3DUpload(
 		return api.UploadSummary{}, submission.NewError(submission.Rejected, err)
 	}
 
+	acceptedAt := time.Now()
 	artifact, artifactErr := parseUnit3DUploadArtifact(baseURL, result.Data)
 	artifact.Tracker = trackerName
 	if artifact.TorrentID != "" {
@@ -138,6 +139,7 @@ func submitUnit3DUpload(
 	}
 
 	summary := api.UploadSummary{
+		AcceptedAt:       acceptedAt,
 		Uploaded:         1,
 		UploadedTorrents: []api.UploadedTorrent{artifact},
 	}

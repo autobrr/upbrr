@@ -114,6 +114,7 @@ func submitPreparedUpload(
 		return api.UploadSummary{}, fmt.Errorf("trackers: SPD decode response: %s", commonhttp.RedactErrorDetail(err.Error()))
 	}
 	if result.Success && decoded.Status != nil && *decoded.Status && !decoded.Error {
+		acceptedAt := time.Now()
 		torrentID := commonhttp.PositiveTorrentID(decoded.Torrent.ID)
 		torrentURL, downloadURL := "", ""
 		if torrentID != "" {
@@ -130,7 +131,8 @@ func submitPreparedUpload(
 			artifactPath = ""
 		}
 		return api.UploadSummary{
-			Uploaded: 1,
+			AcceptedAt: acceptedAt,
+			Uploaded:   1,
 			UploadedTorrents: []api.UploadedTorrent{{
 				Tracker:     "SPD",
 				TorrentID:   torrentID,

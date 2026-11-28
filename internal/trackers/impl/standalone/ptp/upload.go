@@ -122,6 +122,7 @@ func submitPreparedUpload(
 		finalURL = resp.Request.URL.String()
 	}
 	if matches := ptpSuccessPattern.FindStringSubmatch(finalURL); len(matches) == 3 {
+		acceptedAt := time.Now()
 		groupID := strings.TrimSpace(matches[1])
 		torrentID := strings.TrimSpace(matches[2])
 		torrentURL := strings.TrimRight(state.baseURL, "/") + "/torrents.php?id=" + url.QueryEscape(groupID) + "&torrentid=" + url.QueryEscape(torrentID)
@@ -129,7 +130,8 @@ func submitPreparedUpload(
 			req.Logger, "PTP", state.torrentPath, trackerTorrentPath, state.announceURL, "PTP", torrentURL,
 		)
 		return api.UploadSummary{
-			Uploaded: 1,
+			AcceptedAt: acceptedAt,
+			Uploaded:   1,
 			UploadedTorrents: []api.UploadedTorrent{{
 				Tracker:     "PTP",
 				TorrentID:   torrentID,

@@ -1432,6 +1432,7 @@ func (e *workflowUploadExecution) Execute(
 						if e.registeredArtifacts == nil {
 							e.registeredArtifacts = make(map[api.TrackerID]api.TorrentResult)
 						}
+						torrent.UploadAcceptedAt = result.Summary.AcceptedAt
 						e.registeredArtifacts[trackerID] = torrent
 					}
 				}
@@ -1531,6 +1532,7 @@ func (e *workflowUploadExecution) Execute(
 			if e.registeredArtifacts == nil {
 				e.registeredArtifacts = make(map[api.TrackerID]api.TorrentResult)
 			}
+			torrent.UploadAcceptedAt = result.Summary.AcceptedAt
 			e.registeredArtifacts[trackerID] = torrent
 			injected := executeWorkflowClientInjection(ctx, e.clients, e.clientSubject, trackerID, torrent)
 			injected.RemoteID = strings.TrimSpace(uploaded.TorrentID)

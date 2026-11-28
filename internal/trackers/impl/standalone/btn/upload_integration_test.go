@@ -2813,6 +2813,7 @@ func TestBTNUploadFollowsIntermediateDetailPage(t *testing.T) {
 
 	var downloadCalls atomic.Int32
 	var detailCalls atomic.Int32
+	var detailStarted atomic.Pointer[time.Time]
 	var apiCalls atomic.Int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2850,7 +2851,9 @@ func TestBTNUploadFollowsIntermediateDetailPage(t *testing.T) {
 			downloadCalls.Add(1)
 			_, _ = w.Write(btnRegisteredTorrentFixture())
 		case r.URL.Path == "/torrents.php" && r.URL.Query().Get("id") == "123":
-			detailCalls.Add(1)
+			if detailCalls.Add(1) == 1 {
+				detailStarted.Store(new(time.Now()))
+			}
 			if r.URL.Query().Get("torrentid") == "" {
 				http.Redirect(w, r, "/torrents.php?id=123&torrentid=456", http.StatusFound)
 				return
@@ -2869,6 +2872,9 @@ func TestBTNUploadFollowsIntermediateDetailPage(t *testing.T) {
 	summary, err := uploadAt(context.Background(), req, server.URL)
 	if err != nil {
 		t.Fatalf("upload failed: %v", err)
+	}
+	if started := detailStarted.Load(); started == nil || summary.AcceptedAt.IsZero() || summary.AcceptedAt.After(*started) {
+		t.Fatalf("acceptance was not recorded before the detail page fetch: %v, %v", summary.AcceptedAt, started)
 	}
 	if got := summary.UploadedTorrents[0].TorrentID; got != "456" {
 		t.Fatalf("expected intermediate torrent id 456, got %q", got)

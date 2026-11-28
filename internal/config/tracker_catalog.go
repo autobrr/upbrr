@@ -165,6 +165,7 @@ func appendMissingGlobalTrackerFields(fields []TrackerFieldSchema) []TrackerFiel
 			YAMLKey: "torrent_client",
 			Default: "",
 		},
+		{JSONKey: "InjectDelay", YAMLKey: "inject_delay"},
 		{
 			JSONKey: "DupeBypassGroups",
 			YAMLKey: "dupe_bypass_groups",

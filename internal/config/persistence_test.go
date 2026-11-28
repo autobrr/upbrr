@@ -2232,3 +2232,53 @@ func TestDottedTrackerRetirementRepair(t *testing.T) {
 		})
 	}
 }
+
+func TestTrackerInjectionDelayPersistsAcrossConfigBoundaries(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	input := &Config{
+		MainSettings:       MainSettingsConfig{TMDBAPI: "test"},
+		ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+		PostUpload:         PostUploadConfig{InjectDelay: 2},
+		Trackers: TrackersConfig{Trackers: map[string]TrackerConfig{
+			"PTP":    {InjectDelay: new(0.5)},
+			"AITHER": {InjectDelay: new(float64)},
+			"HDB":    {},
+		}},
+	}
+	check := func(label string, cfg *Config, err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("%s: %v", label, err)
+		}
+		tracker := cfg.Trackers.Trackers
+		if ptp := tracker["PTP"].InjectDelay; ptp == nil || *ptp != 0.5 {
+			t.Fatalf("%s: PTP fractional override lost", label)
+		}
+		if aither := tracker["AITHER"].InjectDelay; aither == nil || *aither != 0 {
+			t.Fatalf("%s: AITHER explicit zero lost", label)
+		}
+		if tracker["HDB"].InjectDelay != nil || cfg.PostUpload.InjectDelay != 2 {
+			t.Fatalf("%s: inherited global delay changed", label)
+		}
+	}
+	yamlPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := ExportToPlaintextYAML(input, yamlPath); err != nil {
+		t.Fatal(err)
+	}
+	fromYAML, err := ImportFromYAML(yamlPath)
+	check("YAML", fromYAML, err)
+	raw, err := ExportToPlaintextJSON(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromJSON, err := ImportFromJSON(raw)
+	check("JSON", fromJSON, err)
+	configureConfigSecretEncryption(t, input)
+	repo := &jsonRoundTripRepo{}
+	if err := SaveToDatabase(ctx, input, repo); err != nil {
+		t.Fatal(err)
+	}
+	fromDB, err := LoadFromDatabase(ctx, repo)
+	check("database", fromDB, err)
+}

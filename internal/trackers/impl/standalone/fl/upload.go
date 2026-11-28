@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/logging"
@@ -95,6 +96,7 @@ func submitPreparedUpload(
 	})
 	match := successPattern.FindStringSubmatch(result.FinalURL)
 	if len(match) >= 2 {
+		acceptedAt := time.Now()
 		id := match[1]
 		artifactPath := ""
 		resolvedPath, pathErr := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, "FL")
@@ -108,7 +110,8 @@ func submitPreparedUpload(
 			trackers.LogRegisteredTorrentUnavailable(req.Logger, "FL")
 		}
 		return api.UploadSummary{
-			Uploaded: 1,
+			AcceptedAt: acceptedAt,
+			Uploaded:   1,
 			UploadedTorrents: []api.UploadedTorrent{{
 				Tracker:     "FL",
 				TorrentID:   id,

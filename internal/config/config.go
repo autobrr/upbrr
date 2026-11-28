@@ -337,7 +337,6 @@ type TrackerConfig struct {
 	AddWebSourceToDesc  bool   `yaml:"add_web_source_to_desc" json:"AddWebSourceToDesc"`
 	ScreenshotBlankLine *bool  `yaml:"screenshot_blank_line,omitempty" json:"ScreenshotBlankLine,omitempty"`
 	UseMetadataName     bool   `yaml:"use_metadata_name" json:"UseMetadataName"`
-	InjectDelay         *int   `yaml:"inject_delay" json:"InjectDelay"`
 	ImageCount          int    `yaml:"image_count" json:"ImageCount"`
 	Channel             string `yaml:"channel" json:"Channel"`
 	ImgAPI              string `yaml:"img_api" json:"ImgAPI"`
@@ -346,6 +345,10 @@ type TrackerConfig struct {
 	LoginQuestion       string `yaml:"login_question" json:"LoginQuestion"`
 	LoginAnswer         string `yaml:"login_answer" json:"LoginAnswer"`
 	UserID              string `yaml:"user_id" json:"UserID"`
+
+	// InjectDelay overrides the global client injection delay in seconds when set.
+	InjectDelay *float64 `yaml:"inject_delay" json:"InjectDelay"`
+
 	// Internal is a deprecated compatibility field. Group-list matches alone
 	// determine tracker-specific internal handling.
 	Internal              bool           `yaml:"internal" json:"Internal"`
@@ -429,6 +432,7 @@ func trackerAllowedYAMLKeys(trackerName string) map[string]struct{} {
 		keys["favicon_url"] = struct{}{}
 		keys["image_host"] = struct{}{}
 		keys["torrent_client"] = struct{}{}
+		keys["inject_delay"] = struct{}{}
 		keys["internal"] = struct{}{}
 		keys["dupe_bypass_groups"] = struct{}{}
 		keys["personal_release_groups"] = struct{}{}
