@@ -69,57 +69,41 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
 		failures = append(failures, failure)
 	}
-	if needsForeignDialogueReview(subject.LanguageFacts) {
-		hasForced, defaultPresent, unknownDefault := forcedDefaultSubtitleEvidence(subject.LanguageFacts)
-		if !defaultPresent {
-			disposition := api.RuleDispositionAdvisory
-			status := api.MetadataEvidenceStatusPartial
-			reason := "if foreign dialogue requires subtitles, include a forced/default subtitle track; dialogue coverage cannot be established from track metadata alone"
-			if hasForced {
-				disposition = api.RuleDispositionWaivable
-				status = api.MetadataEvidenceStatusComplete
-				reason = "the inspected forced subtitles must include a default track"
-				if unknownDefault {
-					status = api.MetadataEvidenceStatusPartial
-					reason = "the default flag of the inspected forced subtitles is unresolved"
-				}
-			}
-			failure := trackers.NewEvidenceRuleFailure("language_foreign_dialogue_subtitles", reason, disposition, status)
+	if facts.HasEnglishOriginalAudio() {
+		if reason, status := forcedEnglishSubtitleDefaultIssue(facts); reason != "" {
+			failure := trackers.NewEvidenceRuleFailure("language_foreign_dialogue_subtitles", reason, api.RuleDispositionWaivable, status)
 			failure.DebugBypass = true
-			if hasForced {
-				failure.EvidenceFingerprint = api.WorkflowFingerprint(trackers.LanguageQuestionKey(subject, "foreign_dialogue_subtitles"))
-			}
+			failure.EvidenceFingerprint = api.WorkflowFingerprint(trackers.LanguageQuestionKey(subject, "foreign_dialogue_subtitles"))
 			failures = append(failures, failure)
 		}
 	}
 	return failures
 }
 
-func needsForeignDialogueReview(facts api.LanguageFacts) bool {
-	return !facts.AudioAbsent && (facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete || len(facts.ProgrammeLanguages) == 0 ||
-		slices.ContainsFunc(facts.ProgrammeLanguages, func(value string) bool { return !languageutil.SameLanguage(value, "zxx") }))
-}
-
-// forcedDefaultSubtitleEvidence checks only forced tracks supported by current
-// subtitle-language facts. One known default satisfies the track requirement.
-func forcedDefaultSubtitleEvidence(facts api.LanguageFacts) (hasForced, defaultPresent, unknownDefault bool) {
+func forcedEnglishSubtitleDefaultIssue(facts api.LanguageFacts) (string, api.MetadataEvidenceStatus) {
+	if !languageutil.ContainsLanguage(facts.SubtitleLanguages, "English") {
+		return "", ""
+	}
+	unknownDefault := false
 	for _, track := range facts.Tracks {
 		if track.Kind != api.MediaTrackSubtitle {
 			continue
 		}
-		eligible := slices.ContainsFunc(track.Languages, func(value string) bool {
+		forcedEnglish := slices.ContainsFunc(track.Languages, func(value string) bool {
 			language, coverage := languageutil.SubtitleLanguageParts(value)
-			return languageutil.IsIdentifiedLanguage(language) &&
-				(track.Forced || strings.EqualFold(coverage, "Forced")) && languageutil.ContainsLanguage(facts.SubtitleLanguages, language)
+			return languageutil.SameLanguage(language, "English") && (track.Forced || strings.EqualFold(coverage, "Forced"))
 		})
-		if !eligible {
+		if !forcedEnglish {
 			continue
 		}
-		hasForced = true
-		if track.DefaultKnown && track.Default {
-			return true, true, false
+		if !track.DefaultKnown {
+			unknownDefault = true
+		} else if !track.Default {
+			return "each forced English subtitle track must be set as default", api.MetadataEvidenceStatusComplete
 		}
-		unknownDefault = unknownDefault || !track.DefaultKnown
 	}
-	return hasForced, false, unknownDefault
+	if unknownDefault {
+		return "the default flag of a forced English subtitle track is unresolved", api.MetadataEvidenceStatusPartial
+	}
+	return "", ""
 }

@@ -64,40 +64,70 @@ func TestHDBSourceMixPairsAreNotInferredFromChannels(t *testing.T) {
 }
 
 func TestHDBForcedSubtitleDefaultUsesInspectedTracks(t *testing.T) {
+	fullEnglish := api.MediaTrackFacts{
+		ID:           "full-english",
+		Kind:         api.MediaTrackSubtitle,
+		Languages:    []string{"English"},
+		Default:      true,
+		DefaultKnown: true,
+	}
+	forcedEnglish := api.MediaTrackFacts{
+		ID:           "forced-english",
+		Kind:         api.MediaTrackSubtitle,
+		Languages:    []string{"English"},
+		Forced:       true,
+		DefaultKnown: true,
+	}
+	defaultForcedEnglish := forcedEnglish
+	defaultForcedEnglish.ID = "default-forced-english"
+	defaultForcedEnglish.Default = true
+	unknownDefault := defaultForcedEnglish
+	unknownDefault.ID = "unknown-default-forced-english"
+	unknownDefault.DefaultKnown = false
+	forcedFrench := forcedEnglish
+	forcedFrench.ID = "forced-french"
+	forcedFrench.Languages = []string{"French"}
+
 	for _, test := range []struct {
-		name                             string
-		forced, defaultSub, defaultKnown bool
-		disposition                      api.RuleDisposition
-		status                           api.MetadataEvidenceStatus
+		name          string
+		audioLanguage string
+		subtitles     []api.MediaTrackFacts
+		want          api.MetadataEvidenceStatus
 	}{
-		{"full subtitles do not prove forced need", false, true, true, api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial},
-		{"forced track not default", true, false, true, api.RuleDispositionWaivable, api.MetadataEvidenceStatusComplete},
-		{"forced track unknown default", true, false, false, api.RuleDispositionWaivable, api.MetadataEvidenceStatusPartial},
-		{"forced track default", true, true, true, "", ""},
+		{"foreign-language movie with full English subtitles", "Japanese", []api.MediaTrackFacts{fullEnglish}, ""},
+		{"foreign-language movie with a non-default forced English track", "Japanese", []api.MediaTrackFacts{fullEnglish, forcedEnglish}, ""},
+		{"English movie with full English subtitles only", "English", []api.MediaTrackFacts{fullEnglish}, ""},
+		{"English movie with a non-default forced French track", "English", []api.MediaTrackFacts{fullEnglish, forcedFrench}, ""},
+		{"English movie with a non-default forced English track", "English", []api.MediaTrackFacts{fullEnglish, forcedEnglish}, api.MetadataEvidenceStatusComplete},
+		{"another forced English track is default", "English", []api.MediaTrackFacts{defaultForcedEnglish, forcedEnglish}, api.MetadataEvidenceStatusComplete},
+		{"forced English track with unknown default", "English", []api.MediaTrackFacts{unknownDefault}, api.MetadataEvidenceStatusPartial},
+		{"forced English track is default", "English", []api.MediaTrackFacts{defaultForcedEnglish}, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			subject := hdbLanguageSubject()
 			subject.Type = "WEBDL"
-			subject.LanguageFacts.SubtitleLanguages = []string{"English"}
-			subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{
-				Kind:         api.MediaTrackSubtitle,
-				Languages:    []string{"English"},
-				Forced:       test.forced,
-				Default:      test.defaultSub,
-				DefaultKnown: test.defaultKnown,
+			tracks := subject.LanguageFacts.Tracks
+			tracks[0].Languages = []string{test.audioLanguage}
+			var subtitleLanguages []string
+			for _, subtitle := range test.subtitles {
+				subtitleLanguages = append(subtitleLanguages, subtitle.Languages...)
+			}
+			subject.LanguageFacts = mediafacts.ResolveLanguages(api.MediaFacts{
+				OriginalLanguage:      test.audioLanguage,
+				TrackCoverageComplete: true,
+				PrimaryAudioTrackID:   "main",
+				SubtitleLanguages:     subtitleLanguages,
+				Tracks:                append(tracks, test.subtitles...),
 			})
 			hdbLanguageAnswer(&subject, "foreign_dialogue_subtitles", "not_required")
 			failures := languageAssessment(subject)
-			if test.disposition == "" {
+			if test.want == "" {
 				if len(failures) != 0 {
-					t.Fatalf("known forced/default track rejected: %+v", failures)
+					t.Fatalf("unexpected language findings: %+v", failures)
 				}
 				return
 			}
-			requireHDBValidationFailure(t, failures, "language_foreign_dialogue_subtitles", test.disposition, test.status)
-			if test.disposition != api.RuleDispositionWaivable {
-				return
-			}
+			requireHDBValidationFailure(t, failures, "language_foreign_dialogue_subtitles", api.RuleDispositionWaivable, test.want)
 			if blocking, err := trackers.FirstBlockingRuleFailure("HDB", failures, api.WorkflowExecutionModeNormal, nil); err != nil || blocking == nil {
 				t.Fatalf("subtitle warning did not require approval: blocking=%+v err=%v", blocking, err)
 			}
@@ -228,7 +258,6 @@ func TestHDBSubtitleEvidenceAndClearPreservation(t *testing.T) {
 			{
 				Kind:         api.MediaTrackSubtitle,
 				Languages:    []string{"English (Forced)"},
-				Default:      true,
 				DefaultKnown: true,
 			},
 		},
@@ -237,32 +266,20 @@ func TestHDBSubtitleEvidenceAndClearPreservation(t *testing.T) {
 	subject.Type = "WEBDL"
 	subject.LanguageFacts = mediafacts.ResolveLanguages(media)
 	hdbLanguageAnswer(&subject, "foreign_dialogue_subtitles", "included")
-	if failures := languageAssessment(subject); len(failures) != 0 {
-		t.Fatalf("explicit forced correction lost: %#v", failures)
-	}
+	requireHDBValidationFailure(t, languageAssessment(subject), "language_foreign_dialogue_subtitles", api.RuleDispositionWaivable, api.MetadataEvidenceStatusComplete)
 	media.SubtitleLanguages, media.SubtitleLanguagesProvenance = nil, api.FactProvenanceManualEmpty
 	subject.LanguageFacts = mediafacts.ResolveLanguages(media)
-	if found, _, _ := forcedDefaultSubtitleEvidence(subject.LanguageFacts); found {
-		t.Fatal("manual subtitle clear resurrected stale track language")
-	}
-	requireHDBValidationFailure(t, languageAssessment(subject), "language_foreign_dialogue_subtitles", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
-	subject.LanguageFacts.SubtitleStatus = api.MetadataEvidenceStatusPartial
-	requireHDBValidationFailure(t, languageAssessment(subject), "language_foreign_dialogue_subtitles", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
-	subject.LanguageFacts.AudioAbsent = true
-	if needsForeignDialogueReview(subject.LanguageFacts) {
-		t.Fatal("absent audio acquired foreign-dialogue guidance")
+	if failures := languageAssessment(subject); len(failures) != 0 {
+		t.Fatalf("manual subtitle clear resurrected stale track language: %#v", failures)
 	}
 }
 
-func TestHDBSourceAndHypotheticalSubtitleWarningsNeedNoAnswers(t *testing.T) {
+func TestHDBSourceAudioGuidanceNeedsNoAnswers(t *testing.T) {
 	for _, answer := range []string{"", "best_original_retained", "source_mix_pair_retained", "incomplete"} {
 		subject := hdbLanguageSubject()
 		hdbLanguageAnswer(&subject, "source_audio", answer)
-		hdbLanguageAnswer(&subject, "foreign_dialogue_subtitles", "missing")
 		failures := languageAssessment(subject)
-		for _, rule := range []string{"language_source_audio", "language_foreign_dialogue_subtitles"} {
-			requireHDBValidationFailure(t, failures, rule, api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
-		}
+		requireHDBValidationFailure(t, failures, "language_source_audio", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 		if slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
 			return trackers.RuleFailureBlocksExecution(f, api.WorkflowExecutionModeNormal, false)
 		}) {
