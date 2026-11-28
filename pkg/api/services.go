@@ -2879,6 +2879,8 @@ type TagOverride struct {
 
 // UploadSummary records completed tracker submissions and any returned registered-torrent authority.
 type UploadSummary struct {
+	// AcceptedAt is when the adapter confirmed success, before post-acceptance work.
+	AcceptedAt       time.Time `json:"-"`
 	Uploaded         int
 	UploadedTorrents []UploadedTorrent
 	// PendingPublication reports a successful submission awaiting tracker publication.

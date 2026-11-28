@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/logging"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
@@ -245,6 +246,7 @@ func submitPreparedUpload(
 	if torrentID == "" {
 		return api.UploadSummary{}, fmt.Errorf("trackers: %s upload failed: missing torrent id", site.Name)
 	}
+	acceptedAt := time.Now()
 	downloadURL := strings.Replace(torrentURL, "/torrent/", "/download/torrent/", 1)
 	persistedPath := ""
 	if err := downloadTrackerTorrent(ctx, client, downloadURL, trackerTorrentPath); err != nil {
@@ -253,7 +255,8 @@ func submitPreparedUpload(
 		persistedPath = trackerTorrentPath
 	}
 	return api.UploadSummary{
-		Uploaded: 1,
+		AcceptedAt: acceptedAt,
+		Uploaded:   1,
 		UploadedTorrents: []api.UploadedTorrent{{
 			Tracker:     site.Name,
 			TorrentID:   torrentID,

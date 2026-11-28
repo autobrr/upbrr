@@ -202,6 +202,7 @@ func submitPreparedUpload(ctx context.Context, req trackers.PreparationInput, st
 		return api.UploadSummary{}, errors.Join(commonhttp.UploadHTTPErrorWithURL("HDB", resp.StatusCode, finalURL, responsePreview), readErr)
 	}
 
+	acceptedAt := time.Now()
 	torrentID := strings.TrimSpace(matches[1])
 	downloadURL := buildHDBDownloadURL(state.uploadURL, req.Meta, torrentID, state.passkey)
 	trackerTorrentPath := ""
@@ -226,7 +227,8 @@ func submitPreparedUpload(ctx context.Context, req trackers.PreparationInput, st
 	}
 
 	return api.UploadSummary{
-		Uploaded: 1,
+		AcceptedAt: acceptedAt,
+		Uploaded:   1,
 		UploadedTorrents: []api.UploadedTorrent{{
 			Tracker:     "HDB",
 			TorrentID:   torrentID,

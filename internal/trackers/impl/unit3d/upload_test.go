@@ -876,6 +876,7 @@ func TestSubmitUnit3DUploadDownloadsRegisteredTorrentWithAPIAuth(t *testing.T) {
 			registeredTorrent := unit3DRegisteredTorrentFixture(t)
 			var uploadAuthSeen atomic.Bool
 			var downloadAuthSeen atomic.Bool
+			var downloadStarted atomic.Pointer[time.Time]
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 				switch {
 				case request.Method == http.MethodPost && request.URL.Path == "/api/torrents/upload":
@@ -884,6 +885,7 @@ func TestSubmitUnit3DUploadDownloadsRegisteredTorrentWithAPIAuth(t *testing.T) {
 					w.Header().Set("Content-Type", "application/json")
 					_, _ = w.Write([]byte(`{"success":true,"data":"/torrent/download/374352.382"}`))
 				case request.Method == http.MethodGet && request.URL.Path == "/torrent/download/374352.382":
+					downloadStarted.Store(new(time.Now()))
 					downloadAuthSeen.Store(request.Header.Get("Authorization") == "Bearer synthetic-api-key")
 					if downloadHeader != "" {
 						w.Header().Set("X-Api-Key-Expires-At", downloadHeader)
@@ -936,6 +938,9 @@ func TestSubmitUnit3DUploadDownloadsRegisteredTorrentWithAPIAuth(t *testing.T) {
 			}
 			if observed != 1 || len(logger.messages) != 1 || guidance.Guidance("synthetic-api-key", time.Now()) != "2026-11-20T12:00:00Z" {
 				t.Fatal("registered-torrent GET changed the upload POST observation or guidance")
+			}
+			if started := downloadStarted.Load(); started == nil || summary.AcceptedAt.IsZero() || summary.AcceptedAt.After(*started) {
+				t.Fatalf("acceptance was not recorded before registered torrent download: %v, %v", summary.AcceptedAt, started)
 			}
 			if summary.Uploaded != 1 || len(summary.UploadedTorrents) != 1 ||
 				strings.TrimSpace(summary.UploadedTorrents[0].TorrentPath) == "" {

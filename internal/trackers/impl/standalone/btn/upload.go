@@ -278,6 +278,7 @@ func submitPreparedUpload(
 			return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("BTN", resp.StatusCode, finalURL, errorBody)
 		}
 	}
+	acceptedAt := time.Now()
 	torrentURL := buildBTNTorrentURL(uploadCtx.baseURL, groupID, torrentID)
 
 	if torrentID == "" {
@@ -320,7 +321,8 @@ func submitPreparedUpload(
 		persistedPath = trackerTorrentPath
 	}
 	return api.UploadSummary{
-		Uploaded: 1,
+		AcceptedAt: acceptedAt,
+		Uploaded:   1,
 		UploadedTorrents: []api.UploadedTorrent{{
 			Tracker:     "BTN",
 			TorrentID:   torrentID,

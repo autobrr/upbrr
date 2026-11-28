@@ -14,6 +14,8 @@ Use **Settings → Post Upload** for timing and concurrency around tracker submi
 
 Set a tracker-specific **Client injection delay (seconds)** under [Trackers](./trackers.md) when only one tracker needs extra time before client injection.
 
+The delay is a minimum wait. When the upload confirmation time is known, time spent retrieving the registered torrent counts toward the wait, and retrying client injection waits only for any time remaining.
+
 :::note Compatibility fields
 
 **Show upload duration**, **Print tracker messages**, **Print tracker links**, **Search requests**, **Cross seeding**, and **Cross seed check everything** remain in the schema but have no current runtime reader.

@@ -97,8 +97,9 @@ func TestPrivateArtifactVaultRestartsRegisteredArtifactAuthority(t *testing.T) {
 		ClientSubject: api.ClientSubject{SourcePath: `C:\releases\Example.Release.2026.mkv`},
 		Torrents: map[api.TrackerID]api.TorrentResult{
 			"ALPHA": {
-				Tracker: "ALPHA",
-				Path:    `C:\state\tmp\Example.Release.2026\[alpha].Example.Release.2026.torrent`,
+				Tracker:          "ALPHA",
+				Path:             `C:\state\tmp\Example.Release.2026\[alpha].Example.Release.2026.torrent`,
+				UploadAcceptedAt: now.Add(-time.Minute),
 			},
 		},
 	}
@@ -118,7 +119,8 @@ func TestPrivateArtifactVaultRestartsRegisteredArtifactAuthority(t *testing.T) {
 	}
 	decoded, ok := value.(RegisteredArtifactAuthority)
 	if !ok || decoded.ClientSubject.SourcePath != authority.ClientSubject.SourcePath ||
-		decoded.Torrents["ALPHA"].Path != authority.Torrents["ALPHA"].Path {
+		decoded.Torrents["ALPHA"].Path != authority.Torrents["ALPHA"].Path ||
+		!decoded.Torrents["ALPHA"].UploadAcceptedAt.Equal(authority.Torrents["ALPHA"].UploadAcceptedAt) {
 		t.Fatalf("decoded registered artifact authority = %#v", value)
 	}
 }
