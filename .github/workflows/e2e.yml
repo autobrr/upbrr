@@ -2,7 +2,14 @@ name: e2e
 
 on:
   pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
+    inputs:
+      seed:
+        description: Also warm the shared E2E caches when running on main
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -12,40 +19,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  changes:
-    name: Select E2E checks
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      e2e: ${{ steps.scope.outputs.e2e }}
+  seed-e2e-caches:
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.seed)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - name: Checkout complete PR history
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
           persist-credentials: false
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - uses: ./.github/actions/prepare-e2e
         with:
-          node-version: 24
-
-      - name: Test E2E change selection
-        run: node --test scripts/ci/e2e-scope.test.mjs
-
-      - name: Select relevant PR changes or manual full run
-        id: scope
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          scope=$(node scripts/ci/e2e-scope.mjs "$BASE_SHA" "$HEAD_SHA")
-          echo "e2e=$scope" >> "$GITHUB_OUTPUT"
+          seed: "true"
 
   e2e:
     name: Playwright E2E (${{ matrix.shard }}/4)
-    needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.e2e == 'true') }}
+    if: github.event_name != 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -54,65 +42,32 @@ jobs:
         shard: [1, 2, 3, 4]
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Go
-        uses: actions/setup-go@v6
+      - uses: actions/checkout@v6
         with:
-          go-version-file: go.mod
-          cache: true
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-        with:
-          package_json_file: webui/package.json
+      - name: Test E2E change selection
+        id: scope-tests
+        if: matrix.shard == 1
+        continue-on-error: true
+        run: node --test scripts/ci/e2e-scope.test.mjs
 
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: pnpm
-          cache-dependency-path: webui/pnpm-lock.yaml
-
-      - name: Cache FFmpeg 9.0.2
-        id: ffmpeg-cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/ffmpeg-9.0.2
-          key: ffmpeg-linux-x64-n9.0.2-39-g7adfbe40dc
-
-      - name: Install pinned FFmpeg 9.0.2
-        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+      - name: Select E2E inputs
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          # shortcut: month-end archives last two years; refresh this pin before November 2028.
-          # Versioned upstream build and checksum keep all shards reproducible.
-          curl --fail --location --retry 3 \
-            'https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/download/autobuild-2026-10-31-12-59/ffmpeg-n9.0.2-39-g7adfbe40dc-linux64-gpl-9.0.tar.xz' \
-            --output "$RUNNER_TEMP/ffmpeg.tar.xz"
-          echo "73e29a56974ae5a651133a04584c7483b21afe941e17dc91d79814a758b608d3  $RUNNER_TEMP/ffmpeg.tar.xz" | sha256sum --check
-          mkdir -p "$RUNNER_TEMP/ffmpeg-9.0.2"
-          tar -xJf "$RUNNER_TEMP/ffmpeg.tar.xz" --strip-components=1 -C "$RUNNER_TEMP/ffmpeg-9.0.2"
+          if [[ "$(node scripts/ci/e2e-scope.mjs "$BASE_SHA" "$HEAD_SHA")" == false ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Select FFmpeg 9.0.2
-        run: echo "$RUNNER_TEMP/ffmpeg-9.0.2/bin" >> "$GITHUB_PATH"
-
-      - name: Verify E2E prerequisites and runner capacity
-        run: |
-          ffmpeg_version="$(ffmpeg -version)"
-          printf '%s\n' "$ffmpeg_version"
-          [[ "$ffmpeg_version" == 'ffmpeg version n9.0.2-'* ]]
-          printf 'Runner capacity: %s logical CPUs\n' "$(nproc)"
-          free --human
-
-      - name: Build embedded E2E application
-        run: make e2e-build
-
-      - name: Install Playwright browser
-        working-directory: webui
-        run: pnpm exec playwright install --with-deps --only-shell chromium
+      - uses: ./.github/actions/prepare-e2e
+        if: steps.scope.outputs.skip != 'true'
 
       - name: Prepare Linux test network isolation
+        if: steps.scope.outputs.skip != 'true'
         run: |
           if ! command -v nft >/dev/null; then
             sudo apt-get update
@@ -120,16 +75,24 @@ jobs:
           fi
 
       - name: Verify test network isolation
-        if: matrix.shard == 1
+        if: matrix.shard == 1 && steps.scope.outputs.skip != 'true'
         run: bash scripts/ci/test-loopback.test.sh
 
       - name: Run E2E
+        if: steps.scope.outputs.skip != 'true'
         env:
+          SHARD: ${{ matrix.shard }}
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/results.json
-        run: bash scripts/ci/test-loopback.sh pnpm --dir webui exec playwright test --shard=${{ matrix.shard }}/4 --reporter=list,html,json
+        run: |
+          if [[ "$SHARD" == 1 ]]; then
+            selection=(--grep-invert '^web-full-upload ')
+          else
+            selection=(--project=web-full-upload "--shard=$((SHARD - 1))/3")
+          fi
+          bash scripts/ci/test-loopback.sh pnpm --dir webui exec playwright test "${selection[@]}" --reporter=list,html,json
 
       - name: Upload Playwright timings
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.scope.outputs.skip != 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: playwright-timings-${{ matrix.shard }}
@@ -137,7 +100,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload Playwright report
-        if: failure()
+        if: failure() && steps.scope.outputs.skip != 'true'
         uses: actions/upload-artifact@v7
         with:
           name: playwright-report-${{ matrix.shard }}
@@ -145,9 +108,13 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload Playwright traces
-        if: failure()
+        if: failure() && steps.scope.outputs.skip != 'true'
         uses: actions/upload-artifact@v7
         with:
           name: playwright-test-results-${{ matrix.shard }}
           path: webui/test-results
           if-no-files-found: ignore
+
+      - name: Report selector test failure
+        if: ${{ !cancelled() && steps.scope-tests.outcome == 'failure' }}
+        run: exit 1

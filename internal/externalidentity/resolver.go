@@ -24,7 +24,7 @@ import (
 
 // ContractVersion changes whenever identity resolution semantics become
 // incompatible with a previously resolved identity.
-const ContractVersion = "external-identity-v21-source-and-sibling-evidence"
+const ContractVersion = "external-identity-v22-weak-imdb-provider-agreement"
 
 // CompatibleStoredIdentity preserves manual pins and clears while discarding
 // automatic IDs and dependencies produced before the current identity contract.

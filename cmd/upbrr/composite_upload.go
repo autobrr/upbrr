@@ -1232,10 +1232,6 @@ func mapCLICompositeUploadRequest(
 		}
 		descriptions = append(descriptions, api.ReleaseWorkflowUploadDescriptionOverride{GroupKey: group, URL: &sourceURL})
 	}
-	checkCount := 1
-	if request.DoubleDupeCheck {
-		checkCount = 2
-	}
 	remoteCheck := !request.SkipDupeCheck
 	onEvidence := api.ReleaseWorkflowDuplicateDisposition("")
 	if request.SkipDupeAsActual {
@@ -1271,7 +1267,6 @@ func mapCLICompositeUploadRequest(
 		},
 		Duplicates: api.ReleaseWorkflowUploadDuplicates{
 			RemoteCheck: &remoteCheck,
-			CheckCount:  &checkCount,
 			OnEvidence:  onEvidence,
 			AllowUpload: normalizeCLIWorkflowTrackerIDs(request.IgnoreDupesFor),
 		},

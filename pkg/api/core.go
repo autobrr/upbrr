@@ -14,7 +14,6 @@ type Request struct {
 	IgnoreDupesFor              []string
 	SkipDupeCheck               bool
 	SkipDupeAsActual            bool
-	DoubleDupeCheck             bool
 	SourceLookupURL             string
 	Bluray                      *BluraySelection
 	DescriptionOverrideRaw      string

@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('all', 'core', 'core-comparisons', 'core-hdr', 'workflow', 'media', 'metadata', 'other')]
+    [ValidateSet('all', 'core', 'core-comparisons', 'core-hdr', 'workflow', 'media-metadata', 'media', 'metadata', 'other')]
     [string]$Shard = 'all'
 )
 
@@ -16,7 +16,7 @@ $selected = @($packages | Where-Object {
         '/internal/(metadata|externalidentity|configstore|config|services/db)(/|$)' { 'metadata'; break }
         default { 'other' }
     }
-    $Shard -eq 'all' -or $owner -eq $packageShard
+    $Shard -eq 'all' -or $owner -eq $packageShard -or ($Shard -eq 'media-metadata' -and $owner -in @('media', 'metadata'))
 })
 if ($selected.Count -eq 0) { throw "Go test shard '$Shard' has no packages" }
 $selected

@@ -62,6 +62,10 @@ var unit3DImageBlockedIPRanges = []netip.Prefix{
 	netip.MustParsePrefix("fe80::/10"),
 }
 
+var unit3DImageLookupIPAddrs = func(ctx context.Context, host string) ([]net.IPAddr, error) {
+	return net.DefaultResolver.LookupIPAddr(ctx, host)
+}
+
 var unit3DCategoryNamesByID = map[string][]string{
 	"1": {"MOVIE"},
 	"2": {"TV"},
@@ -1414,7 +1418,11 @@ func resolveUnit3DImagePublicAddrs(ctx context.Context, host string) ([]netip.Ad
 		return []netip.Addr{addr}, nil
 	}
 
-	resolved, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("resolve host %q: %w", host, err)
+	}
+
+	resolved, err := unit3DImageLookupIPAddrs(ctx, host)
 	if err != nil {
 		return nil, fmt.Errorf("resolve host %q: %w", host, err)
 	}

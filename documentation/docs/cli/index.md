@@ -445,7 +445,7 @@ Enter `back` to decline matches without changing your choices, or `cancel` to st
 
 Under **Release details → Warnings**, upbrr compares the measured movie runtime with IMDb's listed editions. It uses the effective edition, including filename evidence, and treats no edition label as theatrical without adding it to the name. For fixed-rate sources, upbrr can compare a speed-adjusted runtime as well as the measured runtime and labels any timing assumption. It compares 25 fps PAL DVDs at 23.976 fps and leaves NTSC telecine playback duration unchanged. If the runtime does not confirm the edition, the CLI shows the closest listed options and both IMDb links. The warning is advisory and adds no prompt.
 
-A weak IMDb search match remains a suggestion, even when it is the only result. Verified independent links can confirm it or identify a different title; disagreeing links leave the IMDb ID unresolved.
+A weak IMDb search match remains a suggestion, even when it is the only result. Verified independent links can confirm it or identify a different title. For a series confidently matched by title on TMDB, a TVDB series found using that TMDB ID can help identify a different IMDb title. Both series records must provide their own IMDb links and agree, and IMDb must verify the linked series. Missing or disagreeing links do not establish a replacement.
 
 When the identity remains unresolved, candidates for providers you have not cleared require an explicit choice before continuation. Prepared generations retain this match evidence across reruns and restarts. Strict `--unattended` never searches interactively or prompts; supply an exact ID or use `--unattended_confirm` / `--uac` to permit selection. Valid automatic resolution continues unchanged. `--input-only` remains an inspection command without this interactive review.
 
@@ -469,19 +469,18 @@ Trackers that require the cleared provider can remain blocked. Continue with tra
 
 ## Tracker overrides
 
-| Option                | Aliases                      | Purpose                                                                 |
-| --------------------- | ---------------------------- | ----------------------------------------------------------------------- |
-| `--skip-dupe-check`   | `-skip-dupe-check`, `-sdc`   | Skip remote tracker duplicate searches.                                 |
-| `--skip-dupe-asking`  | `-skip-dupe-asking`, `-sda`  | Skip trackers with duplicate evidence without asking.                   |
-| `--double-dupe-check` | `-double-dupe-check`, `-ddc` | Request two duplicate checks instead of one.                            |
-| `--commentary`        | `-commentary`, `-mc`         | Mark release as containing commentary.                                  |
-| `--personalrelease`   | `-personalrelease`, `-pr`    | Explicitly set personal-release handling.                               |
-| `--stream`            | `-stream`, `-st`             | Mark release as stream optimized.                                       |
-| `--webdv`             | `-webdv`                     | Mark release as WEB-DV.                                                 |
-| `--anime`             | `-anime`                     | Explicitly set anime handling; `false` clears the anime classification. |
-| `--anon`              | `-anon`, `-a`                | Request anonymous attribution where the tracker adapter supports it.    |
-| `--draft`             | `-draft`, `-dr`              | Send to drafts where supported.                                         |
-| `--modq`              | `-modq`, `-mq`               | Opt into mod queue where supported.                                     |
+| Option               | Aliases                     | Purpose                                                                 |
+| -------------------- | --------------------------- | ----------------------------------------------------------------------- |
+| `--skip-dupe-check`  | `-skip-dupe-check`, `-sdc`  | Skip remote tracker duplicate searches.                                 |
+| `--skip-dupe-asking` | `-skip-dupe-asking`, `-sda` | Skip trackers with duplicate evidence without asking.                   |
+| `--commentary`       | `-commentary`, `-mc`        | Mark release as containing commentary.                                  |
+| `--personalrelease`  | `-personalrelease`, `-pr`   | Explicitly set personal-release handling.                               |
+| `--stream`           | `-stream`, `-st`            | Mark release as stream optimized.                                       |
+| `--webdv`            | `-webdv`                    | Mark release as WEB-DV.                                                 |
+| `--anime`            | `-anime`                    | Explicitly set anime handling; `false` clears the anime classification. |
+| `--anon`             | `-anon`, `-a`               | Request anonymous attribution where the tracker adapter supports it.    |
+| `--draft`            | `-draft`, `-dr`             | Send to drafts where supported.                                         |
+| `--modq`             | `-modq`, `-mq`              | Opt into mod queue where supported.                                     |
 
 `--personalrelease=true` and `--personalrelease=false` are both explicit choices and override tracker group defaults. Omitting the option preserves any saved correction. Use `--reset-input metadata.personal_release` to return **Personal Release** to **Auto**, where each tracker's configured personal-release groups can supply the default.
 

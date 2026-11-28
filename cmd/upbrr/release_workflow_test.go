@@ -1493,9 +1493,8 @@ func TestCLIWorkflowCompletionUsesOneCompositeDebugRequest(t *testing.T) {
 			noSeed:      true,
 		},
 		uploadRequest: api.Request{
-			SourcePath:      "Example.Release.2026.1080p-GRP",
-			Trackers:        []string{"ALPHA"},
-			DoubleDupeCheck: true,
+			SourcePath: "Example.Release.2026.1080p-GRP",
+			Trackers:   []string{"ALPHA"},
 			Options: api.UploadOptions{
 				Screens:         2,
 				NoSeed:          true,
@@ -1517,7 +1516,7 @@ func TestCLIWorkflowCompletionUsesOneCompositeDebugRequest(t *testing.T) {
 	}
 	request := coreSvc.uploadRequests[0]
 	if request.Execution.Mode != api.ReleaseWorkflowUploadModeDebug ||
-		request.Duplicates.CheckCount == nil || *request.Duplicates.CheckCount != 2 ||
+		request.Duplicates.CheckCount != nil ||
 		request.Client.NoSeed == nil || !*request.Client.NoSeed ||
 		!slices.Equal(request.Trackers.Include, []api.TrackerID{"ALPHA"}) {
 		t.Fatalf("composite request = %#v", request)

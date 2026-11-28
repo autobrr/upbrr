@@ -270,6 +270,10 @@ func validateIconURL(ctx context.Context, parsed *url.URL) error {
 		return fmt.Errorf("trackericon: blocked URL host %q", host)
 	}
 
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("trackericon: resolve URL host: %w", err)
+	}
+
 	addrs, err := iconLookupIPAddr(ctx, host)
 	if err != nil {
 		return fmt.Errorf("trackericon: resolve URL host: %w", err)

@@ -1573,6 +1573,9 @@ func resolveDescriptionSlotImagePublicAddrs(ctx context.Context, host string) ([
 		}
 		return []netip.Addr{addr}, nil
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("resolve host %q: %w", host, err)
+	}
 	resolved, err := descriptionSlotImageLookupIPAddrs(ctx, host)
 	if err != nil {
 		return nil, fmt.Errorf("resolve host %q: %w", host, err)
