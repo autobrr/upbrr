@@ -189,7 +189,10 @@ func duplicateTrumpQuestionnaireFields(input trackers.PreparationInput) []api.Tr
 		if _, answered := answers[fields[0].Key]; answered {
 			return nil
 		}
+	default:
+		fields[0].Help = "Guru+ only: confirm you intend to replace an existing release. ANT decides eligibility."
 	}
 	fields[0].NeedsReview = true
+	fields[0].DuplicateOverrideInput = true
 	return fields
 }

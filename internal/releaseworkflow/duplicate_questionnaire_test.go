@@ -198,6 +198,80 @@ func TestCompositeDuplicateComparisonReprojectsBoundCandidatesAndRechecks(t *tes
 	}
 }
 
+func TestCompositeAllowedDuplicateStillOffersStagedReason(t *testing.T) {
+	module, _, uploads := newCompositeUploadTestModule(t)
+	baseProjector := module.trackerProjector
+	module.trackerProjector = trackerProjectionBuilderFunc(func(ctx context.Context, release api.ReleaseSnapshot, subject api.UploadSubject, ids []api.TrackerID, instructions map[api.TrackerID]api.TrackerProjectionInstructions, authorizations map[api.TrackerID]api.WorkflowFingerprint, mode api.WorkflowExecutionMode) (api.TrackerCatalogSnapshot, api.TrackerRuntimeSnapshot, api.TrackerSelection, api.TrackerReleaseProjectionSet, error) {
+		catalog, runtime, selection, projections, err := baseProjector.Build(ctx, release, subject, ids, instructions, authorizations, mode)
+		if err != nil {
+			return catalog, runtime, selection, projections, fmt.Errorf("build staged duplicate projection: %w", err)
+		}
+		answers := make(map[string]string)
+		for key, value := range instructions["ALPHA"].Questionnaire {
+			if value != nil {
+				answers[key] = *value
+			}
+		}
+		projections.Projections[0].QuestionnaireAnswers = answers
+		return catalog, runtime, selection, projections, nil
+	})
+	baseDupe := compositeUploadDuplicateBlockedBuilder(module.dupeBuilder, "ALPHA", "similar_release")
+	module.dupeBuilder = dupeAssessmentBuilderFunc(func(ctx context.Context, subject api.DuplicateSubject, projections api.TrackerReleaseProjectionSet, preflight api.TrackerPreflightAssessment, now time.Time, skip bool) (api.DupeAssessment, any, error) {
+		assessment, evidence, err := baseDupe.Build(ctx, subject, projections, preflight, now, skip)
+		if err != nil {
+			return assessment, evidence, fmt.Errorf("build staged duplicate review: %w", err)
+		}
+		result := &assessment.Results[0]
+		result.Decision, result.Status = api.DupeDecisionPending, api.StageStatusBlocked
+		result.RequiredActions = []api.RequiredAction{{Kind: api.RequiredActionReviewDuplicates, TrackerID: "ALPHA"}}
+		answers := projections.Projections[0].QuestionnaireAnswers
+		if answers["replace"] != "yes" {
+			result.RequiresStaffToken = true
+			result.Questionnaire = []api.TrackerQuestionnaireRequirement{{
+				Key:                    "replace",
+				Kind:                   "select",
+				Options:                []string{"no", "yes"},
+				NeedsReview:            true,
+				DuplicateOverrideInput: true,
+			}}
+		} else if _, answered := answers["reason"]; !answered {
+			result.Questionnaire = []api.TrackerQuestionnaireRequirement{{
+				Key:                    "reason",
+				Kind:                   "text",
+				NeedsReview:            true,
+				DuplicateOverrideInput: true,
+			}}
+		}
+		return assessment, evidence, nil
+	})
+	request := compositeUploadTestRequest(true, api.ReleaseWorkflowUploadModeUpload, "staged-duplicate-reason")
+	request.Trackers.Include = []api.TrackerID{"ALPHA"}
+	request.Duplicates.OnEvidence = api.ReleaseWorkflowDuplicateAsk
+	request.Duplicates.AllowUpload = []api.TrackerID{"ALPHA"}
+	started, err := module.StartUpload(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := waitCompositeUploadTestOperation(t, module, started)
+	answers := make(map[string]*string)
+	for _, answer := range []struct{ key, value string }{{"replace", "yes"}, {"reason", "verified improvement"}} {
+		action := pendingCompositeFeedbackAction(t, current, api.RequiredActionReviewDuplicates, "ALPHA")
+		if fields := current.Dupes.Results[0].Questionnaire; len(fields) != 1 || fields[0].Key != answer.key {
+			t.Fatalf("expected question %s: %+v", answer.key, fields)
+		}
+		answers[answer.key] = new(answer.value)
+		current = submitCompositeFeedbackForTest(t, module, current, action, api.ReleaseWorkflowUploadFeedbackResponse{
+			Kind:          api.ReleaseWorkflowUploadFeedbackQuestionnaire,
+			Questionnaire: &api.ReleaseWorkflowUploadQuestionnaire{TrackerID: "ALPHA", Answers: answers},
+		}, "answer-"+answer.key)
+	}
+	pendingCompositeTrackerApproval(t, current)
+	if current.Projections.Projections[0].QuestionnaireAnswers["reason"] != "verified improvement" ||
+		current.Dupes.Results[0].Decision != api.DupeDecisionIgnored || uploads.execution != nil {
+		t.Fatal("expected retained reason and duplicate override before separate tracker approval")
+	}
+}
+
 func TestTrackerGuidanceHistoryRespectsAttemptAndPreparationBoundaries(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

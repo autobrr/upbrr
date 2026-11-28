@@ -1830,19 +1830,25 @@ for (const checkFirst of [false, true]) {
       const choice = questions.getByRole("combobox", { name: "Intended ANT trump", exact: true });
       const reason = questions.getByRole("textbox", { name: "ANT trump reason", exact: true });
       await expect(reason).toBeHidden();
+      await choice.selectOption("yes");
+      const intended = await applyTrackerAnswers(page);
+      await expect(reason).toBeVisible();
+      const choiceKey = intended.projections!.projections[0].questionnaire!.find(
+        (field) => field.label === "Intended ANT trump",
+      )!.key;
       if (!checkFirst) {
         await choice.selectOption("no");
-        await applyTrackerAnswers(page);
+        const declined = await applyTrackerAnswers(page);
+        expect(declined.projections!.projections[0].questionnaireAnswers?.[choiceKey]).toBe("no");
         await expect(choice).toHaveValue("no");
         await expect(reason).toBeHidden();
+        await choice.selectOption("yes");
+        await applyTrackerAnswers(page);
+        await expect(reason).toBeVisible();
       }
-      await choice.selectOption("yes");
-      await applyTrackerAnswers(page);
-      await expect(reason).toBeVisible();
       await reason.fill("verified improvement");
       const applied = await applyTrackerAnswers(page);
       const fields = applied.projections!.projections[0].questionnaire!;
-      const choiceKey = fields.find((field) => field.label === "Intended ANT trump")!.key;
       const reasonKey = fields.find((field) => field.label === "ANT trump reason")!.key;
       expect(applied.projections!.projections[0].questionnaireAnswers).toMatchObject({
         [choiceKey]: "yes",

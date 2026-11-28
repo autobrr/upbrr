@@ -1473,17 +1473,8 @@ func compositeUploadPendingAction(
 			if !decided && session.DuplicateDisposition == api.ReleaseWorkflowDuplicateBlock {
 				continue
 			}
-			if decided {
-				// An ignored intent cannot replace a confirmation for the current assessment.
-				requiresConfirmation := session.Intent.ExecutionMode != api.WorkflowExecutionModeDebug &&
-					decision == api.DupeDecisionIgnored && current.Dupes != nil &&
-					session.Intent.StaffTokenConfirmations[action.TrackerID] != current.Dupes.ID &&
-					slices.ContainsFunc(current.Dupes.Results, func(result api.TrackerDupeAssessment) bool {
-						return result.TrackerID == action.TrackerID && result.RequiresStaffToken && !result.StaffTokenConfirmed
-					})
-				if !requiresConfirmation {
-					continue
-				}
+			if decided && !compositeDuplicateReviewRemaining(current.Dupes, session, action.TrackerID, decision) {
+				continue
 			}
 		}
 		if action.TrackerID != "" &&
@@ -1493,6 +1484,25 @@ func compositeUploadPendingAction(
 		return action
 	}
 	return nil
+}
+
+func compositeDuplicateReviewRemaining(dupes *api.DupeAssessment, session *compositeUploadSession, trackerID api.TrackerID, decision api.DupeDecision) bool {
+	if dupes == nil || decision != api.DupeDecisionIgnored {
+		return false
+	}
+	for _, result := range dupes.Results {
+		if result.TrackerID != trackerID {
+			continue
+		}
+		if session.Intent.ExecutionMode != api.WorkflowExecutionModeDebug && result.RequiresStaffToken && !result.StaffTokenConfirmed &&
+			session.Intent.StaffTokenConfirmations[trackerID] != dupes.ID {
+			return true
+		}
+		return session.Confirm && slices.ContainsFunc(result.Questionnaire, func(field api.TrackerQuestionnaireRequirement) bool {
+			return field.DuplicateOverrideInput && field.Kind == "text" && field.NeedsReview
+		})
+	}
+	return false
 }
 
 func (m *Module) applyCompositeAutomaticPolicy(

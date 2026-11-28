@@ -915,10 +915,47 @@ func TestNewRegistryCapabilityInventory(t *testing.T) {
 	if _, ok := registry.LookupMetadataPolicy("ANT"); !ok {
 		t.Fatal("expected ANT tracker-owned metadata policy")
 	}
-	if policy, ok := registry.LookupDupePolicy("ANT"); !ok || policy.ID != "ant/duplicate/v7" ||
+	if policy, ok := registry.LookupDupePolicy("ANT"); !ok || policy.ID != "ant/duplicate/v8" ||
 		policy.EvidenceID != "ant-slots-staff-overrides" || policy.TargetSlot == nil || !policy.StaffTokenOverride ||
 		policy.Questionnaire == nil || policy.StaffTokenOverrideRequired == nil {
 		t.Fatalf("ANT dupe policy = %#v, %t", policy, ok)
+	}
+}
+
+func TestANTQuestionnaireInvalidatesRetainedV7Catalog(t *testing.T) {
+	registry := MustNewRegistry()
+	legacy := trackers.NewRegistry()
+	for _, name := range registry.Names() {
+		descriptor, _ := registry.LookupDescriptor(name)
+		if name == "ANT" {
+			legacyPolicy := *descriptor.DupePolicy
+			legacyPolicy.ID = "ant/duplicate/v7"
+			descriptor.DupePolicy = &legacyPolicy
+		}
+		if err := legacy.RegisterDescriptor(descriptor); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldProjector, err := trackers.NewWorkflowProjector(legacy, config.Config{}, api.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected := []api.TrackerID{"ANT", "BHD"}
+	catalog, _, _, _, err := oldProjector.Build(t.Context(), api.ReleaseSnapshot{}, api.UploadSubject{}, selected, nil, nil, api.WorkflowExecutionModeDebug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projector, err := trackers.NewWorkflowProjector(registry, config.Config{}, api.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := projector.CatalogCurrent(catalog)
+	if err != nil || current {
+		t.Fatalf("old ANT questionnaire catalog was treated as current: %t, %v", current, err)
+	}
+	stale, err := projector.StaleTrackerPolicies(catalog, selected)
+	if err != nil || !slices.Equal(stale, []api.TrackerID{"ANT"}) {
+		t.Fatalf("catalog refresh should invalidate only ANT: %v, %v", stale, err)
 	}
 }
 

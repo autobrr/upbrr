@@ -18,7 +18,7 @@ import (
 
 func duplicatePolicy() *trackers.DupePolicy {
 	return &trackers.DupePolicy{
-		ID:                         "ant/duplicate/v7",
+		ID:                         "ant/duplicate/v8",
 		EvidenceID:                 "ant-slots-staff-overrides",
 		SearchScope:                trackers.DupeSearchScope{MaxPages: 100},
 		TargetSlot:                 resolveTargetSlot,

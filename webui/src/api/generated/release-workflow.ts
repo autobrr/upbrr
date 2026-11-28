@@ -3306,6 +3306,7 @@ export type TrackerQuestionnaire = Readonly<{
 }>;
 
 export type TrackerQuestionnaireField = Readonly<{
+  DuplicateOverrideInput?: boolean;
   HDRGradeComparison?: boolean;
   Help: string;
   Key: string;
@@ -3319,6 +3320,7 @@ export type TrackerQuestionnaireField = Readonly<{
 }>;
 
 export type TrackerQuestionnaireRequirement = Readonly<{
+  duplicateOverrideInput?: boolean;
   hdrGradeComparison?: boolean;
   help?: string;
   key: string;

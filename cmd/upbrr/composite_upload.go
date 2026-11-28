@@ -59,6 +59,10 @@ func (s *cliWorkflowSession) completeComposite(
 		printCLIWorkflowDupeProgress(s.streams.out, update)
 	})
 	ctx = s.presentationProgressContext(ctx)
+	dupeQuestionnaireCtx := ctx
+	if cliBridgeFromOutput(s.streams.out) == nil {
+		dupeQuestionnaireCtx = api.WithDupeProgressReporter(ctx, func(api.DupeProgressUpdate) {})
+	}
 	startUpload := s.core.StartReleaseWorkflowUpload
 	if s.core.LiveTestEnabled() {
 		startUpload = s.core.StartLiveTestReleaseWorkflowUpload
@@ -116,8 +120,13 @@ func (s *cliWorkflowSession) completeComposite(
 			s.publishDeclinedAction(*action)
 			return 0, nil
 		}
+		feedbackCtx := ctx
+		if action.Kind == api.RequiredActionReviewDuplicates && feedback.Response.Kind == api.ReleaseWorkflowUploadFeedbackQuestionnaire {
+			// Duplicate evidence is presented after the answers are applied.
+			feedbackCtx = dupeQuestionnaireCtx
+		}
 		next, submitErr := s.core.SubmitReleaseWorkflowUploadFeedback(
-			ctx,
+			feedbackCtx,
 			cliWorkflowOwnerID,
 			s.current.Workflow.ID,
 			feedback,
@@ -513,6 +522,7 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 	for _, result := range s.current.Dupes.Results {
 		dupeByTracker[result.TrackerID] = result
 	}
+	writer, _ := s.streams.out.(*cliPresentationWriter)
 	approved := make([]api.TrackerID, 0, len(action.Options))
 	for index, option := range action.Options {
 		trackerID := api.TrackerID(strings.ToUpper(strings.TrimSpace(option.Value)))
@@ -531,11 +541,24 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 		if !ok {
 			return feedback, false, fmt.Errorf("upbrr: tracker approval candidate %s has no current duplicate assessment", trackerID)
 		}
+		showDupeEvidence := true
+		review, reviewed := s.dupeReviews[trackerID]
+		if (writer == nil || !writer.terminal) && reviewed && review.workflow == s.current.Workflow.ID {
+			currentReview, err := s.duplicateReviewContext(dupe)
+			if err != nil {
+				return feedback, false, err
+			}
+			showDupeEvidence = currentReview != review
+		}
 		var evidence strings.Builder
 		// Build one detached context for the active presenter.
 		output := &evidence
-		fmt.Fprintf(output, "Tracker: %s (%s)\n", tracker, trackerID)
-		fmt.Fprintf(output, "Upload name: %q\n", projection.UploadReleaseName)
+		if showDupeEvidence || (diagnostic && len(action.Options) > 1) {
+			fmt.Fprintf(output, "Tracker: %s (%s)\n", tracker, trackerID)
+		}
+		if showDupeEvidence {
+			fmt.Fprintf(output, "Upload name: %q\n", projection.UploadReleaseName)
+		}
 		if len(projection.EditionFeatures) > 0 {
 			selected := make([]string, 0, len(projection.EditionFeatures))
 			for _, feature := range projection.EditionFeatures {
@@ -545,7 +568,9 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 			}
 			fmt.Fprintf(output, "%s edition/features: %s\n", trackerID, emptyCLIValue(strings.Join(selected, " ")))
 		}
-		printCLICompositeDupeEvidence(output, dupe)
+		if showDupeEvidence {
+			printCLICompositeDupeEvidence(output, dupe)
+		}
 		fmt.Fprintf(output, "Preparation: %d screenshots; %d DVD menu images.\n", projection.Artifacts.ScreenshotCount, projection.Artifacts.DVDMenuCount)
 		if projection.Artifacts.ImageHosting {
 			fmt.Fprintln(
@@ -555,9 +580,6 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 		}
 		if projection.Artifacts.Description {
 			fmt.Fprintln(output, "A tracker description will be prepared.")
-		}
-		if writer, ok := s.streams.out.(*cliPresentationWriter); ok {
-			writer.question.Evidence = safeTerminalText(evidence.String())
 		}
 		if logger != nil {
 			logger.Debugf(
@@ -793,10 +815,45 @@ func (s *cliWorkflowSession) collectCompositeTrackerFeedback(
 
 type cliDupeReviewContext struct {
 	workflow api.WorkflowID
-	evidence string
+	evidence api.WorkflowFingerprint
+}
+
+type cliDupeOverrideConfirmation struct {
+	review cliDupeReviewContext
+	key    string
 }
 
 const cliUnchangedDupeEvidence = "Duplicate evidence is unchanged from the preceding review above."
+
+func (s *cliWorkflowSession) duplicateReviewContext(result api.TrackerDupeAssessment) (cliDupeReviewContext, error) {
+	// Staff-token requirements can change when the answer is applied. Bind the
+	// confirmation to the search and candidates the user reviewed before answering.
+	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
+		Release       api.ReleaseRef
+		Tracker       api.TrackerID
+		UploadName    string
+		Target        api.WorkflowFingerprint
+		SearchInput   api.WorkflowFingerprint
+		Policy        string
+		Search        api.DupeSearchEvidence
+		Matches       []api.DupeMatchProjection
+		ReviewReasons []api.DupeReason
+	}{
+		Release:       s.current.Dupes.ReleaseRef,
+		Tracker:       result.TrackerID,
+		UploadName:    result.UploadReleaseName,
+		Target:        result.TargetFingerprint,
+		SearchInput:   result.SearchFingerprint,
+		Policy:        result.PolicyID,
+		Search:        result.Search,
+		Matches:       result.Matches,
+		ReviewReasons: result.ReviewReasons,
+	})
+	if err != nil {
+		return cliDupeReviewContext{}, fmt.Errorf("upbrr: fingerprint reviewed duplicate evidence: %w", err)
+	}
+	return cliDupeReviewContext{workflow: s.current.Workflow.ID, evidence: fingerprint}, nil
+}
 
 func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 	reader *bufio.Reader,
@@ -813,26 +870,41 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 		return feedback, false, fmt.Errorf("upbrr: duplicate assessment for %s is unavailable", action.TrackerID)
 	}
 	result := s.current.Dupes.Results[resultIndex]
+	currentReview, err := s.duplicateReviewContext(result)
+	if err != nil {
+		return feedback, false, err
+	}
 	var evidence strings.Builder
 	fmt.Fprintf(&evidence, "Tracker: %s\nUpload name: %q\n", result.TrackerID, result.UploadReleaseName)
 	printCLICompositeDupeEvidence(&evidence, result)
 	if cliDupeRequiresRiskAcknowledgement(result) {
 		evidence.WriteString("Risk acknowledgement required: incomplete or manual evidence.\n")
 	}
-	currentEvidence := cliDupeReviewContext{workflow: s.current.Workflow.ID, evidence: evidence.String()}
-	visibleEvidence := currentEvidence.evidence
+	overrideQuestion := slices.IndexFunc(result.Questionnaire, func(field api.TrackerQuestionnaireRequirement) bool {
+		return field.DuplicateOverrideInput && cliQuestionnaireIsYesNo(field)
+	})
+	confirmation := s.dupeOverrideConfirmations[result.TrackerID]
+	if confirmation.key != "" && confirmation.review != currentReview {
+		delete(s.dupeOverrideConfirmations, result.TrackerID)
+		confirmation = cliDupeOverrideConfirmation{}
+	}
+	visibleEvidence := evidence.String()
 	followingEvidence := cliUnchangedDupeEvidence
 	writer, _ := s.streams.out.(*cliPresentationWriter)
 	if writer != nil && writer.terminal {
 		// The TUI replaces its evidence panel; keep it available for each question.
 		followingEvidence = visibleEvidence
-	} else if s.lastDupeReview == currentEvidence {
-		visibleEvidence = followingEvidence
+	} else if previous, reviewed := s.dupeReviews[result.TrackerID]; reviewed && previous.workflow == currentReview.workflow {
+		if previous == currentReview {
+			visibleEvidence = followingEvidence
+		} else {
+			visibleEvidence = "Duplicate evidence changed since the previous review.\n" + visibleEvidence
+		}
 	}
-	s.lastDupeReview = currentEvidence
-	if writer != nil {
-		writer.question.Evidence = safeTerminalText(visibleEvidence)
+	if s.dupeReviews == nil {
+		s.dupeReviews = make(map[api.TrackerID]cliDupeReviewContext)
 	}
+	s.dupeReviews[result.TrackerID] = currentReview
 	if len(result.Questionnaire) > 0 && s.intent.interaction != api.InteractionModeUnattended {
 		review := slices.ContainsFunc(result.Questionnaire, func(field api.TrackerQuestionnaireRequirement) bool {
 			return field.NeedsReview || (field.Required && strings.TrimSpace(field.Value) == "")
@@ -868,15 +940,34 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 			); collectErr != nil {
 				return feedback, false, collectErr
 			}
+			answers := instructions[action.TrackerID].Questionnaire
+			if overrideQuestion >= 0 {
+				key := result.Questionnaire[overrideQuestion].Key
+				delete(s.dupeOverrideConfirmations, result.TrackerID)
+				if answer := answers[key]; answer != nil && *answer == "yes" {
+					if s.dupeOverrideConfirmations == nil {
+						s.dupeOverrideConfirmations = make(map[api.TrackerID]cliDupeOverrideConfirmation)
+					}
+					s.dupeOverrideConfirmations[result.TrackerID] = cliDupeOverrideConfirmation{review: currentReview, key: key}
+				}
+			}
 			feedback.Response = api.ReleaseWorkflowUploadFeedbackResponse{
 				Kind: api.ReleaseWorkflowUploadFeedbackQuestionnaire,
 				Questionnaire: &api.ReleaseWorkflowUploadQuestionnaire{
 					TrackerID: action.TrackerID,
-					Answers:   cloneCLIStringPointerMap(instructions[action.TrackerID].Questionnaire),
+					Answers:   cloneCLIStringPointerMap(answers),
 				},
 			}
 			return feedback, false, nil
 		}
+	}
+	delete(s.dupeOverrideConfirmations, result.TrackerID)
+	if key := confirmation.key; key != "" && !result.RequiresStaffToken && s.current.Projections != nil &&
+		slices.ContainsFunc(s.current.Projections.Projections, func(projection api.TrackerReleaseProjection) bool {
+			return projection.TrackerID == result.TrackerID && projection.QuestionnaireAnswers[key] == "yes"
+		}) {
+		feedback.Response = cliDuplicateReviewResponse(result.TrackerID, api.DupeDecisionIgnored, false)
+		return feedback, false, nil
 	}
 	fmt.Fprintln(s.streams.out)
 	prompt := fmt.Sprintf("Upload to %s despite duplicate evidence? [y/N]: ", result.TrackerID)
@@ -906,20 +997,23 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 		return feedback, false, err
 	}
 	fmt.Fprintln(s.streams.out)
-	s.lastDupeReview = cliDupeReviewContext{}
 	decision := api.DupeDecisionAccepted
 	if allow {
 		decision = api.DupeDecisionIgnored
 	}
-	feedback.Response = api.ReleaseWorkflowUploadFeedbackResponse{
+	feedback.Response = cliDuplicateReviewResponse(result.TrackerID, decision, result.RequiresStaffToken && allow && !debug)
+	return feedback, false, nil
+}
+
+func cliDuplicateReviewResponse(tracker api.TrackerID, decision api.DupeDecision, staffTokenConfirmed bool) api.ReleaseWorkflowUploadFeedbackResponse {
+	return api.ReleaseWorkflowUploadFeedbackResponse{
 		Kind: api.ReleaseWorkflowUploadFeedbackDuplicateReview,
 		DuplicateReview: &api.ReleaseWorkflowUploadDuplicateReview{
-			StaffTokenConfirmed: result.RequiresStaffToken && allow && !debug,
-			TrackerID:           result.TrackerID,
+			StaffTokenConfirmed: staffTokenConfirmed,
+			TrackerID:           tracker,
 			Decision:            decision,
 		},
 	}
-	return feedback, false, nil
 }
 
 // printCLICompositeDupeEvidence explains retained assessments without making or
