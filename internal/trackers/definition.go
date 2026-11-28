@@ -535,12 +535,14 @@ type UploadArtifactPolicyProvider interface {
 	UploadArtifactPolicy() *UploadArtifactPolicy
 }
 
-// DupeSlotEvidence describes independent differences proved by complete normalized
-// facts, even when another part of the native slot evidence is contradictory.
+// DupeSlotEvidence describes contradictions and independent differences proved
+// by complete normalized facts for a native slot comparison.
 type DupeSlotEvidence struct {
 	Contradictory      bool
 	ResolutionDistinct bool
-	MediaClassDistinct bool
+	// ResolutionContradictory distinguishes conflicting resolution evidence from a missing tier.
+	ResolutionContradictory bool
+	MediaClassDistinct      bool
 	// DeclaredTypeDistinct preserves complete structural types when source or
 	// codec evidence disagrees, provided kind and container do not conflict.
 	DeclaredTypeDistinct bool

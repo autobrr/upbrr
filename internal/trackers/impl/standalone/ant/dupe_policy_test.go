@@ -115,13 +115,16 @@ func TestANTNativeSlotsAllowOnlyIndependentlyProvenSeparation(t *testing.T) {
 	}
 }
 
-func TestANTFullDiscAndDistinctKindsCoexistInBothDirectionsDespiteCodecConflict(t *testing.T) {
+func TestANTFullDiscKindSeparationInBothDirections(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, filename, kind, codec string
+		name, filename, kind, codec, resolution string
+		want                                    api.DupeRelation
 	}{
-		{"remux", "Example.Movie.2026.576i.PAL.DVD.REMUX.x264-OTHER.mkv", "REMUX", "H265"},
-		{"AV1 encode", "Example.Movie.2026.576i.PAL.DVD.x264-OTHER.mkv", "ENCODE", "AV1"},
+		{"remux", "Example.Movie.2026.576i.PAL.DVD.REMUX.x264-OTHER.mkv", "REMUX", "H265", "576i", api.DupeRelationCoexists},
+		{"AV1 encode", "Example.Movie.2026.576i.PAL.DVD.x264-OTHER.mkv", "ENCODE", "AV1", "576i", api.DupeRelationCoexists},
+		{"AV1 encode without resolution", "Example.Movie.2026.PAL.DVD.x264-OTHER.mkv", "ENCODE", "AV1", "", api.DupeRelationCoexists},
+		{"AV1 encode with conflicting resolution", "Example.Movie.2026.720p.PAL.DVD.x264-OTHER.mkv", "ENCODE", "AV1", "576i", api.DupeRelationManualReview},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			entries := antDupeEntries(map[string]any{"item": []any{
@@ -135,7 +138,7 @@ func TestANTFullDiscAndDistinctKindsCoexistInBothDirectionsDespiteCodecConflict(
 				},
 				map[string]any{
 					"files":      []any{map[string]any{"name": tc.filename}},
-					"resolution": "576i",
+					"resolution": tc.resolution,
 					"type":       tc.kind,
 					"media":      "PAL DVD",
 					"codec":      tc.codec,
@@ -156,9 +159,9 @@ func TestANTFullDiscAndDistinctKindsCoexistInBothDirectionsDespiteCodecConflict(
 				existing := dupe.NormalizeCandidate(entries[1-i], "ANT")
 				result := dupe.Evaluate(target, []dupe.TrackerCandidate{existing},
 					*duplicatePolicy(), dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID})
-				if result.Candidates[0].Relation != api.DupeRelationCoexists || result.RequiresAction || result.Blocks {
-					t.Errorf("slot %q against %q: got %s, review=%t, blocked=%t",
-						target.TrackerSlot, existing.TrackerSlot, result.Candidates[0].Relation, result.RequiresAction, result.Blocks)
+				if got := result.Candidates[0].Relation; got != tc.want || result.RequiresAction != (tc.want == api.DupeRelationManualReview) || result.Blocks {
+					t.Errorf("slot %q against %q: got %s, review=%t, blocked=%t, want %s",
+						target.TrackerSlot, existing.TrackerSlot, got, result.RequiresAction, result.Blocks, tc.want)
 				}
 			}
 		})

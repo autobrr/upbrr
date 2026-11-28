@@ -271,16 +271,18 @@ func nativeSlotEvidence(target, candidate normalizedFacts, targetTitleKind, cand
 	}
 	resolutionDistinct := target.Resolution.Status == FactComplete && candidate.Resolution.Status == FactComplete &&
 		compareDimensionFacts(trackerspkg.DupeDimensionResolution, target.Resolution, candidate.Resolution) == DimensionDifferent
+	resolutionContradictory := target.Resolution.Status == FactContradictory || candidate.Resolution.Status == FactContradictory
 	kindConflicts := target.ThreeD.Status == FactContradictory || candidate.ThreeD.Status == FactContradictory
 	classDistinct := !classConflict && !kindConflicts &&
 		targetClass.Status == FactComplete && candidateClass.Status == FactComplete &&
 		titleKindSupportsClass(targetTitleKind, target.MediaClass) && titleKindSupportsClass(candidateTitleKind, candidate.MediaClass) &&
 		compareFacts(targetClass, candidateClass) == DimensionDifferent
 	return trackerspkg.DupeSlotEvidence{
-		Contradictory: classConflict || target.Resolution.Status == FactContradictory || candidate.Resolution.Status == FactContradictory ||
+		Contradictory: classConflict || resolutionContradictory ||
 			target.HDR.Status == api.HDREvidenceContradictory || candidate.HDR.Status == api.HDREvidenceContradictory,
-		ResolutionDistinct: resolutionDistinct,
-		MediaClassDistinct: classDistinct,
+		ResolutionDistinct:      resolutionDistinct,
+		ResolutionContradictory: resolutionContradictory,
+		MediaClassDistinct:      classDistinct,
 		DeclaredTypeDistinct: !kindConflicts && compareFacts(target.Type, candidate.Type) == DimensionDifferent &&
 			declaredTypeSupported(target, targetTitleKind) && declaredTypeSupported(candidate, candidateTitleKind),
 	}

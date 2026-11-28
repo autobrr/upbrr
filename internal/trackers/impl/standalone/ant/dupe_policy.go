@@ -18,7 +18,7 @@ import (
 
 func duplicatePolicy() *trackers.DupePolicy {
 	return &trackers.DupePolicy{
-		ID:                         "ant/duplicate/v10",
+		ID:                         "ant/duplicate/v11",
 		EvidenceID:                 "ant-slots-staff-overrides",
 		SearchScope:                trackers.DupeSearchScope{MaxPages: 100},
 		TargetSlot:                 resolveTargetSlot,
@@ -177,10 +177,13 @@ func compareSlots(target, candidate string, targetNames []string, candidateName 
 		// A codec conflict can change an encode's slot but cannot make a
 		// structurally confirmed encode or remux a full disc.
 		discAndRemux := proposed[0] == "FullDisc" && existing[0] == "Remux" || proposed[0] == "Remux" && existing[0] == "FullDisc"
-		sameTierDiscAndEncode := proposed[1] != "?" && proposed[1] == existing[1] &&
-			(proposed[0] == "FullDisc" && (existing[0] == "Encode" || existing[0] == "AV1") ||
-				(proposed[0] == "Encode" || proposed[0] == "AV1") && existing[0] == "FullDisc")
-		if discAndRemux || sameTierDiscAndEncode {
+		discAndEncode := proposed[0] == "FullDisc" && (existing[0] == "Encode" || existing[0] == "AV1") ||
+			(proposed[0] == "Encode" || proposed[0] == "AV1") && existing[0] == "FullDisc"
+		if discAndEncode && evidence.ResolutionContradictory {
+			return api.DupeRelationManualReview
+		}
+		compatibleTier := (proposed[1] != "?" || existing[1] != "?") && !differentKnownSlotPart(proposed[1], existing[1])
+		if discAndRemux || discAndEncode && compatibleTier {
 			if evidence.DeclaredTypeDistinct {
 				return api.DupeRelationCoexists
 			}
