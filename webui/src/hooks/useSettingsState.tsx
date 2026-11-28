@@ -939,6 +939,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         activeTab === "dupes" ||
         activeTab === "settings" ||
         activeTab === "logging" ||
+        activeTab === "description_defaults" ||
         activeTab === "upload" ||
         activeTab === "upload_images") &&
       !settingsConfigData

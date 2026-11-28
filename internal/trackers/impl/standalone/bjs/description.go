@@ -4,9 +4,12 @@
 package bjs
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/description"
 	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
@@ -17,18 +20,56 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 	if assets.Final {
 		return strings.TrimSpace(assets.Description)
 	}
+	text := composeDescription(req, assets, readDescriptionReport(req))
+
+	// Explicit dry runs retain the local diagnostic description artifact.
+	if req.Intent == trackers.PreparationIntentDryRun {
+		descriptionunit3d.SaveDescriptionDebug(api.NewDescriptionSubject(req.Meta), "BJS", req.Runtime.DBPath, text, req.Logger)
+	}
+
+	return text
+}
+
+func renderDescriptionSample(
+	_ context.Context,
+	sample trackers.DescriptionSample,
+	defaults config.DescriptionSettingsConfig,
+	_ config.TrackerConfig,
+) (string, error) {
+	return composeDescription(trackers.PreparationInput{
+		Meta:    sample.Subject,
+		Runtime: trackers.PreparationRuntime{Description: defaults},
+	}, sample.Assets, sample.Report), nil
+}
+
+func readDescriptionReport(req trackers.PreparationInput) string {
+	switch strings.ToUpper(strings.TrimSpace(req.Meta.DiscType)) {
+	case "DVD", "HDDVD":
+		return strings.TrimSpace(commonhttp.ReadOptionalFile(req.Meta.MediaInfoTextPath))
+	case "BDMV":
+		report, _ := trackers.ReadBDInfoForDescription(req.Runtime.DBPath, req.Meta)
+		return report
+	default:
+		return ""
+	}
+}
+
+func composeDescription(req trackers.PreparationInput, assets trackers.DescriptionAssets, report string) string {
 	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
 	meta := req.Meta
-	var parts []string
+	var parts []description.Section
+	appendPart := func(id, text string) {
+		parts = description.AppendSection(parts, id, text)
+	}
 
 	// Custom Header
 	if header := strings.TrimSpace(req.Runtime.Description.CustomDescriptionHeader); header != "" {
-		parts = append(parts, header)
+		appendPart("custom_header", header)
 	}
 
 	// Logo
 	if logo := resolveLogo(meta); logo != "" {
-		parts = append(parts, "[align=center][img]"+logo+"[/img][/align]")
+		appendPart("logo", "[align=center][img]"+logo+"[/img][/align]")
 	}
 
 	// TV Episode details
@@ -48,48 +89,38 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 	epOverview = strings.TrimSpace(epOverview)
 	if epOverview != "" {
 		if epTitle != "" {
-			parts = append(parts, "[align=center]"+epTitle+"[/align]")
+			appendPart("episode_overview", "[align=center]"+epTitle+"[/align]")
 		}
-		parts = append(parts, "[align=center]"+epOverview+"[/align]")
+		appendPart("episode_overview", "[align=center]"+epOverview+"[/align]")
 	}
 
 	// File information
 	discType := strings.ToUpper(strings.TrimSpace(meta.DiscType))
 	if discType == "DVD" || discType == "HDDVD" {
-		mediainfo := strings.TrimSpace(commonhttp.ReadOptionalFile(meta.MediaInfoTextPath))
-		if mediainfo != "" {
-			parts = append(parts, "[hide=DVD MediaInfo][pre]"+mediainfo+"[/pre][/hide]")
+		if report != "" {
+			appendPart("mediainfo", "[hide=DVD MediaInfo][pre]"+report+"[/pre][/hide]")
 		}
 	}
 	if discType == "BDMV" {
-		bdinfo, _ := trackers.ReadBDInfoForDescription(req.Runtime.DBPath, meta)
-		parts = append(parts, "[hide=BDInfo][pre]"+bdinfo+"[/pre][/hide]")
+		appendPart("mediainfo", "[hide=BDInfo][pre]"+report+"[/pre][/hide]")
 	}
 
 	// User description
 	if strings.TrimSpace(assets.Description) != "" {
-		parts = append(parts, strings.TrimSpace(assets.Description))
+		appendPart("kept", strings.TrimSpace(assets.Description))
 	}
 
 	// Tonemapped Header
 	if tonemapHeader := descriptionunit3d.TonemappingNotice(req.Runtime.Description.TonemappedHeader, assets.Screenshots); tonemapHeader != "" {
-		parts = append(parts, tonemapHeader)
+		appendPart("tonemap_header", tonemapHeader)
 	}
 
 	// Signature
 	link, _ := descriptionunit3d.UppbrrSignatureLink()
-	parts = append(parts, fmt.Sprintf("[align=center][url=%s]Upload realizado via %s[/url][/align]", link, "upbrr"))
+	appendPart("", fmt.Sprintf("[align=center][url=%s]Upload realizado via %s[/url][/align]", link, "upbrr"))
 
 	// Join and finalize
-	description := strings.Join(parts, "\n\n")
-	finalized := finalizeDescription(description)
-
-	// Explicit dry runs retain the local diagnostic description artifact.
-	if req.Intent == trackers.PreparationIntentDryRun {
-		descriptionunit3d.SaveDescriptionDebug(api.NewDescriptionSubject(meta), "BJS", req.Runtime.DBPath, finalized, req.Logger)
-	}
-
-	return finalized
+	return finalizeDescription(description.FormatSections(parts, req.Runtime.Description))
 }
 
 // resolveOverview prefers scoped TV synopsis for episode/season-pack uploads,
@@ -142,4 +173,42 @@ func resolvePoster(meta api.UploadSubject) string {
 
 func resolveScreens(_ api.UploadSubject) []string {
 	return nil
+}
+
+func descriptionDefaultsLayout() []trackers.DescriptionLayoutItem {
+	return []trackers.DescriptionLayoutItem{
+		{
+			ID:         "custom_header",
+			Label:      "Introduction",
+			CanCompact: true,
+			Fields:     []string{"CustomDescriptionHeader"},
+		},
+		{
+			ID:         "logo",
+			Label:      "Title logo",
+			CanCompact: true,
+		},
+		{
+			ID:         "episode_overview",
+			Label:      "Episode overview",
+			CanCompact: true,
+		},
+		{
+			ID:         "mediainfo",
+			Label:      "DVD MediaInfo or BDInfo",
+			CanCompact: true,
+		},
+		{
+			ID:         "kept",
+			Label:      "Imported or custom text",
+			CanCompact: true,
+		},
+		{
+			ID:         "tonemap_header",
+			Label:      "Tonemapping notice",
+			CanCompact: true,
+			Fields:     []string{"TonemappedHeader"},
+		},
+		{Label: "Signature footer"},
+	}
 }

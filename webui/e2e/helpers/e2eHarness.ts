@@ -553,6 +553,13 @@ export async function createE2EAPIToken(
   return created.token;
 }
 
+// The workspace defaults button has the same visible name as the release step.
+export function releaseDescriptionsButton(page: Page) {
+  return page
+    .getByRole("navigation", { name: "Release workflow" })
+    .getByRole("button", { name: "Descriptions", exact: true });
+}
+
 export async function fetchMetadata(
   page: Page,
   appUrl: string,

@@ -752,7 +752,7 @@ func (b *Backend) ListTrackerCatalog() (api.TrackerCatalog, error) {
 				Activation: field.Activation,
 			}
 		}
-		trackerCfg, _ := trackerConfigByName(cfg.Trackers.Trackers, schema.Name)
+		trackerCfg, _ := config.TrackerConfigByName(cfg.Trackers.Trackers, schema.Name)
 		_, isDefault := defaultTrackers[schema.Name]
 		entries = append(entries, api.TrackerCatalogEntry{
 			Name:              schema.Name,
@@ -785,18 +785,6 @@ func (b *Backend) ListTrackerCatalog() (api.TrackerCatalog, error) {
 		return strings.Compare(strings.ToUpper(left), strings.ToUpper(right))
 	})
 	return api.TrackerCatalog{Entries: entries, Unsupported: unsupported}, nil
-}
-
-func trackerConfigByName(entries map[string]config.TrackerConfig, name string) (config.TrackerConfig, bool) {
-	if cfg, ok := entries[name]; ok {
-		return cfg, true
-	}
-	for entryName, cfg := range entries {
-		if strings.EqualFold(strings.TrimSpace(entryName), strings.TrimSpace(name)) {
-			return cfg, true
-		}
-	}
-	return config.TrackerConfig{}, false
 }
 
 // GetImageHostPolicyMetadata returns image-host policy metadata consumed by settings and upload UI.

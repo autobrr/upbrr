@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/internal/trackers"
 )
@@ -19,7 +20,7 @@ var (
 	azLinkStripPattern = regexp.MustCompile(`https?://\S+|www\.\S+`)
 )
 
-func buildDescription(raw string) string {
+func buildDescription(raw string, defaults config.DescriptionSettingsConfig) string {
 	trimmed := trackers.StripDescriptionSignatures(raw)
 	if trimmed == "" {
 		return ""
@@ -42,7 +43,16 @@ func buildDescription(raw string) string {
 	if audioAnalysis == "" {
 		return base
 	}
-	return strings.TrimSpace(strings.Join([]string{base, description.Render(audioAnalysis)}, "<br>\n"))
+	audioAnalysis = description.RelabelAnalysis(audioAnalysis, defaults.AudioPlotsLabel, defaults.HDRPlotsLabel)
+	parts := []description.Section{
+		{ID: "kept", Text: base},
+		{ID: "audio_analysis", Text: description.Render(audioAnalysis)},
+	}
+	if base == "" && !defaults.ItemOptions["audio_analysis"].Hidden {
+		// Retain the original separator behavior when analysis is the only item.
+		return "<br>\n" + parts[1].Text
+	}
+	return strings.TrimSpace(description.FormatSectionsSeparated(parts, defaults, "<br>\n"))
 }
 
 func buildDescriptionFromAssets(_ context.Context, req trackers.PreparationInput) string {
@@ -53,5 +63,27 @@ func buildDescriptionFromAssets(_ context.Context, req trackers.PreparationInput
 	if assets.Final {
 		return strings.TrimSpace(assets.Description)
 	}
-	return buildDescription(assets.Description)
+	return buildDescription(assets.Description, req.Runtime.Description)
+}
+
+// DescriptionLayout reflects the two text groups the AZ HTML composer emits.
+func (*Definition) DescriptionLayout() []trackers.DescriptionLayoutItem {
+	return []trackers.DescriptionLayoutItem{
+		{ID: "kept", Label: "Imported or custom text"},
+		{
+			ID:     "audio_analysis",
+			Label:  "Audio and HDR analysis",
+			Fields: []string{"AudioPlotsLabel", "HDRPlotsLabel"},
+		},
+	}
+}
+
+// RenderDescriptionSample uses the AZ HTML composer without supplying media or credentials.
+func (*Definition) RenderDescriptionSample(
+	_ context.Context,
+	sample trackers.DescriptionSample,
+	defaults config.DescriptionSettingsConfig,
+	_ config.TrackerConfig,
+) (string, error) {
+	return buildDescription(sample.Assets.Description, defaults), nil
 }

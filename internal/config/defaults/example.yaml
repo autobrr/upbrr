@@ -67,6 +67,8 @@ screenshot_handling:
   desat: 10.0
 
 description_settings:
+  # Unset layout preferences keep each tracker's built-in order and labels.
+  # Edit section_order, labels, and item_options in the Web UI Descriptions panel.
   add_logo: false
   logo_size: 300
   logo_language: ""

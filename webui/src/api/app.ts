@@ -8,6 +8,7 @@ import type {
   BrowseDirectoryResponse,
   HistoryEntry,
   HistoryOverview,
+  ConfigMap,
   ImageHostPolicyMetadata,
   TrackerAuthCapability,
   TrackerAuthLoginRequest,
@@ -379,6 +380,29 @@ export const loggingClient = {
   getExclusions: () => requestApp<string[]>("GetLogExclusions"),
   updateExclusions: (patterns: string[]) =>
     requestApp<void>("UpdateLogExclusions", { Patterns: patterns }),
+};
+
+/** Tracker-owned movable groups and field bindings for the defaults panel. */
+export type DescriptionLayoutItem = Readonly<{
+  id: string;
+  label: string;
+  fields?: string[];
+  canHide?: boolean;
+  canCompact?: boolean;
+  labels?: { key: string; label: string; default: string }[];
+}>;
+export type DescriptionDefaultsTracker = Readonly<{ name: string; items: DescriptionLayoutItem[] }>;
+
+/** Sample-only rendering; saving defaults uses the normal settings draft. */
+export const descriptionDefaultsClient = {
+  list: (signal?: AbortSignal) =>
+    requestAppGet<DescriptionDefaultsTracker[]>("ListDescriptionDefaultsTrackers", { signal }),
+  preview: (tracker: string, sample: string, draft: ConfigMap, signal?: AbortSignal) =>
+    requestApp<string>(
+      "PreviewDescriptionDefaults",
+      { Tracker: tracker, Sample: sample, Draft: draft },
+      { signal },
+    ),
 };
 
 /** Tracker catalog and image-host policy metadata. */

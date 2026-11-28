@@ -232,6 +232,15 @@ func mergeConfigMapAt(base map[string]any, overlay map[string]any, path string) 
 		}
 		if !exists {
 			switch {
+			// Optional layout preferences are not serialized into the default map.
+			case path == "description_settings" && slices.Contains([]string{"section_order", "audio_plots_label", "hdr_plots_label", "vob_report_label", "screenshot_label", "labels", "item_options"}, key),
+				path == "Description" &&
+					slices.Contains(
+						[]string{"SectionOrder", "AudioPlotsLabel", "HDRPlotsLabel", "VOBReportLabel", "ScreenshotLabel", "Labels", "ItemOptions"},
+						key,
+					):
+				base[key] = overlayValue
+				continue
 			case isTrackerEntryPath(path):
 				base[key] = overlayValue
 				continue

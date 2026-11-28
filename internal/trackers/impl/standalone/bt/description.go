@@ -4,9 +4,12 @@
 package bt
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/description"
 	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -16,18 +19,44 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 	if assets.Final {
 		return strings.TrimSpace(assets.Description)
 	}
+	text := composeDescription(req, assets)
+
+	// Explicit dry runs retain the local diagnostic description artifact.
+	if req.Intent == trackers.PreparationIntentDryRun {
+		descriptionunit3d.SaveDescriptionDebug(api.NewDescriptionSubject(req.Meta), "BT", req.Runtime.DBPath, text, req.Logger)
+	}
+
+	return text
+}
+
+func renderDescriptionSample(
+	_ context.Context,
+	sample trackers.DescriptionSample,
+	defaults config.DescriptionSettingsConfig,
+	_ config.TrackerConfig,
+) (string, error) {
+	return composeDescription(trackers.PreparationInput{
+		Meta:    sample.Subject,
+		Runtime: trackers.PreparationRuntime{Description: defaults},
+	}, sample.Assets), nil
+}
+
+func composeDescription(req trackers.PreparationInput, assets trackers.DescriptionAssets) string {
 	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
 	meta := req.Meta
-	var parts []string
+	var parts []description.Section
+	appendPart := func(id, text string) {
+		parts = description.AppendSection(parts, id, text)
+	}
 
 	// Custom Header
 	if header := strings.TrimSpace(req.Runtime.Description.CustomDescriptionHeader); header != "" {
-		parts = append(parts, header)
+		appendPart("custom_header", header)
 	}
 
 	// Logo
 	if logo := resolveLogo(meta); logo != "" {
-		parts = append(parts, "[center][img]"+logo+"[/img][/center]")
+		appendPart("logo", "[center][img]"+logo+"[/img][/center]")
 	}
 
 	// TV Episode details
@@ -42,35 +71,27 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 	}
 	if episode := strings.TrimSpace(epOverview); episode != "" {
 		if title := strings.TrimSpace(epTitle); title != "" {
-			parts = append(parts, "[center]"+title+"[/center]")
+			appendPart("episode_overview", "[center]"+title+"[/center]")
 		}
-		parts = append(parts, "[center]"+episode+"[/center]")
+		appendPart("episode_overview", "[center]"+episode+"[/center]")
 	}
 
 	// User description
 	if strings.TrimSpace(assets.Description) != "" {
-		parts = append(parts, strings.TrimSpace(assets.Description))
+		appendPart("kept", strings.TrimSpace(assets.Description))
 	}
 
 	// Tonemapped Header
 	if tonemapHeader := descriptionunit3d.TonemappingNotice(req.Runtime.Description.TonemappedHeader, assets.Screenshots); tonemapHeader != "" {
-		parts = append(parts, tonemapHeader)
+		appendPart("tonemap_header", tonemapHeader)
 	}
 
 	// Signature
 	link, _ := descriptionunit3d.UppbrrSignatureLink()
-	parts = append(parts, fmt.Sprintf("[center][url=%s]Upload realizado via %s[/url][/center]", link, "upbrr"))
+	appendPart("", fmt.Sprintf("[center][url=%s]Upload realizado via %s[/url][/center]", link, "upbrr"))
 
 	// Join and finalize
-	description := strings.Join(parts, "\n\n")
-	finalized := finalizeDescription(description)
-
-	// Explicit dry runs retain the local diagnostic description artifact.
-	if req.Intent == trackers.PreparationIntentDryRun {
-		descriptionunit3d.SaveDescriptionDebug(api.NewDescriptionSubject(meta), "BT", req.Runtime.DBPath, finalized, req.Logger)
-	}
-
-	return finalized
+	return finalizeDescription(description.FormatSections(parts, req.Runtime.Description))
 }
 
 func resolveDirectors(meta api.UploadSubject) string {
@@ -167,4 +188,37 @@ func resolveOverview(meta api.UploadSubject, ptBR api.TMDBLocalizedData) string 
 		return strings.TrimSpace(meta.ProviderMetadata.IMDB.Plot)
 	}
 	return ""
+}
+
+func descriptionDefaultsLayout() []trackers.DescriptionLayoutItem {
+	return []trackers.DescriptionLayoutItem{
+		{
+			ID:         "custom_header",
+			Label:      "Introduction",
+			CanCompact: true,
+			Fields:     []string{"CustomDescriptionHeader"},
+		},
+		{
+			ID:         "logo",
+			Label:      "Title logo",
+			CanCompact: true,
+		},
+		{
+			ID:         "episode_overview",
+			Label:      "Episode overview",
+			CanCompact: true,
+		},
+		{
+			ID:         "kept",
+			Label:      "Imported or custom text",
+			CanCompact: true,
+		},
+		{
+			ID:         "tonemap_header",
+			Label:      "Tonemapping notice",
+			CanCompact: true,
+			Fields:     []string{"TonemappedHeader"},
+		},
+		{Label: "Signature footer"},
+	}
 }

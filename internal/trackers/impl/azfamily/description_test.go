@@ -6,10 +6,12 @@ package azfamily
 import (
 	"strings"
 	"testing"
+
+	"github.com/autobrr/upbrr/internal/config"
 )
 
 func TestBuildDescriptionRemovesImportedUpbrrSignature(t *testing.T) {
-	got := buildDescription("Release notes\n[right][url=https://github.com/autobrr/upbrr][size=4]Uploaded by upbrr[/size][/url][/right]")
+	got := buildDescription("Release notes\n[right][url=https://github.com/autobrr/upbrr][size=4]Uploaded by upbrr[/size][/url][/right]", config.DescriptionSettingsConfig{})
 	if got != "Release notes" {
 		t.Fatalf("unexpected description: %q", got)
 	}
@@ -17,7 +19,7 @@ func TestBuildDescriptionRemovesImportedUpbrrSignature(t *testing.T) {
 
 func TestBuildDescriptionRendersAudioAnalysisAfterNotes(t *testing.T) {
 	t.Parallel()
-	got := buildDescription("Release notes\n\n[spoiler=Audio Plots]\n[img]https://images.example.invalid/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]")
+	got := buildDescription("Release notes\n\n[spoiler=Audio Plots]\n[img]https://images.example.invalid/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]", config.DescriptionSettingsConfig{})
 	for _, token := range []string{"Release notes", "<details>", "<img", "https://images.example.invalid/audio.png", "<pre><code>Peak: -1 dB</code></pre>"} {
 		if !strings.Contains(got, token) {
 			t.Fatalf("missing %q in description %q", token, got)
@@ -30,7 +32,7 @@ func TestBuildDescriptionRendersAudioAnalysisAfterNotes(t *testing.T) {
 
 func TestBuildDescriptionAudioPayload(t *testing.T) {
 	t.Parallel()
-	got := buildDescription("Release notes\n\n[spoiler=Audio Plots]\n[img]https://images.example.invalid/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]")
+	got := buildDescription("Release notes\n\n[spoiler=Audio Plots]\n[img]https://images.example.invalid/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]", config.DescriptionSettingsConfig{})
 	want := "Release notes<br>\n<details><summary>Audio Plots</summary><br /><img src=\"https://images.example.invalid/audio.png\" /><br /><pre><code>Peak: -1 dB</code></pre><br /></details>"
 	if got != want {
 		t.Fatalf("audio payload changed:\ngot:  %q\nwant: %q", got, want)

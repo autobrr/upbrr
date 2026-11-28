@@ -8,6 +8,7 @@ import { useRouteViews } from "./RouteViews";
 
 const SettingsPage = lazy(() => import("../pages/settings"));
 const LoggingPage = lazy(() => import("../pages/logging"));
+const DescriptionDefaultsPage = lazy(() => import("../pages/description_defaults"));
 
 type ConfigOpStatus = {
   type: "success" | "error" | "warning";
@@ -120,4 +121,10 @@ export function LoggingRoute() {
       />
     </Suspense>
   );
+}
+
+export function DescriptionDefaultsRoute() {
+  const { settings } = useRouteViews();
+  const { renderField } = createSettingsRenderers(settings.editorContext);
+  return <DescriptionDefaultsPage settings={settings} renderField={renderField} />;
 }

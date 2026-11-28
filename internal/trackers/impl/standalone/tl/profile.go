@@ -15,16 +15,18 @@ import (
 // including the strict requirement for matching TMDB or IMDb metadata.
 func Profile() standalone.Profile {
 	return standalone.Profile{
-		ConnectionProbe:     trackers.ConnectionProbe{Test: testConnection, StoredCookies: true},
-		UsesMenuImages:      true,
-		Name:                "TL",
-		BaseURL:             baseURL,
-		DescriptionGroup:    "tl",
-		UploadContentMode:   trackers.UploadContentModeDescription,
-		PrepareDescription:  prepareDescription,
-		PrepareUpload:       prepareUpload,
-		ReleaseNamePolicy:   trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/tl/v2", resolveName, resolveSearchName),
-		NewDuplicateAdapter: newDuplicateAdapter,
+		ConnectionProbe:           trackers.ConnectionProbe{Test: testConnection, StoredCookies: true},
+		UsesMenuImages:            true,
+		Name:                      "TL",
+		BaseURL:                   baseURL,
+		DescriptionGroup:          "tl",
+		UploadContentMode:         trackers.UploadContentModeDescription,
+		PrepareDescription:        prepareDescription,
+		DescriptionDefaultsLayout: trackers.StandaloneGalleryLayout,
+		DescriptionSample:         renderDescriptionSample,
+		PrepareUpload:             prepareUpload,
+		ReleaseNamePolicy:         trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/tl/v2", resolveName, resolveSearchName),
+		NewDuplicateAdapter:       newDuplicateAdapter,
 		DupePolicy: &trackers.DupePolicy{
 			ID:          "standalone/tl/authenticated-search/v4",
 			SearchScope: trackers.DupeSearchScope{MaxPages: 100},

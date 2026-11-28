@@ -105,12 +105,17 @@ func TestLSTFinalDescriptionRequiresDiscParserReports(t *testing.T) {
 	if err := validateFinalDescription(meta, description, "General\nFormat : DVD Video", ""); err == nil {
 		t.Fatal("missing VOB spoiler accepted")
 	}
-	description = descriptionunit3d.AppendDVDVOBMediaInfoBlock(description, api.NewDescriptionSubject(meta))
-	if err := validateFinalDescription(meta, description, meta.DVDVOBMediaInfoText, ""); err == nil {
-		t.Fatal("VOB report accepted instead of IFO")
-	}
-	if err := validateFinalDescription(meta, description, "General\nFormat : DVD Video", ""); err != nil {
-		t.Fatal(err)
+	for _, label := range []string{"", "Disc video"} {
+		final := descriptionunit3d.AppendDVDVOBMediaInfoBlock(description, api.NewDescriptionSubject(meta), label)
+		if err := validateFinalDescription(meta, final, meta.DVDVOBMediaInfoText, ""); err == nil {
+			t.Fatal("VOB report accepted instead of IFO")
+		}
+		if err := validateFinalDescription(meta, final, "General\nFormat : DVD Video", ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := validateFinalDescription(meta, strings.Replace(final, meta.DVDVOBMediaInfoText, "Wrong evidence", 1), "General\nFormat : DVD Video", ""); err == nil {
+			t.Fatal("spoiler with the wrong report accepted")
+		}
 	}
 }
 

@@ -48,51 +48,67 @@ func BuildDescription(
 	default:
 	}
 
-	keptDescription = trackers.StripDescriptionSignatures(keptDescription)
-	keptDescription, discReports := description.SplitLeadingDiscReports(keptDescription)
-	keptDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(keptDescription)
-	parts := make([]string, 0, 8)
-
-	if strings.EqualFold(strings.TrimSpace(meta.Type), "WEBDL") && strings.TrimSpace(meta.ServiceLongName) != "" && strings.TrimSpace(keptDescription) == "" {
-		parts = append(parts, fmt.Sprintf("[center][quote]This release is sourced from %s[/quote][/center]", strings.TrimSpace(meta.ServiceLongName)))
-	}
-
 	discSection, err := buildDiscSection(meta, appConfig.MainSettings.DBPath)
 	if err != nil {
 		return "", err
 	}
+	return composeDescription(meta, appConfig.Description, keptDescription, menuImages, screenshots, discSection), nil
+}
+
+func composeDescription(
+	meta api.UploadSubject,
+	defaults config.DescriptionSettingsConfig,
+	keptDescription string,
+	menuImages, screenshots []api.ScreenshotImage,
+	discSection string,
+) string {
+	keptDescription = trackers.StripDescriptionSignatures(keptDescription)
+	keptDescription, discReports := description.SplitLeadingDiscReports(keptDescription)
+	keptDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(keptDescription)
+	audioAnalysis = description.RelabelAnalysis(audioAnalysis, defaults.AudioPlotsLabel, defaults.HDRPlotsLabel)
+	keptDescription, comparisonBlock := description.SeparateGeneratedComparison(keptDescription, defaults)
+	var parts []description.Section
+	appendPart := func(id, text string) { parts = description.AppendSection(parts, id, text) }
+
+	if strings.EqualFold(strings.TrimSpace(meta.Type), "WEBDL") && strings.TrimSpace(meta.ServiceLongName) != "" && strings.TrimSpace(keptDescription) == "" {
+		appendPart("web_source", fmt.Sprintf("[center][quote]This release is sourced from %s[/quote][/center]", strings.TrimSpace(meta.ServiceLongName)))
+	}
+
 	if strings.TrimSpace(discSection) != "" {
-		parts = append(parts, discSection)
+		appendPart("mediainfo", discSection)
 	}
 
 	if transformed := transformBaseDescription(keptDescription, len(menuImages) > 0 || len(screenshots) > 0); strings.TrimSpace(transformed) != "" {
-		parts = append(parts, transformed)
+		appendPart("kept", transformed)
 	}
 
+	if text := transformBaseDescription(comparisonBlock, false); text != "" {
+		appendPart("comparison", text)
+	}
 	if len(menuImages) > 0 {
-		if header := strings.TrimSpace(appConfig.Description.DiscMenuHeader); header != "" {
-			parts = append(parts, header)
+		if header := strings.TrimSpace(defaults.DiscMenuHeader); header != "" {
+			appendPart("disc_menu", header)
 		}
 		if section := buildDiscScreenshotSections(meta, menuImages, 0); section != "" {
-			parts = append(parts, section)
+			appendPart("disc_menu", section)
 		}
 	}
 	if audioAnalysis != "" {
-		parts = append(parts, transformBaseDescription(audioAnalysis, false))
+		appendPart("audio_analysis", transformBaseDescription(audioAnalysis, false))
 	}
 
 	if discReports != "" {
-		parts = append(parts, transformBaseDescription(discReports, false))
+		appendPart("screenshots", transformBaseDescription(discReports, false))
 	}
 	if section := buildScreenshotSection(screenshots, meta.Options.Screens); section != "" {
-		parts = append(parts, section)
+		appendPart("screenshots", section)
 	}
 
-	if signature := strings.TrimSpace(appConfig.Description.CustomSignature); signature != "" {
-		parts = append(parts, signature)
+	if signature := strings.TrimSpace(defaults.CustomSignature); signature != "" {
+		appendPart("", signature)
 	}
 
-	return normalize(strings.Join(parts, "\n\n")), nil
+	return normalize(description.FormatSections(parts, defaults))
 }
 
 func buildDiscSection(meta api.UploadSubject, dbPath string) (string, error) {
@@ -279,4 +295,59 @@ func normalize(value string) string {
 	}
 	re := regexp.MustCompile(`\n{3,}`)
 	return strings.TrimSpace(re.ReplaceAllString(trimmed, "\n\n"))
+}
+
+func descriptionDefaultsLayout() []trackers.DescriptionLayoutItem {
+	return []trackers.DescriptionLayoutItem{
+		{
+			ID:         "web_source",
+			Label:      "Web source notice",
+			CanCompact: true,
+		},
+		{
+			ID:         "mediainfo",
+			Label:      "VOB MediaInfo or BDInfo",
+			CanCompact: true,
+		},
+		{
+			ID:         "kept",
+			Label:      "Imported or custom text",
+			CanCompact: true,
+		},
+		trackers.ComparisonLayoutItem(),
+		{
+			ID:         "disc_menu",
+			Label:      "Disc menus",
+			CanCompact: true,
+			Fields:     []string{"DiscMenuHeader"},
+		},
+		{
+			ID:         "audio_analysis",
+			Label:      "Audio and HDR analysis",
+			CanCompact: true,
+			Fields:     []string{"AudioPlotsLabel", "HDRPlotsLabel"},
+		},
+		{
+			ID:         "screenshots",
+			Label:      "Screenshots and disc reports",
+			CanCompact: true,
+		},
+		{Label: "Signature footer", Fields: []string{"CustomSignature"}},
+	}
+}
+
+func renderDescriptionSample(
+	_ context.Context,
+	sample trackers.DescriptionSample,
+	defaults config.DescriptionSettingsConfig,
+	_ config.TrackerConfig,
+) (string, error) {
+	var report string
+	switch sample.Subject.DiscType {
+	case "DVD":
+		report = "[quote=VOB MediaInfo]" + sample.Subject.DVDVOBMediaInfoText + "[/quote]"
+	case "BDMV":
+		report = "[quote]" + sample.Report + "[/quote]"
+	}
+	return composeDescription(sample.Subject, defaults, sample.Assets.Description, sample.Assets.MenuImages, sample.Assets.Screenshots, report), nil
 }

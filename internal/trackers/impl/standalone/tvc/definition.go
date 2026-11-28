@@ -29,6 +29,6 @@ func prepareDescription(_ context.Context, req trackers.PreparationInput) (track
 	if err != nil {
 		assets = trackers.DescriptionAssets{}
 	}
-	description := buildDescription(req.Meta, req.TrackerConfig, req.Runtime.Description.AddLogo, assets)
+	description := buildDescription(req.Meta, req.TrackerConfig, req.Runtime.Description, assets)
 	return trackers.DescriptionResult{Group: "tvc", Description: description}, nil
 }

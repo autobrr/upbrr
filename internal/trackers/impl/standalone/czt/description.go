@@ -14,6 +14,9 @@ import (
 	"context"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/description"
+
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -36,7 +39,7 @@ func uploadDescriptionAssets(_ context.Context, req trackers.PreparationInput) t
 // user-edited) description text followed by a BBCode screenshot block. Kept as a
 // separate function so definition.BuildDescription can drive the description
 // builder UI with the same output.
-func buildDescription(_ trackers.PreparationInput, assets trackers.DescriptionAssets) string {
+func buildDescription(req trackers.PreparationInput, assets trackers.DescriptionAssets) string {
 	// A "final" description is the already-assembled body (saved override or
 	// canonical group description) with screenshots embedded; the resolver does
 	// not clear assets.Screenshots here, so re-appending would duplicate them.
@@ -45,14 +48,11 @@ func buildDescription(_ trackers.PreparationInput, assets trackers.DescriptionAs
 		return strings.TrimSpace(assets.Description)
 	}
 	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
-	parts := make([]string, 0, 2)
-	if body := strings.TrimSpace(assets.Description); body != "" {
-		parts = append(parts, body)
+	parts := []description.Section{
+		{ID: "kept", Text: strings.TrimSpace(assets.Description)},
+		{ID: "screenshots", Text: bbcodeScreenshotBlock(assets.Screenshots)},
 	}
-	if shots := bbcodeScreenshotBlock(assets.Screenshots); shots != "" {
-		parts = append(parts, shots)
-	}
-	return strings.TrimSpace(strings.Join(parts, "\n\n"))
+	return description.FormatSections(parts, req.Runtime.Description)
 }
 
 // bbcodeScreenshotBlock renders at most two raw screenshot image URLs. CZTeam's
@@ -70,4 +70,13 @@ func bbcodeScreenshotBlock(images []api.ScreenshotImage) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+func renderDescriptionSample(
+	_ context.Context,
+	sample trackers.DescriptionSample,
+	defaults config.DescriptionSettingsConfig,
+	_ config.TrackerConfig,
+) (string, error) {
+	return buildDescription(trackers.PreparationInput{Runtime: trackers.PreparationRuntime{Description: defaults}}, sample.Assets), nil
 }

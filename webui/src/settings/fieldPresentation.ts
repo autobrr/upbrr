@@ -214,6 +214,19 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
       "DVD menu section heading",
       "Custom tracker markup before DVD menu images in supported builders. Empty leaves the builder's normal heading behavior.",
     ),
+    AudioPlotsLabel: field(
+      "Audio plots heading",
+      "Empty keeps the Audio Plots heading. Audio measurements and images are unchanged.",
+    ),
+    HDRPlotsLabel: field(
+      "HDR plots heading",
+      "Empty keeps the HDR plots heading. HDR measurements and images are unchanged.",
+    ),
+    VOBReportLabel: field(
+      "VOB report heading",
+      "Empty keeps the VOB MediaInfo heading. MediaInfo contents are unchanged.",
+    ),
+    ScreenshotLabel: field("Screenshots label", "Empty keeps the tracker's Screenshots label."),
     CustomSignature: field(
       "Description signature",
       "Custom tracker markup appended by supported description builders. Empty adds no custom signature. Unsupported markup is not made portable automatically.",

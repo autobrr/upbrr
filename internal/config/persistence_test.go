@@ -889,6 +889,56 @@ func TestSaveSectionsToDatabaseRejectsMultiSectionFallbackBeforeWrites(t *testin
 	}
 }
 
+func TestDescriptionSectionOrderPersistsAndClears(t *testing.T) {
+	repo := &sectionBatchPreserveRepo{raw: defaultDatabaseConfigMap(t)}
+	initial, ok := repo.raw["Description"].(map[string]any)
+	if !ok {
+		t.Fatal("expected default description section")
+	}
+	if _, present := initial["SectionOrder"]; present {
+		t.Fatal("absent optional order changed legacy JSON")
+	}
+	cfg, err := LoadFromDatabase(t.Context(), repo)
+	if err != nil || cfg.Description.SectionOrder != nil {
+		t.Fatalf("read legacy order: %v, %v", cfg, err)
+	}
+	for _, want := range []struct {
+		order DescriptionSectionOrder
+		label string
+	}{
+		{order: DescriptionSectionOrder{"screenshots", "kept"}, label: "Audio tracks"},
+		{order: DescriptionSectionOrder{}},
+	} {
+		cfg.Description.SectionOrder = want.order
+		cfg.Description.AudioPlotsLabel = want.label
+		cfg.Description.Labels = nil
+		cfg.Description.ItemOptions = nil
+		if want.label != "" {
+			cfg.Description.Labels = map[string]string{"comparison.heading": "Source comparison"}
+			cfg.Description.ItemOptions = map[string]DescriptionItemOptions{"comparison": {Compact: true}}
+		}
+		if err := SaveSectionsToDatabase(t.Context(), cfg, []string{"Description"}, repo); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err = LoadFromDatabase(t.Context(), repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := cfg.Description.SectionOrder; got == nil || !slices.Equal(got, want.order) {
+			t.Fatalf("order after save and reload = %#v, want %#v", got, want.order)
+		}
+		if got := cfg.Description.AudioPlotsLabel; got != want.label {
+			t.Fatalf("label after save and reload = %q, want %q", got, want.label)
+		}
+		if hasHeading := cfg.Description.Labels["comparison.heading"] == "Source comparison"; hasHeading != (want.label != "") {
+			t.Fatalf("comparison heading was not saved or cleared: %#v", cfg.Description.Labels)
+		}
+		if compact := cfg.Description.ItemOptions["comparison"].Compact; compact != (want.label != "") {
+			t.Fatalf("comparison spacing was not saved or cleared: %#v", cfg.Description.ItemOptions)
+		}
+	}
+}
+
 func TestSaveSectionsToDatabasePreservesStoredUnknownSameRootFields(t *testing.T) {
 	t.Parallel()
 

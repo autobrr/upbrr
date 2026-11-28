@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -22,14 +23,14 @@ func TestBHDComparisonMarkupStaysExactAndSeparateImagesImport(t *testing.T) {
 		report.Images[0].RawURL != "https://img.example/screen.png" {
 		t.Fatalf("comparison preservation or screenshot extraction failed: %#v", report)
 	}
-	got := buildDescription(api.UploadSubject{}, trackers.DescriptionAssets{Description: source})
+	got := buildDescription(config.DescriptionSettingsConfig{}, api.UploadSubject{}, trackers.DescriptionAssets{Description: source})
 	if !strings.Contains(got, comparison) || strings.Count(got, "https://img.example/screen.png") != 1 {
 		t.Fatalf("BHD builder changed comparison or duplicated screenshot: %q", got)
 	}
 }
 
 func TestBHDDescriptionUsesBBCodePreviewWithHTMLLikeComparison(t *testing.T) {
-	raw := buildDescription(api.UploadSubject{}, trackers.DescriptionAssets{
+	raw := buildDescription(config.DescriptionSettingsConfig{}, api.UploadSubject{}, trackers.DescriptionAssets{
 		Description: "[spoiler=Comparisons]<strong>Source</strong>[/spoiler]",
 		Screenshots: []api.ScreenshotImage{{
 			ImgURL: "https://images.example.invalid/thumb.jpg",
@@ -53,7 +54,7 @@ func TestBHDNestedComparisonMarkupStaysExact(t *testing.T) {
 		report.Images[0].RawURL != "https://img.example/screen.png" {
 		t.Fatalf("nested BHD comparison changed or imported: %#v", report)
 	}
-	if rendered := buildDescription(api.UploadSubject{}, trackers.DescriptionAssets{Description: source}); !strings.Contains(rendered, comparison) {
+	if rendered := buildDescription(config.DescriptionSettingsConfig{}, api.UploadSubject{}, trackers.DescriptionAssets{Description: source}); !strings.Contains(rendered, comparison) {
 		t.Fatalf("BHD builder changed nested comparison: %q", rendered)
 	}
 }
@@ -75,7 +76,7 @@ func TestBHDFluxComparisonRendersOutsideCode(t *testing.T) {
 	if report.Description != "[code]Before[/code]\n\n"+comparison+"\n\n[code]After[/code]" {
 		t.Fatalf("Flux cleaner wrapped comparison as code: %q", report.Description)
 	}
-	got := buildDescription(api.UploadSubject{Tag: "FLUX"}, trackers.DescriptionAssets{Description: source})
+	got := buildDescription(config.DescriptionSettingsConfig{}, api.UploadSubject{Tag: "FLUX"}, trackers.DescriptionAssets{Description: source})
 	if !strings.Contains(got, report.Description) {
 		t.Fatalf("BHD builder changed Flux comparison markup: %q", got)
 	}

@@ -22,6 +22,7 @@ export const screenPaths = {
   history: "/history",
   settings: "/settings",
   logging: "/logging",
+  description_defaults: "/description-defaults",
 } as const;
 
 export type ScreenId = keyof typeof screenPaths;
@@ -116,6 +117,11 @@ export function createAppRouter(shell: () => ReactElement) {
       getParentRoute: () => rootRoute,
       path: screenPaths.logging,
       component: routeComponents.logging,
+    }),
+    createRoute({
+      getParentRoute: () => rootRoute,
+      path: screenPaths.description_defaults,
+      component: routeComponents.description_defaults,
     }),
   ] as const;
   const routeTree = rootRoute.addChildren([indexRoute, ...routes]);

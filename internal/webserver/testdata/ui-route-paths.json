@@ -12,5 +12,6 @@
   "/upload",
   "/history",
   "/settings",
-  "/logging"
+  "/logging",
+  "/description-defaults"
 ]

@@ -22,15 +22,17 @@ func Profile() standalone.Profile {
 		ConnectionProbe: trackers.ConnectionProbe{Test: testConnection, DraftConfig: func(cfg config.TrackerConfig) config.TrackerConfig {
 			return config.TrackerConfig{Username: cfg.Username, Passkey: cfg.Passkey}
 		}},
-		UsesMenuImages:     true,
-		Name:               "HDB",
-		BaseURL:            hdbBaseURL,
-		DescriptionGroup:   "hdb",
-		UploadContentMode:  trackers.UploadContentModeDescription,
-		ReleaseNamePolicy:  releaseNamePolicy(),
-		Rules:              &trackers.RuleSet{MinResolution: "720p"},
-		ValidationPolicy:   trackers.WithLanguageAssessment(validationPolicy(), languageAssessment),
-		PrepareDescription: prepareDescription,
+		UsesMenuImages:            true,
+		Name:                      "HDB",
+		BaseURL:                   hdbBaseURL,
+		DescriptionGroup:          "hdb",
+		UploadContentMode:         trackers.UploadContentModeDescription,
+		ReleaseNamePolicy:         releaseNamePolicy(),
+		Rules:                     &trackers.RuleSet{MinResolution: "720p"},
+		ValidationPolicy:          trackers.WithLanguageAssessment(validationPolicy(), languageAssessment),
+		PrepareDescription:        prepareDescription,
+		DescriptionDefaultsLayout: descriptionDefaultsLayout,
+		DescriptionSample:         renderDescriptionSample,
 		PrepareUpload: func(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
 			return prepareUploadAt(ctx, req, hdbBaseURL, nil)
 		},

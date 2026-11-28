@@ -34,20 +34,21 @@ const eventSessionLogStopGracePeriod = 50 * time.Millisecond
 // uiRoutePaths mirrors the browser router's explicit paths. Only these paths
 // may fall back to the SPA shell when no embedded file exists.
 var uiRoutePaths = map[string]struct{}{
-	"/input":             {},
-	"/tracker-data":      {},
-	"/bluray-candidates": {},
-	"/hdr-analysis":      {},
-	"/audio-analysis":    {},
-	"/duplicates":        {},
-	"/screenshots":       {},
-	"/menu-images":       {},
-	"/uploaded-images":   {},
-	"/descriptions":      {},
-	"/upload":            {},
-	"/history":           {},
-	"/settings":          {},
-	"/logging":           {},
+	"/input":                {},
+	"/tracker-data":         {},
+	"/bluray-candidates":    {},
+	"/hdr-analysis":         {},
+	"/audio-analysis":       {},
+	"/duplicates":           {},
+	"/screenshots":          {},
+	"/menu-images":          {},
+	"/uploaded-images":      {},
+	"/descriptions":         {},
+	"/upload":               {},
+	"/history":              {},
+	"/settings":             {},
+	"/logging":              {},
+	"/description-defaults": {},
 }
 
 var sessionLogStopGenerations = struct {

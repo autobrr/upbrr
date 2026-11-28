@@ -4,106 +4,127 @@
 package hds
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/description"
 	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
-
-	"context"
 )
 
 func buildDescription(req trackers.PreparationInput, assets trackers.DescriptionAssets) string {
 	if assets.Final {
 		return strings.TrimSpace(assets.Description)
 	}
+	finalDescription := composeDescription(req, assets, trackers.ReadMediaInfoForDescription(req.Runtime.DBPath, req.Meta))
+
+	// Explicit dry runs retain the local diagnostic description artifact.
+	if req.Intent == trackers.PreparationIntentDryRun {
+		descriptionunit3d.SaveDescriptionDebug(api.NewDescriptionSubject(req.Meta), "HDS", req.Runtime.DBPath, finalDescription, req.Logger)
+	}
+
+	return finalDescription
+}
+
+func renderDescriptionSample(
+	_ context.Context,
+	sample trackers.DescriptionSample,
+	settings config.DescriptionSettingsConfig,
+	tracker config.TrackerConfig,
+) (string, error) {
+	return composeDescription(trackers.PreparationInput{
+		Meta:          sample.Subject,
+		Runtime:       trackers.PreparationRuntime{Description: settings},
+		TrackerConfig: tracker,
+	}, sample.Assets, sample.Report), nil
+}
+
+func composeDescription(req trackers.PreparationInput, assets trackers.DescriptionAssets, media string) string {
 	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
 	baseDescription, discReports := description.SplitLeadingDiscReports(assets.Description)
 	baseDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(baseDescription)
+	audioAnalysis = description.LabelAnalysisWithoutSpoilers(audioAnalysis, req.Runtime.Description.AudioPlotsLabel, req.Runtime.Description.HDRPlotsLabel)
 	assets.Description = baseDescription
 	meta := req.Meta
-	parts := make([]string, 0, 12)
+	parts := make([]description.Section, 0, 12)
+	appendPart := func(id, text string) {
+		parts = description.AppendSection(parts, id, text)
+	}
 
 	// Custom Header
 	if header := strings.TrimSpace(req.Runtime.Description.CustomDescriptionHeader); header != "" {
-		parts = append(parts, header)
+		appendPart("custom_header", header)
 	}
 
 	// Logo
 	if req.Runtime.Description.AddLogo {
 		if logo := resolveLogo(meta); logo != "" {
-			parts = append(parts, "[center][img]"+logo+"[/img][/center]")
+			appendPart("logo", "[center][img]"+logo+"[/img][/center]")
 		}
 	}
 
 	// TV Episode details
 	if strings.TrimSpace(meta.EpisodeOverview) != "" {
-		parts = append(parts, "[center]"+strings.TrimSpace(meta.EpisodeTitle)+"[/center]")
-		parts = append(parts, "[center]"+strings.TrimSpace(meta.EpisodeOverview)+"[/center]")
+		appendPart("episode_overview", "[center]"+strings.TrimSpace(meta.EpisodeTitle)+"[/center]")
+		appendPart("episode_overview", "[center]"+strings.TrimSpace(meta.EpisodeOverview)+"[/center]")
 	}
 
 	// File information (BDInfo or MediaInfo)
-	if media := trackers.ReadMediaInfoForDescription(req.Runtime.DBPath, meta); media != "" {
-		parts = append(parts, "[pre]"+media+"[/pre]")
+	if media != "" {
+		appendPart("mediainfo", "[pre]"+media+"[/pre]")
 	}
 
 	// User description
 	if strings.TrimSpace(assets.Description) != "" {
-		parts = append(parts, strings.TrimSpace(assets.Description))
+		appendPart("kept", strings.TrimSpace(assets.Description))
 	}
 
 	// menu
 	if len(assets.MenuImages) > 0 {
 		// header
 		if header := strings.TrimSpace(req.Runtime.Description.DiscMenuHeader); header != "" {
-			parts = append(parts, header)
+			appendPart("disc_menu", header)
 		}
 		// images
 		if shots := screenshotBlock(assets.MenuImages); shots != "" {
-			parts = append(parts, shots)
+			appendPart("disc_menu", shots)
 		}
 	}
 	if audioAnalysis != "" {
-		parts = append(parts, audioAnalysis)
+		appendPart("audio_analysis", audioAnalysis)
 	}
 	if discReports != "" {
-		parts = append(parts, discReports)
+		appendPart("screenshots", discReports)
 	}
 	// Screenshot Header
 	if header := strings.TrimSpace(req.Runtime.Description.ScreenshotHeader); header != "" {
-		parts = append(parts, header)
+		appendPart("screenshots", header)
 	}
 
 	// Tonemapped Header
 	if tonemapHeader := descriptionunit3d.TonemappingNotice(req.Runtime.Description.TonemappedHeader, assets.Screenshots); tonemapHeader != "" {
-		parts = append(parts, tonemapHeader)
+		appendPart("screenshots", tonemapHeader)
 	}
 
 	// screenshots
 	if shots := screenshotBlock(assets.Screenshots); shots != "" {
-		parts = append(parts, shots)
+		appendPart("screenshots", shots)
 	}
 
 	// custom user signature
 	if signature := strings.TrimSpace(req.Runtime.Description.CustomSignature); signature != "" {
-		parts = append(parts, signature)
+		appendPart("", signature)
 	}
 
 	// upbrr signature
 	link, text := descriptionunit3d.UppbrrSignatureLink()
-	parts = append(parts, fmt.Sprintf("[center][url=%s][size=2]%s[/size][/url][/center]", link, text))
+	appendPart("", fmt.Sprintf("[center][url=%s][size=2]%s[/size][/url][/center]", link, text))
 
 	// finalize description
-	finalDescription := finalizeDescription(strings.TrimSpace(strings.Join(parts, "\n\n")))
-
-	// Explicit dry runs retain the local diagnostic description artifact.
-	if req.Intent == trackers.PreparationIntentDryRun {
-		descriptionunit3d.SaveDescriptionDebug(api.NewDescriptionSubject(meta), "HDS", req.Runtime.DBPath, finalDescription, req.Logger)
-	}
-
-	return finalDescription
+	return finalizeDescription(strings.TrimSpace(description.FormatSections(parts, req.Runtime.Description)))
 }
 
 func screenshotBlock(images []api.ScreenshotImage) string {

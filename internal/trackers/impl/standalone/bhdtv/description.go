@@ -4,8 +4,11 @@
 package bhdtv
 
 import (
+	"context"
 	"fmt"
 	"strings"
+
+	"github.com/autobrr/upbrr/internal/config"
 
 	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
@@ -24,19 +27,16 @@ func resolveInlineDescription(meta api.UploadSubject) string {
 	return text
 }
 
-func buildDescription(assets trackers.DescriptionAssets) string {
+func buildDescription(assets trackers.DescriptionAssets, defaults config.DescriptionSettingsConfig) string {
 	if assets.Final {
 		return strings.TrimSpace(assets.Description)
 	}
 	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
 	baseDescription, discReports := description.SplitLeadingDiscReports(assets.Description)
 	base := strings.ReplaceAll(strings.TrimSpace(baseDescription), "[img=250]", "[img=250x250]")
-	parts := make([]string, 0, 1+len(assets.Screenshots))
-	if base != "" {
-		parts = append(parts, base)
-	}
+	gallery := make([]string, 0, 1+len(assets.Screenshots))
 	if discReports != "" {
-		parts = append(parts, discReports)
+		gallery = append(gallery, discReports)
 	}
 	for _, image := range assets.Screenshots {
 		webURL := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.WebURL, image.RawURL))
@@ -44,7 +44,20 @@ func buildDescription(assets trackers.DescriptionAssets) string {
 		if webURL == "" || imgURL == "" {
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("[url=%s][img]%s[/img][/url]", webURL, imgURL))
+		gallery = append(gallery, fmt.Sprintf("[url=%s][img]%s[/img][/url]", webURL, imgURL))
 	}
-	return strings.Join(parts, " ")
+	parts := []description.Section{
+		{ID: "kept", Text: base},
+		{ID: "screenshots", Text: strings.Join(gallery, " ")},
+	}
+	return description.FormatSectionsSeparated(parts, defaults, " ")
+}
+
+func renderDescriptionSample(
+	_ context.Context,
+	sample trackers.DescriptionSample,
+	defaults config.DescriptionSettingsConfig,
+	_ config.TrackerConfig,
+) (string, error) {
+	return buildDescription(sample.Assets, defaults), nil
 }

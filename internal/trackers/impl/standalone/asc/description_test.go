@@ -100,7 +100,7 @@ func TestBuildTechnicalSheetHomepageURL(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := buildTechnicalSheet(api.UploadSubject{}, &richMediaResponse{Homepage: tc.homepage})
+			got := buildTechnicalSheet(api.UploadSubject{}, &richMediaResponse{Homepage: tc.homepage}, nil)
 			if got != tc.want {
 				t.Fatalf("expected %q, got %q", tc.want, got)
 			}
@@ -112,7 +112,7 @@ func TestBuildTechnicalSheetHomepageURLRejectsEncodedDelimiterThroughRender(t *t
 	t.Parallel()
 
 	homepage := "https://example.com/movie%5D%5B/url%5D%5Burl=https://evil.test%5D"
-	sheet := buildTechnicalSheet(api.UploadSubject{}, &richMediaResponse{Homepage: homepage})
+	sheet := buildTechnicalSheet(api.UploadSubject{}, &richMediaResponse{Homepage: homepage}, nil)
 	if sheet != "" {
 		t.Fatalf("expected encoded delimiter homepage to be omitted, got %q", sheet)
 	}

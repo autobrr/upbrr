@@ -31,7 +31,7 @@ func prepareDescription(ctx context.Context, req trackers.PreparationInput) (tra
 		}
 	}
 
-	description := buildDescription(req.Meta, req.Runtime.DBPath, assets)
+	description := buildDescription(req.Runtime.Description, req.Meta, req.Runtime.DBPath, assets)
 	return trackers.DescriptionResult{
 		Group:       "ar",
 		Description: strings.TrimSpace(description),

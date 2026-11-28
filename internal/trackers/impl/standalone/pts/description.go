@@ -4,8 +4,11 @@
 package pts
 
 import (
+	"context"
 	"fmt"
 	"strings"
+
+	"github.com/autobrr/upbrr/internal/config"
 
 	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
@@ -15,38 +18,76 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func buildDescription(meta api.UploadSubject, assets trackers.DescriptionAssets) string {
+func buildDescription(meta api.UploadSubject, assets trackers.DescriptionAssets, defaults config.DescriptionSettingsConfig) string {
 	if assets.Final {
 		return strings.TrimSpace(assets.Description)
 	}
-	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
-	baseDescription, discReports := description.SplitLeadingDiscReports(assets.Description)
-	parts := make([]string, 0, 4)
-	if info := commonhttp.ReadOptionalFile(strings.TrimSpace(meta.MediaInfoTextPath)); strings.TrimSpace(info) != "" {
-		parts = append(parts, info)
+	return composeDescription(assets, defaults, commonhttp.ReadOptionalFile(strings.TrimSpace(meta.MediaInfoTextPath)))
+}
+
+func descriptionDefaultsLayout() []trackers.DescriptionLayoutItem {
+	return []trackers.DescriptionLayoutItem{
+		{
+			ID:         "mediainfo",
+			Label:      "MediaInfo",
+			CanCompact: true,
+		},
+		{
+			ID:         "kept",
+			Label:      "Imported or custom text",
+			CanCompact: true,
+		},
+		{
+			ID:         "screenshots",
+			Label:      "Screenshots and disc reports",
+			CanCompact: true,
+			Fields:     []string{"ScreenshotLabel"},
+		},
+		{Label: "upbrr signature footer"},
+	}
+}
+
+func renderDescriptionSample(
+	_ context.Context,
+	sample trackers.DescriptionSample,
+	defaults config.DescriptionSettingsConfig,
+	_ config.TrackerConfig,
+) (string, error) {
+	return composeDescription(sample.Assets, defaults, sample.Report), nil
+}
+
+func composeDescription(assets trackers.DescriptionAssets, defaults config.DescriptionSettingsConfig, report string) string {
+	baseDescription, discReports := description.SplitLeadingDiscReports(trackers.StripDescriptionSignatures(assets.Description))
+	parts := make([]description.Section, 0, 4)
+	if strings.TrimSpace(report) != "" {
+		parts = description.AppendSection(parts, "mediainfo", report)
 	}
 	if base := strings.TrimSpace(baseDescription); base != "" {
-		parts = append(parts, sanitizeDescription(base))
+		parts = description.AppendSection(parts, "kept", sanitizeDescription(base))
 	}
 	if discReports != "" {
-		parts = append(parts, sanitizeDescription(discReports))
+		parts = description.AppendSection(parts, "screenshots", sanitizeDescription(discReports))
 	}
-	if shots := screenshotBlock(assets.Screenshots); shots != "" {
-		parts = append(parts, shots)
+	if shots := screenshotBlock(assets.Screenshots, defaults.ScreenshotLabel); shots != "" {
+		parts = description.AppendSection(parts, "screenshots", shots)
 	}
-	parts = append(parts, "[right][url=https://github.com/autobrr/upbrr][size=1]upbrr[/size][/url][/right]")
-	return finalizeDescription(strings.TrimSpace(strings.Join(parts, "\n\n")))
+	parts = description.AppendSection(parts, "", "[right][url=https://github.com/autobrr/upbrr][size=1]upbrr[/size][/url][/right]")
+	return finalizeDescription(strings.TrimSpace(description.FormatSections(parts, defaults)))
 }
 
 func sanitizeDescription(input string) string {
 	return finalizeDescription(input)
 }
 
-func screenshotBlock(images []api.ScreenshotImage) string {
+func screenshotBlock(images []api.ScreenshotImage, label string) string {
 	if len(images) == 0 {
 		return ""
 	}
-	lines := []string{"[center][b]Screenshots[/b]"}
+	label = description.MarkupLabel(label)
+	if label == "" {
+		label = "Screenshots"
+	}
+	lines := []string{"[center][b]" + label + "[/b]"}
 	for _, image := range images {
 		imgURL := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.ImgURL, image.RawURL))
 		webURL := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.WebURL, imgURL))

@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/bbcode"
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/internal/description/unit3d"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -151,4 +153,26 @@ func resolveScreenshotPayload(images []api.ScreenshotImage, allow bool) string {
 		}
 	}
 	return strings.Join(urls, "\n")
+}
+
+// DescriptionLayout exposes the shared items ANT emits in its description.
+// Screenshots and the TMDB logo are handled separately from this markup.
+func (*Definition) DescriptionLayout() []trackers.DescriptionLayoutItem {
+	return slices.DeleteFunc(trackers.SharedDescriptionLayout(), func(item trackers.DescriptionLayoutItem) bool {
+		return item.ID == "logo" || item.ID == "screenshots" || item.ID == "tonemap_header"
+	})
+}
+
+// RenderDescriptionSample applies ANT's normal text finalization to synthetic assets.
+func (*Definition) RenderDescriptionSample(
+	ctx context.Context,
+	sample trackers.DescriptionSample,
+	defaults config.DescriptionSettingsConfig,
+	_ config.TrackerConfig,
+) (string, error) {
+	return buildDescription(ctx, trackers.PreparationInput{
+		Meta:    sample.Subject,
+		Intent:  trackers.PreparationIntentDescriptionPreview,
+		Runtime: trackers.PreparationRuntime{Description: defaults},
+	}, sample.Assets)
 }

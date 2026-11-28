@@ -24,7 +24,7 @@ func prepareDescription(ctx context.Context, req trackers.PreparationInput) (tra
 		assets = trackers.DescriptionAssets{}
 	}
 
-	description := buildDescription(assets)
+	description := buildDescription(assets, req.Runtime.Description)
 	return trackers.DescriptionResult{
 		Group:       "bhdtv",
 		Description: description,

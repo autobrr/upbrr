@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
@@ -136,6 +137,28 @@ func (d *Definition) Prepare(ctx context.Context, input trackers.PreparationInpu
 		return trackers.TrackerPlan{}, failure
 	}
 	return trackers.PrepareAdapter(ctx, input, d.profile.PrepareDescription, d.profile.PrepareUpload)
+}
+
+// DescriptionLayout returns the opted-in tracker layout, or nil when no
+// independent sample renderer has been wired and audited.
+func (d *Definition) DescriptionLayout() []trackers.DescriptionLayoutItem {
+	if d.profile.DescriptionDefaultsLayout == nil || d.profile.DescriptionSample == nil {
+		return nil
+	}
+	return d.profile.DescriptionDefaultsLayout()
+}
+
+// RenderDescriptionSample invokes only the optional pure description callback.
+func (d *Definition) RenderDescriptionSample(
+	ctx context.Context,
+	sample trackers.DescriptionSample,
+	defaults config.DescriptionSettingsConfig,
+	site config.TrackerConfig,
+) (string, error) {
+	if d.profile.DescriptionSample == nil {
+		return "", errors.New("tracker does not support description samples")
+	}
+	return d.profile.DescriptionSample(ctx, sample, defaults, site)
 }
 
 // NewDuplicateAdapter builds the tracker-local duplicate-search adapter.

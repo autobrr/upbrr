@@ -421,6 +421,49 @@ func TestBuildUnit3DDataTVOmitsParsedReleaseSeasonEpisodeFallback(t *testing.T) 
 	}
 }
 
+func TestBuildUnit3DDryRunKeepsSingleDVDReport(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	mediaPath := filepath.Join(dir, "mediainfo.txt")
+	if err := os.WriteFile(mediaPath, []byte("General\nFormat : DVD Video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	torrentPath := filepath.Join(dir, "movie.torrent")
+	if err := os.WriteFile(torrentPath, []byte("d8:announce13:https://x.ee"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const report = "MPEG Video VOB report"
+	req := trackers.PreparationInput{
+		Tracker:       "AITHER",
+		TrackerConfig: config.TrackerConfig{APIKey: "test-key"},
+		Runtime:       trackers.PreparationRuntime{Description: config.DescriptionSettingsConfig{VOBReportLabel: "Disc video"}},
+		Meta: api.UploadSubject{
+			ReleaseName:         "Example.Movie.2026.PAL.DVD-GRP",
+			TorrentPath:         torrentPath,
+			MediaInfoTextPath:   mediaPath,
+			DVDVOBMediaInfoText: report,
+			DiscType:            "DVD",
+			Type:                "DISC",
+			Identity:            api.ExternalIdentity{Category: "MOVIE"},
+			Release: api.ReleaseInfo{
+				Category:   "MOVIE",
+				Resolution: "576p",
+				Source:     "PAL DVD",
+			},
+			Assessments:         api.ReleaseAssessments{MediaInfoEncodeSettings: api.EncodeSettingsStatusPresent},
+		},
+		Assets: &trackers.DescriptionAssets{Description: "Release notes"},
+	}
+	entry, err := buildUploadDryRunUnit3D(t.Context(), req, "https://aither.cc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	desc := entry.Payload["description"]
+	if strings.Count(desc, report) != 1 || !strings.Contains(desc, "[spoiler=Disc video][code]"+report+"[/code][/spoiler]") {
+		t.Fatalf("upload description must retain one custom-labelled report: %q", desc)
+	}
+}
+
 func TestBuildUnit3DDryRunBlocksMissingCanonicalTVSeasonEpisode(t *testing.T) {
 	tempDir := t.TempDir()
 	mediaInfoPath := filepath.Join(tempDir, "mediainfo.txt")

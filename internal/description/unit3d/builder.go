@@ -103,8 +103,10 @@ func ComposeDescription(
 	}
 	keptDescription, discReports := description.SplitLeadingDiscReports(keptDescription)
 	keptDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(keptDescription)
+	audioAnalysis = description.RelabelAnalysis(audioAnalysis, appConfig.Description.AudioPlotsLabel, appConfig.Description.HDRPlotsLabel)
+	keptDescription, comparisonBlock := description.SeparateGeneratedComparison(keptDescription, appConfig.Description)
 
-	parts := make([]string, 0, 10)
+	parts := make([]description.Section, 0, 10)
 	seenParts := make(map[string]struct{}, 4)
 	appendUniquePart := func(value string, logLabel string) {
 		normalized := strings.TrimSpace(value)
@@ -117,7 +119,17 @@ func ComposeDescription(
 			return
 		}
 		seenParts[key] = struct{}{}
-		parts = append(parts, normalized)
+		id := logLabel
+		switch id {
+		case "menu_header", "menu_images":
+			id = "disc_menu"
+		case "additional_disc_reports", "screenshot_header", "screenshots":
+			id = "screenshots"
+		case "custom_signature", "signature":
+			// Signature is a fixed footer rather than a movable section.
+			id = ""
+		}
+		parts = description.AppendSection(parts, id, normalized)
 	}
 	if template := strings.TrimSpace(meta.DescriptionTemplate); template != "" {
 		appendUniquePart(template, "template")
@@ -127,6 +139,7 @@ func ComposeDescription(
 		appendUniquePart(kept, "kept")
 		logger.Tracef("trackers: unit3d desc part=kept len=%d imgs=%d", len(kept), countBBCodeImages(kept))
 	}
+	appendUniquePart(comparisonBlock, "comparison")
 	if header := strings.TrimSpace(appConfig.Description.CustomDescriptionHeader); header != "" {
 		appendUniquePart(header, "custom_header")
 		logger.Tracef("trackers: unit3d desc part=custom_header len=%d", len(header))
@@ -148,7 +161,7 @@ func ComposeDescription(
 		logger.Tracef("trackers: unit3d desc part=bluray")
 	}
 
-	if vobMediaInfo := DVDVOBMediaInfoBlock(meta); vobMediaInfo != "" {
+	if vobMediaInfo := dvdVOBMediaInfoBlock(meta, appConfig.Description.VOBReportLabel); vobMediaInfo != "" {
 		appendUniquePart(vobMediaInfo, "dvd_vob_mediainfo")
 		logger.Tracef("trackers: unit3d desc part=dvd_vob_mediainfo")
 	}
@@ -213,7 +226,7 @@ func ComposeDescription(
 		logger.Tracef("trackers: unit3d desc part=signature")
 	}
 
-	description := normalizeDescription(strings.Join(parts, "\n\n"))
+	description := normalizeDescription(description.FormatSections(parts, appConfig.Description))
 	if strings.TrimSpace(description) == "" {
 		return "", nil
 	}
@@ -603,32 +616,59 @@ func UppbrrSignatureLink() (string, string) {
 	return uaSignatureLink, uaSignatureText
 }
 
-// DVDVOBMediaInfoBlock renders MediaInfo for DVD VOB content.
-func DVDVOBMediaInfoBlock(meta api.DescriptionSubject) string {
+func dvdVOBMediaInfoBlock(meta api.DescriptionSubject, label string) string {
+	return renderDVDVOBMediaInfoBlock(dvdVOBMediaInfoReport(meta), label)
+}
+
+func dvdVOBMediaInfoReport(meta api.DescriptionSubject) string {
 	if !strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
 		return ""
 	}
-	vobText := api.AggregateDVDVOBMediaInfo(meta.Discs, meta.DVDVOBMediaInfoText)
+	return api.AggregateDVDVOBMediaInfo(meta.Discs, meta.DVDVOBMediaInfoText)
+}
+
+func renderDVDVOBMediaInfoBlock(vobText, label string) string {
 	if vobText == "" {
 		return ""
+	}
+	if title := description.MarkupLabel(label); title != "" {
+		return "[spoiler=" + title + "][code]" + vobText + dvdVOBMediaInfoFooter
 	}
 	return dvdVOBMediaInfoHeader + vobText + dvdVOBMediaInfoFooter
 }
 
-// AppendDVDVOBMediaInfoBlock appends DVD VOB MediaInfo when meta contains it.
-func AppendDVDVOBMediaInfoBlock(description string, meta api.DescriptionSubject) string {
+var dvdVOBSpoiler = regexp.MustCompile(`(?s)\[spoiler=[^\[\]\r\n]+\]\[code\](.*?)\[/code\]\[/spoiler\]`)
+
+// ContainsDVDVOBMediaInfoBlock checks for the prepared VOB report in a
+// complete labelled spoiler without requiring a particular display heading.
+func ContainsDVDVOBMediaInfoBlock(value string, meta api.DescriptionSubject) bool {
+	return containsDVDVOBReport(value, dvdVOBMediaInfoReport(meta))
+}
+
+func containsDVDVOBReport(value, report string) bool {
+	if report == "" {
+		return false
+	}
+	for _, match := range dvdVOBSpoiler.FindAllStringSubmatch(value, -1) {
+		if match[1] == report {
+			return true
+		}
+	}
+	return false
+}
+
+// AppendDVDVOBMediaInfoBlock appends the DVD report unless it is already
+// included under a spoiler heading.
+func AppendDVDVOBMediaInfoBlock(description string, meta api.DescriptionSubject, label string) string {
 	trimmedDescription := strings.TrimSpace(description)
-	block := DVDVOBMediaInfoBlock(meta)
-	if block == "" {
+	vobText := dvdVOBMediaInfoReport(meta)
+	if vobText == "" || containsDVDVOBReport(trimmedDescription, vobText) {
 		return trimmedDescription
 	}
+	block := renderDVDVOBMediaInfoBlock(vobText, label)
 	if trimmedDescription == "" {
 		return block
 	}
-	if strings.Contains(trimmedDescription, block) {
-		return trimmedDescription
-	}
-	vobText := api.AggregateDVDVOBMediaInfo(meta.Discs, meta.DVDVOBMediaInfoText)
 	if strings.Contains(trimmedDescription, dvdVOBMediaInfoHeader) && strings.Contains(trimmedDescription, vobText) {
 		return trimmedDescription
 	}

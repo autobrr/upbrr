@@ -231,8 +231,15 @@ func workflowReusableDescriptionFingerprint(
 	if err != nil || !available {
 		return "", "", available, err
 	}
-	// Spacing changes generated output, not whether saved edits still apply.
+	// Layout changes generated output, not whether saved edits still apply.
 	cfg.Trackers = cfg.Trackers.WithoutScreenshotSpacing()
+	cfg.Description.SectionOrder = nil
+	cfg.Description.AudioPlotsLabel = ""
+	cfg.Description.HDRPlotsLabel = ""
+	cfg.Description.VOBReportLabel = ""
+	cfg.Description.ScreenshotLabel = ""
+	cfg.Description.Labels = nil
+	cfg.Description.ItemOptions = nil
 	payload := struct {
 		Version                              string
 		Config                               config.Config

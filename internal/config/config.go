@@ -218,6 +218,12 @@ func (c *ScreenshotHandlingConfig) ResolvedMinSuccessfulUploads() int {
 	return c.MinSuccessfulUploads
 }
 
+// DescriptionSectionOrder is an optional layout override; an empty list clears it.
+type DescriptionSectionOrder []string
+
+// IsZero preserves a deliberately empty order during YAML export.
+func (o DescriptionSectionOrder) IsZero() bool { return o == nil }
+
 type DescriptionSettingsConfig struct {
 	AddLogo                 bool   `yaml:"add_logo"`
 	LogoSize                int    `yaml:"logo_size"`
@@ -233,6 +239,23 @@ type DescriptionSettingsConfig struct {
 	AddBlurayLink           bool   `yaml:"add_bluray_link"`
 	UseBlurayImages         bool   `yaml:"use_bluray_images"`
 	BlurayImageSize         int    `yaml:"bluray_image_size"`
+
+	AudioPlotsLabel string `yaml:"audio_plots_label,omitempty" json:",omitempty"`
+	HDRPlotsLabel   string `yaml:"hdr_plots_label,omitempty" json:",omitempty"`
+	VOBReportLabel  string `yaml:"vob_report_label,omitempty" json:",omitempty"`
+	ScreenshotLabel string `yaml:"screenshot_label,omitempty" json:",omitempty"`
+
+	Labels map[string]string `yaml:"labels,omitempty" json:",omitempty"`
+
+	ItemOptions map[string]DescriptionItemOptions `yaml:"item_options,omitempty" json:",omitempty"`
+
+	SectionOrder DescriptionSectionOrder `yaml:"section_order,omitempty" json:",omitzero"`
+}
+
+// DescriptionItemOptions changes spacing or suppresses an optional section.
+type DescriptionItemOptions struct {
+	Hidden  bool `yaml:"hidden,omitempty" json:",omitempty"`
+	Compact bool `yaml:"compact,omitempty" json:",omitempty"`
 }
 
 type ClientSetupConfig struct {

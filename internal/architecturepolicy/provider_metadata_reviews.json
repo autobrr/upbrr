@@ -127,6 +127,10 @@
     "reason": "Description preparation passes the exact prepared subject to the reviewed ANT composer. The explicit ANT logo exclusion also applies to final reviewed descriptions; other reviewed content and metadata/manual precedence remain unchanged.",
     "sha256": "df7199f3730a5ec04ce4d3185bf65c78c278c0c4ac83f66ca48da220625af435"
   },
+  "internal/trackers/impl/standalone/ant/description.go:*Definition.RenderDescriptionSample": {
+    "reason": "Description preview uses synthetic prepared fields and the same composer, without obtaining provider records, applying a new precedence policy, or using runtime credentials.",
+    "sha256": "c7f6eab92d765a29881e2229806554257bde39a0f36fbb1b54a15e3cd4ae1d55"
+  },
   "internal/trackers/impl/standalone/ant/description.go:buildDescription": {
     "reason": "ANT always disables automatic logos locally and removes images matching the exact prepared TMDB Logo/TMDBLogo asset identities from composed or final reviewed text. This requested logo exclusion leaves other reviewed text, artwork, literal examples and the shared composer's manual metadata precedence intact; no provider title, year, genre or naming selector is introduced.",
     "sha256": "6395bdcf8c08167b3d308a7149a99776fa7ca635e4c4f77bd022e9110af24caf"
@@ -172,12 +176,20 @@
     "sha256": "52cee2dde186b18d7ebeb61d72d1a2cf5868b341c41fadb60dea97001b9ad5f8"
   },
   "internal/trackers/impl/standalone/ar/definition.go:prepareDescription": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "5e7451f9faf3fed9241d74928416ce5519193d3ff75dd9b542b48f76c0b82366"
+    "reason": "Separates prepared data from presentation or passes description defaults to the same composer. The same reviewed upload subject and provider values feed it; links, manual precedence and lookup authority are unchanged.",
+    "sha256": "8821464a86607edd0b502145368ff96c7e571c1fab9fa5b326f1e3dbe76345bd"
   },
   "internal/trackers/impl/standalone/ar/description.go:buildDescription": {
-    "reason": "AR center-tag conversion applies only outside complete code/pre blocks in generated or final descriptions. Title, database-link, overview, genre, and YouTube provider selection and manual precedence remain unchanged, including PreferredGenreText and the final-description bypass of generated sections. Additional-disc markup changes only prepared report presentation, not provider selection.",
-    "sha256": "70195be02c9a567a37845e6145ebd2b486311565ce20849a826d6175a9f8d4f7"
+    "reason": "Separates prepared data from presentation or passes description defaults to the same composer. The same reviewed upload subject and provider values feed it; links, manual precedence and lookup authority are unchanged.",
+    "sha256": "06e63b3d08652701220b9349a8d5c16e5e6a623aff1615b14fc79666054d8e5c"
+  },
+  "internal/trackers/impl/standalone/ar/description.go:composeDescription": {
+    "reason": "Separates prepared data from presentation or passes description defaults to the same composer. The same reviewed upload subject and provider values feed it; links, manual precedence and lookup authority are unchanged.",
+    "sha256": "e4c77faeb50fc6f2bbb840e2aef33c1253a651f15813a3b61478ad083861c415"
+  },
+  "internal/trackers/impl/standalone/ar/description.go:renderDescriptionSample": {
+    "reason": "Description preview uses synthetic prepared fields and the same composer, without obtaining provider records, applying a new precedence policy, or using runtime credentials.",
+    "sha256": "6a006fa06fad2bb49e0f14591ca1051957326915705ea24ec340547f2ab37e2c"
   },
   "internal/trackers/impl/standalone/ar/description.go:resolveOverview": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -208,8 +220,8 @@
     "sha256": "0b80d72b682eb69104181166aff94cdde5905efdb87174cc778f3455a275c1b1"
   },
   "internal/trackers/impl/standalone/ar/profile.go:Profile": {
-    "reason": "Settings connection-test review: only the probe binding, exact draft-credential selector or unverified-contract explanation is added. Existing provider/manual metadata precedence, naming and prepared-upload callbacks and their consumers are unchanged; independently reviewed together. Probes receive only tracker credentials and cookie snapshots, never metadata subjects.",
-    "sha256": "f0638f6bb54de0cd1af904f6d53ab726786fbbf11d4e14ae8663da6e4373fb74"
+    "reason": "Adds compiled local description layout and sample capabilities. The existing provider-based naming and upload metadata selection callbacks are unchanged.",
+    "sha256": "d972a01393dd407bb911763501c9191caa9e3c844bc98211bfa159e003fa856d"
   },
   "internal/trackers/impl/standalone/ar/taxonomy.go:resolveGenres": {
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input",
@@ -228,8 +240,8 @@
     "sha256": "678b835e7bd4dfb9fec77d35e3f44eb826e9c53eeabd3fe56a16750c7f15ce33"
   },
   "internal/trackers/impl/standalone/ar/upload.go:prepareUploadState": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "ebd3afe71fbcef242394375a709be09febe738d2bc2c259c702616b7bb9adefb"
+    "reason": "Passes presentation defaults to the tracker description composer. Existing upload subject construction and manual provider authority are unchanged.",
+    "sha256": "02c37c14cfbcaf7dd02af8eb0164727157f9b3202a8b0ebc14a8344b51fd8142"
   },
   "internal/trackers/impl/standalone/ar/upload.go:resolveIMDbURL": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -252,24 +264,32 @@
     "sha256": "6ed55541d2c3733d026f7929794576859886e92e3240edf76148ffa757fda99e"
   },
   "internal/trackers/impl/standalone/asc/description.go:buildDescription": {
-    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
-    "sha256": "9d36eb71b8c179acbb74b60a4d858fb72586932d76b4c3d55d6198c39491bd9c"
+    "reason": "Separates inputs from markup without modifying ASC provider source/category selection, cache or manual authority. Localized title, runtime, genre and other provider values are retained; only section order and display labels change.",
+    "sha256": "16368cbb0fa2a97a1da8fa64fd7c374e175cd32cb856c9ead1db71fa9542f2d3"
   },
   "internal/trackers/impl/standalone/asc/description.go:buildProductionCompanies": {
-    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
-    "sha256": "f6c4bf12abd9155d8c0414b1f28490bf2e4dd0ade2a17322fd9b7970429d7e9c"
+    "reason": "Separates inputs from markup without modifying ASC provider source/category selection, cache or manual authority. Localized title, runtime, genre and other provider values are retained; only section order and display labels change.",
+    "sha256": "e1faec50a1004adab62b7e9b48cc5ee0324a0c877897f41a7a429d27672fb6e2"
   },
   "internal/trackers/impl/standalone/asc/description.go:buildRatingsBBCode": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
     "sha256": "981fdb523546170574c1b9316a53e5c93fac63b86b0843aed4d99e125ccf7baf"
   },
   "internal/trackers/impl/standalone/asc/description.go:buildTechnicalSheet": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "f186dc0dc632caf7a79d5226703fdac4f3904fe34ed252c67aed13c5cac7b4af"
+    "reason": "Separates inputs from markup without modifying ASC provider source/category selection, cache or manual authority. Localized title, runtime, genre and other provider values are retained; only section order and display labels change.",
+    "sha256": "4ec6539acc560237a17e26366064d1ab4c1ce23da60e590faa775c1e3b87f238"
+  },
+  "internal/trackers/impl/standalone/asc/description.go:composeDescription": {
+    "reason": "Separates inputs from markup without modifying ASC provider source/category selection, cache or manual authority. Localized title, runtime, genre and other provider values are retained; only section order and display labels change.",
+    "sha256": "323092747eabc1116699b99f48b03e81248861c89675baa9c10818f1f9540526"
   },
   "internal/trackers/impl/standalone/asc/description.go:prepareDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
     "sha256": "ef548baac570e012dc68169000ee63509250c93e718190107a62591d2ad1917d"
+  },
+  "internal/trackers/impl/standalone/asc/description.go:renderDescriptionSample": {
+    "reason": "Description preview uses synthetic prepared fields and the same composer, without obtaining provider records, applying a new precedence policy, or using runtime credentials.",
+    "sha256": "74c6df561fdedea5f58871c35480fe2a2ecaff2a059116600528fd346e7e2afb"
   },
   "internal/trackers/impl/standalone/asc/dupe.go:buildASCSearchURL": {
     "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged.",
@@ -332,8 +352,8 @@
     "sha256": "c31c114245d785d79ff5c2f0b1e48b2d51355ada74ac0dc51a183b6676834a0c"
   },
   "internal/trackers/impl/standalone/asc/profile.go:Profile": {
-    "reason": "Partial-season review-fix audit: provider/manual title and year precedence and currentness guards remain unchanged; part placement and versioned naming omissions preserve canonical coverage.",
-    "sha256": "e4d9601f70baf80257409a8cd5411ab2379e07199c21fa2aed624563f2492d8e"
+    "reason": "Adds compiled local description layout and sample capabilities. The existing provider-based naming and upload metadata selection callbacks are unchanged.",
+    "sha256": "b66631fc67e54fe203bf9296262a2afef8e928f93c3cff6230f963837afaff12"
   },
   "internal/trackers/impl/standalone/asc/questionnaire.go:buildQuestionnaire": {
     "reason": "Retains answered controls and displays the same resolved values as upload. Nonempty questionnaire overview/genre answers precede localized and base provider defaults; manual genres still bypass localized genres, and blank answers preserve existing fallbacks.",
@@ -388,8 +408,8 @@
     "sha256": "6c54add70735e198ac1b2fca501fb0c386ad0ac40ea6c69962cec6940b6f71de"
   },
   "internal/trackers/impl/standalone/bhd/profile.go:Profile": {
-    "reason": "The BHD naming version advances for selecting a distinct original title. The title and year provider bindings, naming callback, validation and connection callbacks are preserved.",
-    "sha256": "e9b134d3b7610c8fdf2285e6d441001ed4d12cc9b3764e60220fdef67086d8cd"
+    "reason": "Adds compiled local description layout and sample capabilities. The existing provider-based naming and upload metadata selection callbacks are unchanged.",
+    "sha256": "a3a253e713c56061d807e9817dccd95848e589043e058ad0d2e02c4751570fac"
   },
   "internal/trackers/impl/standalone/bhd/rules.go:languageAssessment": {
     "reason": "Issue 905 uses canonical title-dialogue evidence and preserves manual genre selection. Owner confirmation of BHD sections 2.5.5 and 5.3.4 exempts an established English-only original soundtrack from extra English-dub guidance while retaining foreign-dialogue subtitle guidance and multilingual-original handling. Provider genre selectors and manual corrections are unchanged.",
@@ -400,8 +420,8 @@
     "sha256": "a9946e8e11561649435a52fc1309bc143ce891b8999e5585fed62c8ff9da08b9"
   },
   "internal/trackers/impl/standalone/bhdtv/upload.go:prepareUploadState": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "0af22e8551c67d676e5b37d02a72c73cde9cf5823ae0dc7a3212bddddcf19fe4"
+    "reason": "Passes presentation defaults to the tracker description composer. Existing upload subject construction and manual provider authority are unchanged.",
+    "sha256": "c65320cd30d633fefd1ae09d66c4c71117ff44746e962de6d957a0ad5800fc90"
   },
   "internal/trackers/impl/standalone/bhdtv/upload.go:resolveReferenceURL": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -412,8 +432,16 @@
     "sha256": "ed1c1a77df8f4845f3ab494b716917891fbfe438061dc6bd5497ba744cb622d6"
   },
   "internal/trackers/impl/standalone/bjs/description.go:buildDescription": {
-    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed Screenshot notices consume selected image processing evidence only; provider/manual metadata precedence and tracker markup remain unchanged. Additional-disc markup changes only prepared report presentation, not provider selection.",
-    "sha256": "85b84d2bba9507fcdfbcb9a8ec91854221c24d064951d65ecdffb74a291667a3"
+    "reason": "Separates prepared data from presentation or passes description defaults to the same composer. The same reviewed upload subject and provider values feed it; links, manual precedence and lookup authority are unchanged.",
+    "sha256": "0683e6a954469e320d12ac2895fa33b0eae64e939e5bdf726f414d65d5ac6288"
+  },
+  "internal/trackers/impl/standalone/bjs/description.go:composeDescription": {
+    "reason": "Reorders rendered description groups only, preserving the existing pt-BR scoped override, episode/title-level fallbacks, and the provider snapshot received from the caller.",
+    "sha256": "c1002384a32c64877bd780c32f000bd88045e2f3860257f40cc6e9ee209e98b8"
+  },
+  "internal/trackers/impl/standalone/bjs/description.go:renderDescriptionSample": {
+    "reason": "Description preview uses synthetic prepared fields and the same composer, without obtaining provider records, applying a new precedence policy, or using runtime credentials.",
+    "sha256": "e853d43bd767bea3e7fe0d04e637e9b5b4488210cf9b170765b2999a9d2ac0af"
   },
   "internal/trackers/impl/standalone/bjs/description.go:resolveDirectors": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -430,6 +458,10 @@
   "internal/trackers/impl/standalone/bjs/media.go:resolveRuntime": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
     "sha256": "5fe899edd54364abb30b2e2b7f0f527d37d39014fff744c753cff9b06a043464"
+  },
+  "internal/trackers/impl/standalone/bjs/profile.go:Profile": {
+    "reason": "Adds compiled local description layout and sample capabilities. The existing provider-based naming and upload metadata selection callbacks are unchanged.",
+    "sha256": "9c2585846a9fe7a551825247d8229378a155e4960e4d7d53288540f63b077ac9"
   },
   "internal/trackers/impl/standalone/bjs/questionnaire.go:buildQuestionnaire": {
     "reason": "Pure projection and upload schema use nonempty questionnaire overview/tags before exact-subject localized/base provider defaults. Scoped episode overview and manual-genre precedence are unchanged; blank answers retain existing fallback behavior.",
@@ -504,8 +536,16 @@
     "sha256": "063f69eacb649728e0b339bb5635fc3cdcca378bacbdff4b7335b86610b45897"
   },
   "internal/trackers/impl/standalone/bt/description.go:buildDescription": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. Screenshot notices consume selected image processing evidence only; provider/manual metadata precedence and tracker markup remain unchanged.",
-    "sha256": "06fa3c2d727a2fdc154dcc7d754f17de4ad36d830a30ab1e8e7b85e16f375687"
+    "reason": "Separates prepared data from presentation or passes description defaults to the same composer. The same reviewed upload subject and provider values feed it; links, manual precedence and lookup authority are unchanged.",
+    "sha256": "6f2e95fbf1bca198d0d962b6e8e49f3458fce32ef04b538d93eea48a5e5f6514"
+  },
+  "internal/trackers/impl/standalone/bt/description.go:composeDescription": {
+    "reason": "Reorders rendered description groups only, preserving the existing pt-BR scoped override, episode/title-level fallbacks, and the provider snapshot received from the caller.",
+    "sha256": "c6f2c8efe2ca59ae54a29eb12da2d06fe700ffea375faca51a29371d052db161"
+  },
+  "internal/trackers/impl/standalone/bt/description.go:renderDescriptionSample": {
+    "reason": "Description preview uses synthetic prepared fields and the same composer, without obtaining provider records, applying a new precedence policy, or using runtime credentials.",
+    "sha256": "e55b527fce2c90912d63e1f5860e8a6a4a8c9d3a6e8721871c561b305ce1d30f"
   },
   "internal/trackers/impl/standalone/bt/description.go:resolveDirectors": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -536,8 +576,8 @@
     "sha256": "9ebde20f95fddb2631371c8ab3aa2109a4069581536a201bd56056a2d1ae71b1"
   },
   "internal/trackers/impl/standalone/bt/profile.go:Profile": {
-    "reason": "BT versions duplicate evidence because anime requests now use the reviewed search criterion. The bound name resolver preserves manual title and manual-empty authority before provider fallbacks.",
-    "sha256": "539b803fe12db68ecfb89bbafcf8b73925d1541effea1becb7c98bd699a38ed7"
+    "reason": "Adds compiled local description layout and sample capabilities. The existing provider-based naming and upload metadata selection callbacks are unchanged.",
+    "sha256": "48269a344aba98ee3cd59fa30cc9ab5020255a52ecbfe1d836f973516ef01bff"
   },
   "internal/trackers/impl/standalone/bt/questionnaire.go:buildQuestionnaire": {
     "reason": "Pure projection and upload schema prefer nonempty overview/tag answers to exact-subject localized/base provider defaults. Scoped episode overview and manual genres retain precedence; explicit blanks preserve fallback semantics without reading media files.",
@@ -920,8 +960,8 @@
     "sha256": "33e7abef28bb531b724f8207a18b2319c99787ff1e64b2b5a4a36343fcd4aa92"
   },
   "internal/trackers/impl/standalone/hdb/profile.go:Profile": {
-    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections. External-ID cache refresh opt-in only; finalized provider/manual naming and payload selectors are unchanged. Settings connection checks add only an isolated probe binding and draft-credential selector; provider/manual metadata selectors and prepared-upload callbacks remain unchanged.",
-    "sha256": "157993f3722ac5dec52aaae574dd3ad9a0a647c541ec29e6d62354c1d297014e"
+    "reason": "Adds compiled local description layout and sample capabilities. The existing provider-based naming and upload metadata selection callbacks are unchanged.",
+    "sha256": "2a1986ad8e7ba11efb14f20613a6a6fe62cfd5c62b4c15519caac0d25bdb6a8e"
   },
   "internal/trackers/impl/standalone/hdb/rules.go:languageAssessment": {
     "reason": "Checks forced English subtitle defaults on original English programme audio using finalized language facts after manual precedence. Respects explicit subtitle clears and binds waivable findings to the source, prepared generation and language evidence.",
@@ -968,12 +1008,24 @@
     "sha256": "69914e6c97aec477dfcf9357853cdeee13cdc248cbd44ebc30d3790721484a75"
   },
   "internal/trackers/impl/standalone/hds/description.go:buildDescription": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. Screenshot notices consume selected image processing evidence only; provider/manual metadata precedence and tracker markup remain unchanged. Additional-disc markup changes only prepared report presentation, not provider selection.",
-    "sha256": "35eaf276b0af5d2df5244c52d198664770108e6b98dac67d6aa1f4d02e961160"
+    "reason": "Separates prepared data from presentation or passes description defaults to the same composer. The same reviewed upload subject and provider values feed it; links, manual precedence and lookup authority are unchanged.",
+    "sha256": "15ef58bfdfabde1e15950814a713dddcce2f3392d5ab41ccd1344910a16241e2"
+  },
+  "internal/trackers/impl/standalone/hds/description.go:composeDescription": {
+    "reason": "Separates prepared data from presentation or passes description defaults to the same composer. The same reviewed upload subject and provider values feed it; links, manual precedence and lookup authority are unchanged.",
+    "sha256": "820900672b7086962441d999e7fb7ab39e3067b68efcc815fe9c212d148e3a39"
   },
   "internal/trackers/impl/standalone/hds/description.go:prepareDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
     "sha256": "c6484b4b4ba211838196aad4189a918fa5fc4f4ac59a2e3923c0237e409391b4"
+  },
+  "internal/trackers/impl/standalone/hds/description.go:renderDescriptionSample": {
+    "reason": "Description preview uses synthetic prepared fields and the same composer, without obtaining provider records, applying a new precedence policy, or using runtime credentials.",
+    "sha256": "e6b429cb97bfd746b34da0b5f1701c00d995aec27d65fa9225a79377b1b68119"
+  },
+  "internal/trackers/impl/standalone/hds/profile.go:Profile": {
+    "reason": "Adds compiled local description layout and sample capabilities. The existing provider-based naming and upload metadata selection callbacks are unchanged.",
+    "sha256": "1716f05c0bae7cab49498eafa47c8c3a56ed34d343000566f48e74120add5743"
   },
   "internal/trackers/impl/standalone/hds/rules.go:checkRules": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -1016,16 +1068,28 @@
     "sha256": "7e89c7505b94a7bd7ae8bf30d82c1752e5fdc97dc7ce7f992ed45ac629a810a8"
   },
   "internal/trackers/impl/standalone/hdt/description.go:buildDescription": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. Screenshot notices consume selected image processing evidence only; provider/manual metadata precedence and tracker markup remain unchanged. Additional-disc markup changes only prepared report presentation, not provider selection.",
-    "sha256": "bcf4fa8c1585f5f70065437dc0bd6e9a9e318464b5810657c353c64b5c169236"
+    "reason": "Separates prepared data from presentation or passes description defaults to the same composer. The same reviewed upload subject and provider values feed it; links, manual precedence and lookup authority are unchanged.",
+    "sha256": "51ed9044eaebef53bd3e8b4c7e155a1666fcbb63a150c6e9ddce47d63bf7d85a"
+  },
+  "internal/trackers/impl/standalone/hdt/description.go:composeDescription": {
+    "reason": "Separates prepared data from presentation or passes description defaults to the same composer. The same reviewed upload subject and provider values feed it; links, manual precedence and lookup authority are unchanged.",
+    "sha256": "a44cecfc58a4aee33fa73b99cf567b5b1732e55e5fd1ce6571e747303f9113f3"
   },
   "internal/trackers/impl/standalone/hdt/description.go:prepareDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
     "sha256": "2c459829d587a6e895e605ab4b16a004f8dc8e7e166ed9d9a514b72d3c66b7ea"
   },
+  "internal/trackers/impl/standalone/hdt/description.go:renderDescriptionSample": {
+    "reason": "Description preview uses synthetic prepared fields and the same composer, without obtaining provider records, applying a new precedence policy, or using runtime credentials.",
+    "sha256": "e6b429cb97bfd746b34da0b5f1701c00d995aec27d65fa9225a79377b1b68119"
+  },
   "internal/trackers/impl/standalone/hdt/dupe.go:*dupeSearcher.Search": {
     "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged.",
     "sha256": "6114f667068fc178b1591d2e7d1b6e96e15b6d620106b12989a6f17d9e79eb1f"
+  },
+  "internal/trackers/impl/standalone/hdt/profile.go:Profile": {
+    "reason": "Adds compiled local description layout and sample capabilities. The existing provider-based naming and upload metadata selection callbacks are unchanged.",
+    "sha256": "d126d6bb077e2ec10a42d5f8e6b002d5424b72b7358a3b9cbfa05f23120e820a"
   },
   "internal/trackers/impl/standalone/hdt/upload.go:prepareUpload": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -1276,12 +1340,12 @@
     "sha256": "2ceff3a62908ae7b54de79196e1decdc770e2d7a61030d40dba8c17646bb252d"
   },
   "internal/trackers/impl/standalone/tvc/definition.go:prepareDescription": {
-    "reason": "Passes the runtime AddLogo setting into the reviewed TVC description builder; finalized upload facts and manual precedence are unchanged.",
-    "sha256": "7a5986b34d8658f225088923860a4123d998df756540b848fc4693681cc2d0ff"
+    "reason": "Separates prepared data from presentation or passes description defaults to the same composer. The same reviewed upload subject and provider values feed it; links, manual precedence and lookup authority are unchanged.",
+    "sha256": "5d5c6defd2f0ac045b95e5673938c58176e40c630dab6c7123042687069b9e9f"
   },
   "internal/trackers/impl/standalone/tvc/description.go:buildDescription": {
-    "reason": "Only the provider title logo is gated by AddLogo; episode text and other finalized facts retain their existing manual precedence.",
-    "sha256": "fc28d0c495dbd1703d652e3130dd3c6ea352534ac505d6a09724e99c602a9bf0"
+    "reason": "Presentation wraps existing episode-title and provider-link values; the selected episode overview still wins over the same TMDB summary fallback and no provider identity is re-resolved.",
+    "sha256": "fc42539fd5e0e8dbba64d13cd6eb08c653a6ef6bb4ba74b54ca6fb1061e403f7"
   },
   "internal/trackers/impl/standalone/tvc/description.go:genresText": {
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input",
@@ -1290,6 +1354,10 @@
   "internal/trackers/impl/standalone/tvc/description.go:keywordsText": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
     "sha256": "d43e5506425abc373b2674cf8d7e0cb326faa417a878b87d652c887c886e51e8"
+  },
+  "internal/trackers/impl/standalone/tvc/description.go:renderDescriptionSample": {
+    "reason": "Description preview uses synthetic prepared fields and the same composer, without obtaining provider records, applying a new precedence policy, or using runtime credentials.",
+    "sha256": "98818a484c52208c6b2340435c0faf83b212fce332fe7139b1ad19838ea8a4f5"
   },
   "internal/trackers/impl/standalone/tvc/name.go:appendCountryCode": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -1300,16 +1368,16 @@
     "sha256": "44c9ae2594a6a71603bf2d31340c502117ad7b204b3ced5232a3a6c2bf4291de"
   },
   "internal/trackers/impl/standalone/tvc/profile.go:Profile": {
-    "reason": "Partial-season review-fix audit: provider/manual title and year precedence and currentness guards remain unchanged; part placement and versioned naming omissions preserve canonical coverage.",
-    "sha256": "f636fd4c777b1d60c586526e519db1c8c8261ed036227b55dab3353662375001"
+    "reason": "Adds compiled local description layout and sample capabilities. The existing provider-based naming and upload metadata selection callbacks are unchanged.",
+    "sha256": "647720148c27e06b169234f2c820dd0d3f322b58bb0f1cf9adb25a2f97c2f4d6"
   },
   "internal/trackers/impl/standalone/tvc/taxonomy.go:resolveCategory": {
     "reason": "Explicit manual original-language facts resolve full display names and codes to the tracker language code; empty values remain authoritative and automatic provider selection remains unchanged.",
     "sha256": "0bdc38ca1b4a30b350b141481e69a19582e35a496825c0f9798a61e7026c736a"
   },
   "internal/trackers/impl/standalone/tvc/upload.go:prepareUploadState": {
-    "reason": "Questionnaire reads the centrally resolved projection display name. Payload still requires ReviewedUploadName and uses unchanged description/category/keyword resolvers; explicit name overrides and manual title/year precedence remain upstream of provider defaults.",
-    "sha256": "985ac2a8da22171745a30c68ebf0d89fa97deebf6adbc6f160337b93e4407d28"
+    "reason": "Passes presentation defaults to the tracker description composer. Existing upload subject construction and manual provider authority are unchanged.",
+    "sha256": "311bb6f5fc438c49eb4a89a03a2c95f60a740ed1242e644ab37f134ed8ca6413"
   },
   "internal/trackers/impl/standalone/validation.go:UploadSubjectForValidation": {
     "reason": "Annotation-display review: copies canonical ReleaseFeatures and the ordered display-only projection into detached slices. Existing provider snapshot, identity, manual provenance and validation mappings remain unchanged; display text is not semantic evidence.",
@@ -1633,7 +1701,7 @@
   },
   "internal/trackers/impl/unit3d/upload.go:buildUploadDryRunUnit3D": {
     "reason": "Preserves finalized canonical and effective provider facts and current scoped review answers through questionnaire, validation and submission finalization.",
-    "sha256": "282e191250a8c1aa5757c8a1db9fe3a60b6d290ba7506303e24b61c3ce4ab27d"
+    "sha256": "48eba339f5f07aa20ed7f4d7df2525085dd643397e6bbae8609206ecab09efd9"
   },
   "internal/trackers/impl/unit3d/validation.go:unit3DUploadSubject": {
     "reason": "Annotation-display review: copies canonical ReleaseFeatures and the ordered display-only projection into detached slices. Existing provider snapshot, identity, manual provenance and validation mappings remain unchanged; display text is not semantic evidence.",
