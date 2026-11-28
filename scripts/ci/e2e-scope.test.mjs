@@ -20,11 +20,12 @@ test("selects runtime, E2E, assets, manifests, and build inputs", () => {
   for (const path of [
     "cmd/upbrr/serve.go",
     "internal/core/core.go",
-    "internal/core/core_test.go",
     "pkg/api/workflow.go",
     "config/example.yaml",
     "webui/src/App.tsx",
-    "webui/src/App.test.tsx",
+    "webui/src/test/newHelper.ts",
+    "scripts/ci/changed-paths.mjs",
+    ".github/actions/prepare-e2e/action.yml",
     "webui/public/help.md",
     "webui/scripts/build-appearance-bootstrap.mjs",
     "webui/e2e/helpers/e2eHarness.ts",
@@ -67,6 +68,11 @@ test("selects runtime, E2E, assets, manifests, and build inputs", () => {
 test("skips docs, separate visual suites, and unrelated tooling", () => {
   assert.equal(
     requiresE2E([
+      "internal/core/core_test.go",
+      "webui/src/App.test.tsx",
+      "webui/src/api/provider.spec.ts",
+      "webui/src/test/setup.ts",
+      "webui/src/test/appRequestMock.ts",
       "AGENTS.md",
       "CONTRIBUTING.md",
       "ADDING_TRACKERS.md",
@@ -155,9 +161,9 @@ test("uses the merge base, includes deleted/renamed paths, and runs on unreadabl
   assert.equal(select(base, docsHead), "false");
   renameSync(
     join(cwd, "internal", "runtime.go"),
-    join(cwd, "docs", "runtime.md"),
+    join(cwd, "internal", "runtime_test.go"),
   );
-  assert.equal(select(docsHead, commit("rename runtime to docs")), "true");
+  assert.equal(select(docsHead, commit("rename runtime to test")), "true");
   git("checkout", "--detach", base);
   rmSync(join(cwd, "internal", "runtime.go"));
   const newerBase = commit("delete runtime on base branch");

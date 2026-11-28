@@ -16,7 +16,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  select-checks:
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.scope.outputs.go }}
+      frontend: ${{ steps.scope.outputs.frontend }}
+      docs: ${{ steps.scope.outputs.docs }}
+      monitor: ${{ steps.scope.outputs.monitor }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: node --test scripts/ci/checks-scope.test.mjs
+      - id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/ci/checks-scope.mjs "$BASE_SHA" "$HEAD_SHA" >> "$GITHUB_OUTPUT"
+
   test-go:
+    needs: select-checks
+    if: needs.select-checks.outputs.go == 'true'
     name: Go tests (${{ matrix.os }} / ${{ matrix.shard }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
@@ -24,7 +45,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        shard: [core, core-comparisons, core-hdr, workflow, media, metadata, other]
+        shard: [core, core-comparisons, core-hdr, workflow, media-metadata, other]
         include:
           - { os: ubuntu-latest, mode: race }
           - { os: windows-latest, mode: native }
@@ -176,7 +197,8 @@ jobs:
           retention-days: 7
 
   test-frontend:
-    if: github.event_name != 'push'
+    needs: select-checks
+    if: github.event_name != 'push' && needs.select-checks.outputs.frontend == 'true'
     name: Frontend checks
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -253,7 +275,8 @@ jobs:
           key: ${{ steps.prettier-cache.outputs.cache-primary-key }}
 
   test-documentation:
-    if: github.event_name != 'push'
+    needs: select-checks
+    if: github.event_name != 'push' && needs.select-checks.outputs.docs == 'true'
     name: Documentation checks
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -286,7 +309,8 @@ jobs:
 
   vulnerability-monitor-tests:
     name: Vulnerability monitor tests
-    if: github.event_name != 'push'
+    needs: select-checks
+    if: github.event_name != 'push' && needs.select-checks.outputs.monitor == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

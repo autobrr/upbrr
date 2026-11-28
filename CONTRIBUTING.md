@@ -68,13 +68,13 @@ Notes:
 - Prefer `make build` for full local builds. It dispatches to `scripts/build.sh` on macOS/Linux and `scripts/build.ps1` on Windows; use the scripts directly only when debugging script behavior.
 - Line endings are normalised via `.gitattributes` and `.editorconfig`.
 
-Pull-request Go checks use seven shards on Linux, Windows, and macOS: general
-core, comparison core, HDR/native/decoded core, workflow, media, metadata/config/database, and
+Pull-request Go checks use six shards on Linux, Windows, and macOS: general
+core, comparison core, HDR/native/decoded core, workflow, combined media/metadata/config/database, and
 the remaining packages. Core tests are partitioned by their top-level names; all
 other packages enter exactly one shard. New packages default to the remaining
 packages shard unless they match an existing owner. List the packages for a shard with
 `pwsh -NoProfile -File scripts/ci/go-test-packages.ps1 -Shard <name>`. Linux shards use the race detector; Windows and macOS shards run native tests. `make test-go` still runs the full race suite locally.
-Go ownership/policy checks and golangci-lint run on separate runners.
+Go ownership checks and golangci-lint share one runner. On pull requests, the checks workflow selects Go, frontend, documentation and vulnerability-monitor jobs from the complete diff. Shared or unclassified inputs run all potentially affected suites. Main pushes still warm Go caches and manual runs select every suite.
 
 ## How to contribute
 
@@ -329,7 +329,7 @@ make frontend-bundle  # Vite bundle only
 
 ### End-to-end checks
 
-Every pull request gets a lightweight change-selection check. The full Ubuntu 24.04 Playwright job runs only when the complete PR diff touches runtime, frontend, normal E2E, dependency, asset, or shared build inputs. Documentation-only changes, the separate visual suites, and unrelated tooling skip that job. [`scripts/ci/e2e-scope.mjs`](scripts/ci/e2e-scope.mjs) owns the exact paths; source-tree unit-test changes are included conservatively. Deleted paths and both sides of renames count. An unreadable diff runs the full suite, and manual workflow dispatch always runs it. The workflow keeps read-only permissions and does not need repository secrets for forks.
+Each of the four Ubuntu Playwright shards is eligible as soon as the PR workflow starts. Each checks the full merge-base diff before installing tools or building the embedded app. Go unit tests, Vitest specs and their known test-only helpers can skip Playwright while their owning unit checks run. Runtime, build and normal E2E changes select all four shards, including deleted files and either side of a rename. Manual runs and unreadable diffs run the full suite. See [the E2E selector](scripts/ci/e2e-scope.mjs) for path selection. A trusted main job seeds the shared compilation, FFmpeg and Chromium caches used by the PR shards.
 
 Before local E2E validation, fetch the PR target branch and inspect the branch diff from its merge base, staged changes, unstaged changes, and untracked files. For a target of `origin/main` (use `upstream/main` for a fork when appropriate):
 
@@ -343,7 +343,7 @@ git ls-files --others --exclude-standard
 
 Skip local E2E for documentation-only or unrelated changes. Run the affected project or `--grep` for a narrow browser/test change; shared runtime, workflow/API, build, and dependency changes need all five projects. A unit-test-only edit needs its unit checks and E2E only when its behavior also warrants an integration check. Selector-only changes need `node --test scripts/ci/e2e-scope.test.mjs` and workflow validation. These are selection guidelines: an explicit `make e2e`, full validation request, or benchmark command still runs the complete requested suite, even with no diff.
 
-`make e2e` builds the embedded application and runs all five projects against isolated local fake services. Install FFmpeg on `PATH` for media scenarios. No real service credentials are needed. Normal local runs default to eight fully parallel workers. CI distributes individual tests across four Ubuntu jobs using Playwright's `--shard=N/4`, each with two workers and its own embedded build. Developers on smaller or busy systems may need fewer workers: after `make e2e-build`, use `pnpm --dir webui exec playwright test --workers=2` or `--workers=1`. Rebuild when runtime, embedded assets, or build inputs change; test-only runs may reuse a matching build. The [E2E workflow](.github/workflows/e2e.yml) uploads JSON test timings from each completed shard, plus uniquely named reports and test results on failure. The separate visual suites retain their own configuration.
+`make e2e` builds the embedded application and runs all five projects against isolated local fake services. Install FFmpeg on `PATH` for media scenarios. No real service credentials are needed. Normal local runs default to eight fully parallel workers. CI splits the web-full-upload project across three Ubuntu jobs and runs the other projects together on a fourth. Each job has two workers and its own embedded build. Developers on smaller or busy systems may need fewer workers: after `make e2e-build`, use `pnpm --dir webui exec playwright test --workers=2` or `--workers=1`. Rebuild when runtime, embedded assets, or build inputs change; test-only runs may reuse a matching build. The [E2E workflow](.github/workflows/e2e.yml) uploads JSON test timings from each completed shard, plus uniquely named reports and test results on failure. The separate visual suites retain their own configuration.
 
 Linux CI runs the Go, Vitest, and Playwright suites with loopback-only networking after dependency setup. The guard counts blocked outbound packets and fails the run even if the test ignores a connection error. To use the same guard on Linux, install `nftables`, warm the dependencies, and prefix the test command with `bash scripts/ci/test-loopback.sh`. The guard uses noninteractive sudo to set up private Linux network and mount namespaces, then runs the tests as the calling user. Native Windows and macOS tests use the same service fakes. The opt-in live runner and CLI parity check remain separate.
 
