@@ -400,6 +400,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	}
 
 	var acceptedTMDBLinks providerExternalLinks
+	var acceptedTMDBSeriesLinksVerified bool
 	var acceptedTVmazeLinks providerExternalLinks
 	acceptedTMDBID := 0
 	acceptedTVmazeID := 0
@@ -853,6 +854,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	}
 	resolveTMDBFromProviderIDs()
 
+	titleMatchedTVTMDBID := 0
 	needsTMDBSearch := tmdbClient != nil && !overrideTMDB && !clearedTMDB && ids.TMDBID == 0 && !hasExplicitProviderAnchor &&
 		(ids.TVDBID == 0 || !shouldUseTVDBForCategory(meta, ids))
 	needsIMDBSearch := !overrideIMDB && !clearedIMDB && ids.IMDBID == 0 && !hasExplicitProviderAnchor &&
@@ -908,6 +910,11 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			if stageNeedsTMDB && tmdbOutcome.TMDBID != 0 && acceptTMDBCategory(tmdbOutcome.Category) {
 				applyResolvedID(&ids.TMDBID, &ids.Provenance.TMDB, tmdbOutcome.TMDBID, "tmdb_search")
 				ids.Dependencies.TMDB = api.IdentityDependency{ID: ids.TMDBID}
+				// A sole TMDB result can be selected even below the title-match threshold.
+				if tmdbOutcome.AutoSelected && normalizeCategory(tmdbOutcome.Category) == "TV" && len(tmdbOutcome.Candidates) > 0 &&
+					tmdbOutcome.Candidates[0].TMDBID == ids.TMDBID && tmdbOutcome.Candidates[0].Similarity >= 0.75 {
+					titleMatchedTVTMDBID = ids.TMDBID
+				}
 			}
 			if stageNeedsTMDB && len(tmdbOutcome.Candidates) > 0 && len(candidates.TMDB) == 0 {
 				candidates.TMDB = mapTMDBCandidates(tmdbOutcome.Candidates, tmdbOutcome.Category)
@@ -1500,6 +1507,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		candidateHasTVmazeLinks := hasAcceptedTVmazeLinks
 		if tmdbAccepted {
 			acceptedTMDBID = ids.TMDBID
+			acceptedTMDBSeriesLinksVerified = tmdbResult.SeriesExternalIDsVerified
 			acceptedTMDBMALID = tmdbResult.MALID
 			candidateTMDBLinks = providerExternalLinks{IMDBID: tmdbResult.ExternalIMDbID, TVDBID: tmdbResult.ExternalTVDBID}
 			candidateHasTMDBLinks = true
@@ -1831,8 +1839,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		}
 		meta.CollectedScene = scene
 		var linkedIMDb []imdbCorroboration
-		// One external link per provider family. A resource looked up by another
-		// provider's ID can disagree, but cannot count as a second confirmation.
+		// A dependent provider link can disagree, but normally cannot corroborate an IMDb ID.
 		if hasAcceptedTMDBLinks && acceptedTMDBID == ids.TMDBID {
 			linkedIMDb = append(linkedIMDb, imdbCorroboration{acceptedTMDBLinks.IMDBID, independentlyResolved(ids.TMDBID, ids.Dependencies.TMDB)})
 		}
@@ -1845,6 +1852,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		suggestion := candidates.IMDB[0].ID
 		confirmedWithoutTVDB := corroboratedIMDb(suggestion, linkedIMDb)
 		tvdbIMDbConflict := false
+		tmdbAnchoredTVDBVote := false
 		if ids.TVDBID > 0 && shouldUseTVDBForCategory(meta, ids) && metadata.TVDB != nil && metadata.TVDB.TVDBID == ids.TVDBID {
 			links := metadata.TVDB.RemoteLinks
 			// A sibling mismatch disqualifies TVDB from voting, but cannot erase its IMDb contradiction.
@@ -1852,12 +1860,20 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 				return link.Provider == api.IdentityProviderIMDB && link.State == "conflicting"
 			})
 			if links.Status == api.MetadataEvidenceStatusComplete || links.Status == api.MetadataEvidenceStatusContradictory {
-				independent := links.Status == api.MetadataEvidenceStatusComplete && independentlyResolved(ids.TVDBID, ids.Dependencies.TVDB) &&
+				usableVote := links.Status == api.MetadataEvidenceStatusComplete &&
 					!tvdbSiblingLinksMismatch(links, tvdbSiblingTargets(&ids, effectiveOverrides))
+				independent := usableVote && independentlyResolved(ids.TVDBID, ids.Dependencies.TVDB)
 				for _, link := range links.Links {
 					if link.Provider == api.IdentityProviderIMDB && link.State == "valid" {
-						linkedIMDb = append(linkedIMDb, imdbCorroboration{link.ID, independent})
-						break // Duplicate TVDB links are not independent.
+						// TMDB may locate the TVDB series, but cannot supply its IMDb vote.
+						// Both verified series records must explicitly link to the replacement.
+						tmdbAnchoredTVDBVote = usableVote && link.ID > 0 && link.ID != suggestion &&
+							ids.Category == api.CanonicalCategoryTV && titleMatchedTVTMDBID == ids.TMDBID &&
+							hasAcceptedTMDBLinks && acceptedTMDBSeriesLinksVerified && acceptedTMDBID == ids.TMDBID && acceptedTMDBLinks.IMDBID == link.ID &&
+							independentlyResolved(ids.TMDBID, ids.Dependencies.TMDB) &&
+							ids.Dependencies.TVDB == (api.IdentityDependency{ID: ids.TVDBID, TMDBID: ids.TMDBID})
+						linkedIMDb = append(linkedIMDb, imdbCorroboration{link.ID, independent || tmdbAnchoredTVDBVote})
+						break // Duplicate TVDB links do not supply extra votes.
 					}
 				}
 			}
@@ -1883,6 +1899,9 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 				tentativeIMDbRequiresTVDB = confirmedWithoutTVDB != confirmed
 				if tentativeIMDbRequiresTVDB {
 					ids.Dependencies.IMDB.TVDBID = ids.TVDBID
+					if tmdbAnchoredTVDBVote {
+						ids.Dependencies.IMDB.TMDBID = ids.TMDBID
+					}
 				}
 				if ids.TMDBID == 0 {
 					tmdbCategoryPref = normalizeCategory(string(category))
@@ -2170,12 +2189,12 @@ func withdrawConflictingTVDBSiblings(ids *api.ExternalIdentity, tvdbID int) {
 }
 
 type imdbCorroboration struct {
-	id          int
-	independent bool
+	id     int
+	counts bool
 }
 
 // corroboratedIMDb accepts one independent confirmation of the suggestion,
-// or two agreeing independent links to a replacement. Conflicts stay unresolved.
+// or two agreeing qualifying links to a replacement. Conflicts stay unresolved.
 func corroboratedIMDb(suggestion int, links []imdbCorroboration) int {
 	var agreed, count int
 	for _, link := range links {
@@ -2186,7 +2205,7 @@ func corroboratedIMDb(suggestion int, links []imdbCorroboration) int {
 			return 0
 		}
 		agreed = link.id
-		if link.independent {
+		if link.counts {
 			count++
 		}
 	}

@@ -24,9 +24,9 @@ import (
 
 func TestPreparedTentativeIMDbKeepsIndependentEvidenceAcrossRestart(t *testing.T) {
 	for _, tc := range []struct {
-		name, sceneID, imdbType string
-		wantID                  int
-		linkTVDB                bool
+		name, sceneID, imdbType, tvdbIMDb, tmdbEvidence string
+		wantID                                          int
+		linkTVDB, weakTMDB, upgrade                     bool
 	}{
 		{
 			name:     "independent agreement",
@@ -35,9 +35,64 @@ func TestPreparedTentativeIMDbKeepsIndependentEvidenceAcrossRestart(t *testing.T
 			wantID:   555002,
 		},
 		{
-			name:     "derived TVDB link does not count twice",
+			name:     "TMDB-anchored TVDB series supplies its own agreeing IMDb link",
+			upgrade:  true,
+			imdbType: "tvMiniseries",
+			linkTVDB: true,
+			tvdbIMDb: "tt0555002",
+			wantID:   555002,
+		},
+		{
+			name:     "TMDB-anchored TVDB series supplies a different IMDb link",
 			imdbType: "tvSeries",
 			linkTVDB: true,
+			tvdbIMDb: "tt0555099",
+		},
+		{
+			name:     "TMDB-anchored TVDB series has no explicit IMDb link",
+			imdbType: "tvSeries",
+			linkTVDB: true,
+		},
+		{
+			name:     "A weak TMDB title match cannot corroborate a replacement",
+			imdbType: "tvSeries",
+			linkTVDB: true,
+			weakTMDB: true,
+			tvdbIMDb: "tt0555002",
+		},
+		{
+			name:         "TMDB details identify the wrong series",
+			imdbType:     "tvSeries",
+			linkTVDB:     true,
+			tvdbIMDb:     "tt0555002",
+			tmdbEvidence: "mismatching details",
+		},
+		{
+			name:         "TMDB links identify the wrong series",
+			imdbType:     "tvSeries",
+			linkTVDB:     true,
+			tvdbIMDb:     "tt0555002",
+			tmdbEvidence: "mismatching links",
+		},
+		{
+			name:         "TMDB links omit their series ID",
+			imdbType:     "tvSeries",
+			linkTVDB:     true,
+			tvdbIMDb:     "tt0555002",
+			tmdbEvidence: "missing link identity",
+		},
+		{
+			name:         "TMDB has no explicit IMDb link",
+			imdbType:     "tvSeries",
+			linkTVDB:     true,
+			tvdbIMDb:     "tt0555002",
+			tmdbEvidence: "missing IMDb link",
+		},
+		{
+			name:     "TMDB and TVDB agree but IMDb does not verify a series",
+			imdbType: "tvEpisode",
+			linkTVDB: true,
+			tvdbIMDb: "tt0555002",
 		},
 		{
 			name:     "conflicting links",
@@ -55,7 +110,15 @@ func TestPreparedTentativeIMDbKeepsIndependentEvidenceAcrossRestart(t *testing.T
 			fixture := newCorrectionEvidenceFixtureForSource(t, "Example.Series.2026.S01E01.1080p.WEB-DL.H264-GRP.mkv")
 			fixture.input.Instructions = api.ReleaseFactInstructions{}
 			fixture.input.Controls.Interaction = api.InteractionModeUnattended
-			fixture.tmdbExternalIDs = `{"imdb_id":"tt0555002"}`
+			fixture.tmdbExternalIDs = `{"id":555001,"imdb_id":"tt0555002"}`
+			switch tc.tmdbEvidence {
+			case "mismatching links":
+				fixture.tmdbExternalIDs = `{"id":567899,"imdb_id":"tt0555002"}`
+			case "missing link identity":
+				fixture.tmdbExternalIDs = `{"imdb_id":"tt0555002"}`
+			case "missing IMDb link":
+				fixture.tmdbExternalIDs = `{"id":555001}`
+			}
 			var reads atomic.Int32
 			base := fixture.http.Transport
 			fixture.http.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -100,11 +163,29 @@ func TestPreparedTentativeIMDbKeepsIndependentEvidenceAcrossRestart(t *testing.T
 					if body == "" {
 						return base.RoundTrip(req)
 					}
-				case "api.themoviedb.org":
-					if req.URL.Path != "/3/find/tt0555009" {
+				case "api4.thetvdb.com":
+					switch req.URL.Path {
+					case "/v4/search/remoteid/555001":
+						if tc.linkTVDB {
+							body = `{"data":[{"series":{"id":555003,"name":"Example Series"}}]}`
+						}
+					case "/v4/search/remoteid/tt0555009":
+						body = `{"data":[]}` // An explicit IMDb correction can query TVDB.
+					}
+					if body == "" {
 						return base.RoundTrip(req)
 					}
-					body = `{"movie_results":[],"tv_results":[]}`
+				case "api.themoviedb.org":
+					switch {
+					case tc.weakTMDB && req.URL.Path == "/3/search/tv":
+						body = `{"results":[{"id":555001,"name":"Distant Planet","original_name":"Distant Planet","first_air_date":"2026-01-01"}]}`
+					case tc.tmdbEvidence == "mismatching details" && req.URL.Path == "/3/tv/555001":
+						body = `{"id":567899,"name":"Example Series","original_name":"Example Series","first_air_date":"2026-01-01","original_language":"en","type":"Scripted"}`
+					case req.URL.Path == "/3/find/tt0555009":
+						body = `{"movie_results":[],"tv_results":[]}`
+					default:
+						return base.RoundTrip(req)
+					}
 				default:
 					return base.RoundTrip(req)
 				}
@@ -117,29 +198,62 @@ func TestPreparedTentativeIMDbKeepsIndependentEvidenceAcrossRestart(t *testing.T
 			})
 			fixture.imdb = imdb.NewClient(fixture.http, nil)
 			if tc.linkTVDB {
-				fixture.tmdbExternalIDs = `{"imdb_id":"tt0555002","tvdb_id":555003}`
-				fixture.tvdbRemoteIDs = `[{"id":"tt0555002","sourceName":"IMDB","type":2}]`
+				if tc.tvdbIMDb != "" {
+					fixture.tvdbRemoteIDs = fmt.Sprintf(`[{"id":%q,"sourceName":"IMDB","type":2}]`, tc.tvdbIMDb)
+				}
 				fixture.tvdb = tvdb.NewClient(fixture.http, nil, "synthetic-key", "")
 			}
 			module, repo := fixture.open(t)
 			input := fixture.input
 			inherit := api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit}
 			var generation api.PreparedGeneration
-			for _, phase := range []string{"initial", "restart"} {
-				if phase == "restart" {
+			phases := []string{"initial", "restart"}
+			if tc.upgrade {
+				phases = append(phases, "upgrade")
+			}
+			for _, phase := range phases {
+				if phase != "initial" {
+					if phase == "upgrade" {
+						stale, err := repo.LoadPreparedRelease(t.Context(), input.SourcePath)
+						if err != nil {
+							t.Fatal(err)
+						}
+						stale.Compatibility.ContractVersion = "prepared-release-v92-source-and-sibling-evidence"
+						stale.Identity.Resolution.ContractVersion = "external-identity-v21-source-and-sibling-evidence"
+						stale.Identity.IMDBID = 0
+						stale.Identity.Provenance.IMDB = ""
+						stale.Identity.Dependencies.IMDB = api.IdentityDependency{}
+						stale.ProviderMetadata.IMDB = nil
+						if err := repo.CommitPreparedRelease(t.Context(), stale); err != nil {
+							t.Fatal(err)
+						}
+					}
 					if err := repo.Close(); err != nil {
 						t.Fatal(err)
 					}
-					module, _ = fixture.open(t)
+					module, repo = fixture.open(t)
 					input.ExternalFreshness = api.ExternalFreshnessReuse
 				}
 				got := prepareCorrectionEvidence(t, module, input, inherit).Release
-				if got.Identity.IMDBID != tc.wantID || phase == "restart" && got.Generation != generation {
+				if phase == "upgrade" {
+					generation++
+				}
+				if got.Identity.IMDBID != tc.wantID || phase != "initial" && got.Generation != generation {
 					t.Fatalf("%s: IMDb %d, generation %d (previous %d)", phase, got.Identity.IMDBID, got.Generation, generation)
 				}
 				generation = got.Generation
-				if tc.linkTVDB && (got.ProviderMetadata.TVDB == nil || len(got.ProviderMetadata.TVDB.RemoteLinks.Links) == 0) {
+				if tc.linkTVDB && (got.ProviderMetadata.TVDB == nil || got.Identity.Dependencies.TVDB.TMDBID != 555001) {
 					t.Fatalf("%s: derived TVDB link was not collected: %+v", phase, got.ProviderMetadata.TVDB)
+				}
+				if tc.linkTVDB && tc.wantID != 0 {
+					want := api.IdentityDependency{
+						ID:     tc.wantID,
+						TMDBID: 555001,
+						TVDBID: 555003,
+					}
+					if got.Identity.Dependencies.IMDB != want {
+						t.Fatalf("%s: IMDb dependency = %+v, want %+v", phase, got.Identity.Dependencies.IMDB, want)
+					}
 				}
 				candidates := got.ProviderMetadata.IdentityCandidates
 				index := slices.IndexFunc(candidates, func(candidate api.ExternalIdentityCandidate) bool {
@@ -162,7 +276,7 @@ func TestPreparedTentativeIMDbKeepsIndependentEvidenceAcrossRestart(t *testing.T
 				}
 			}
 			wantReads := int32(0)
-			if tc.sceneID == "tt0555002" {
+			if tc.sceneID == "tt0555002" || tc.tvdbIMDb == "tt0555002" && !tc.weakTMDB && tc.tmdbEvidence == "" {
 				wantReads = 1
 			}
 			if reads.Load() != wantReads {
@@ -261,7 +375,7 @@ func TestTentativeIMDbUsesVerifiedProviderEvidence(t *testing.T) {
 			tvdbLinks: api.TVDBRemoteLinks{Status: api.MetadataEvidenceStatusContradictory, Links: []api.TVDBRemoteLink{{Provider: api.IdentityProviderMAL, State: "conflicting"}}},
 		},
 		{
-			name: "unrelated TVDB contradiction does not hide a disagreeing IMDb link",
+			name:     "unrelated TVDB contradiction does not hide a disagreeing IMDb link",
 			category: "tv",
 			imdbType: "tvSeries",
 			tmdbIMDb: 555001,
@@ -269,8 +383,8 @@ func TestTentativeIMDbUsesVerifiedProviderEvidence(t *testing.T) {
 			tvdbLinks: api.TVDBRemoteLinks{Status: api.MetadataEvidenceStatusContradictory, Links: []api.TVDBRemoteLink{
 				{
 					Provider: api.IdentityProviderIMDB,
-					State: "valid",
-					ID: 555002,
+					State:    "valid",
+					ID:       555002,
 				},
 				{Provider: api.IdentityProviderMAL, State: "conflicting"},
 			}},
@@ -382,20 +496,20 @@ func TestConfirmedTentativeIMDbResolvesTVProvidersWithoutTMDB(t *testing.T) {
 	const imdbID, tvdbID, tvmazeID = 555001, 73, 81
 	const imdbText = "tt0555001"
 	for _, tc := range []struct {
-		name, tvmazeIMDb string
+		name, tvmazeIMDb       string
 		wantTVmaze, linkedTMDB int
 	}{
 		{
-			name: "matching raw IMDb link",
+			name:       "matching raw IMDb link",
 			tvmazeIMDb: imdbText,
 			wantTVmaze: tvmazeID,
 		},
 		{
-			name: "contradictory raw IMDb link despite matching search result",
+			name:       "contradictory raw IMDb link despite matching search result",
 			tvmazeIMDb: "tt0555009",
 		},
 		{
-			name: "late TVDB siblings supply a TMDB record in the same generation",
+			name:       "late TVDB siblings supply a TMDB record in the same generation",
 			tvmazeIMDb: imdbText,
 			wantTVmaze: tvmazeID,
 			linkedTMDB: 42,
@@ -407,8 +521,8 @@ func TestConfirmedTentativeIMDbResolvesTVProvidersWithoutTMDB(t *testing.T) {
 				infoFn: func(id string) imdb.Info {
 					return imdb.Info{
 						IMDbID: id,
-						Type: "tvSeries",
-						Title: "Example",
+						Type:   "tvSeries",
+						Title:  "Example",
 					}
 				},
 			}
@@ -425,13 +539,13 @@ func TestConfirmedTentativeIMDbResolvesTVProvidersWithoutTMDB(t *testing.T) {
 				tvdbClient.seriesMetadata.RemoteLinks = api.TVDBRemoteLinks{Status: api.MetadataEvidenceStatusComplete, Links: []api.TVDBRemoteLink{
 					{
 						Provider: api.IdentityProviderIMDB,
-						State: "valid",
-						ID: imdbID,
+						State:    "valid",
+						ID:       imdbID,
 					},
 					{
 						Provider: api.IdentityProviderTMDB,
-						State: "valid",
-						ID: tc.linkedTMDB,
+						State:    "valid",
+						ID:       tc.linkedTMDB,
 					},
 				}}
 			}
@@ -441,10 +555,10 @@ func TestConfirmedTentativeIMDbResolvesTVProvidersWithoutTMDB(t *testing.T) {
 				}
 				return tvmaze.SearchResult{
 					SelectedID: tvmazeID,
-					IMDBID: imdbID,
+					IMDBID:     imdbID,
 					Candidates: []tvmaze.Candidate{{
-						ID: tvmazeID,
-						Name: "Example",
+						ID:        tvmazeID,
+						Name:      "Example",
 						Externals: tvmaze.Externals{IMDB: tc.tvmazeIMDb},
 					}},
 				}
@@ -453,9 +567,9 @@ func TestConfirmedTentativeIMDbResolvesTVProvidersWithoutTMDB(t *testing.T) {
 				WithTVDBClient(tvdbClient), WithTVmazeClient(tvmazeClient),
 				WithSceneDetector(staticSceneDetector{result: SceneResult{IsScene: true, IMDBID: imdbID}}))
 			got, err := service.resolveExternalIdentity(t.Context(), preparationstate.State{
-				SourcePath: filepath.Join(t.TempDir(), "Example.2026.S01E01.mkv"),
-				Filename: "Example",
-				Release: api.ReleaseInfo{Title: "Example", Year: 2026},
+				SourcePath:        filepath.Join(t.TempDir(), "Example.2026.S01E01.mkv"),
+				Filename:          "Example",
+				Release:           api.ReleaseInfo{Title: "Example", Year: 2026},
 				MediaInfoCategory: "tv",
 			})
 			if err != nil {

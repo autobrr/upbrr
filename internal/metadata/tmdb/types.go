@@ -156,6 +156,8 @@ type MetadataResult struct {
 	ExternalTVDBID   int
 	OriginCountry    []string
 	OriginalLanguage string
+	// SeriesExternalIDsVerified means both TMDB response envelopes identify the requested series.
+	SeriesExternalIDsVerified bool
 	// SpokenLanguages retains normalized identified dialogue-language codes as a set.
 	SpokenLanguages []string
 	OriginalTitle   string

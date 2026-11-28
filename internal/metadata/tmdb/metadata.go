@@ -216,6 +216,7 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 
 	if externalErr == nil {
 		result = applyExternalIDs(result, external, input, media)
+		result.SeriesExternalIDsVerified = category == "TV" && media.ID == input.TMDBID && external.ID == input.TMDBID
 	} else {
 		logger.Warnf("tmdb: external ids lookup failed: %v", externalErr)
 	}
@@ -918,6 +919,7 @@ func (p *lockPool) lock(key string) *lockHandle {
 // JSON response types.
 
 type mediaResponse struct {
+	ID               int     `json:"id"`
 	Title            string  `json:"title"`
 	Name             string  `json:"name"`
 	OriginalTitle    string  `json:"original_title"`
@@ -955,6 +957,7 @@ type genre struct {
 }
 
 type externalIDsResponse struct {
+	ID     int    `json:"id"`
 	IMDbID string `json:"imdb_id"`
 	TVDBID int    `json:"tvdb_id"`
 }

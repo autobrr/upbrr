@@ -631,8 +631,15 @@ func (c *Client) getJSON(ctx context.Context, path string, params map[string]str
 		// Older typed evidence erased absent seasons into zero.
 		domain = "tmdb.episode-response.v2"
 	case *mediaResponse:
-		// Older typed evidence discarded the spoken-language collection.
+		// Older typed series responses lacked the envelope ID used by corroboration.
 		domain = "tmdb.media-response.v2"
+		if strings.HasPrefix(path, "/tv/") {
+			domain = "tmdb.media-response.v3"
+		}
+	case *externalIDsResponse:
+		if strings.HasPrefix(path, "/tv/") {
+			domain = "tmdb.series-external-ids-response.v2"
+		}
 	}
 	err := lookup(
 		ctx,
