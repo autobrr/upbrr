@@ -31,6 +31,8 @@ Search uses the first applicable source:
 
 An explicit [`--infohash` or API `torrent.infoHash`](../../cli/index.md#client-and-torrent) lookup searches the default client, then other available clients, overriding the search list, `none` selectors and skip-search setting. A named client supplied with that request still restricts lookup to that client. This changes search only; only-ID, keep-images and injection choices remain in effect.
 
+Direct qBittorrent discovery reads the full torrent list when no info hash is supplied, so older torrents can be considered for reuse. A large client library can take longer to search.
+
 Watch-folder clients can receive torrent files but are not used for torrent search. Removing a Torrent Clients entry in the Web UI also clears its global and tracker references before save.
 
 ## Verify the change
