@@ -278,7 +278,6 @@ func TestMapCLICompositeUploadRequestPreservesPerUploadOptions(t *testing.T) {
 		IgnoreDupesFor:   []string{"BETA"},
 		SkipDupeCheck:    true,
 		SkipDupeAsActual: true,
-		DoubleDupeCheck:  true,
 		DescriptionGroups: []api.DescriptionBuilderGroup{{
 			GroupKey:    "unit3d",
 			Description: "Synthetic tracker description.",
@@ -402,7 +401,7 @@ func TestMapCLICompositeUploadRequestPreservesPerUploadOptions(t *testing.T) {
 		t.Fatalf("projection mapping = %#v", mapped.Trackers)
 	}
 	if mapped.Duplicates.RemoteCheck == nil || *mapped.Duplicates.RemoteCheck ||
-		mapped.Duplicates.CheckCount == nil || *mapped.Duplicates.CheckCount != 2 ||
+		mapped.Duplicates.CheckCount != nil ||
 		mapped.Duplicates.OnEvidence != api.ReleaseWorkflowDuplicateBlock ||
 		!slicesEqual(mapped.Duplicates.AllowUpload, []api.TrackerID{"BETA"}) {
 		t.Fatalf("duplicate mapping = %#v", mapped.Duplicates)
