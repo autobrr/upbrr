@@ -7,12 +7,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -693,6 +695,19 @@ func TestSearchPathedTorrentsQbitForceRecheckAfterMetadataValidation(t *testing.
 	dir := t.TempDir()
 	sourcePath := filepath.Join(dir, "Movie.Title.2024.mkv")
 	validHash, validData := createTestTorrent(t, dir, "Movie.Title.2024.mkv", 22)
+	older := qbittorrent.Torrent{
+		Hash:        validHash,
+		Name:        "Movie.Title.2024",
+		ContentPath: sourcePath,
+		Progress:    1,
+		AmountLeft:  0,
+		Size:        5 * 1024 * 1024,
+		TotalSize:   5 * 1024 * 1024,
+		State:       qbittorrent.TorrentStateStalledUp,
+		Tracker:     "https://blutopia.cc/announce/redacted",
+		Comment:     "https://blutopia.cc/torrents/7777",
+		NumComplete: 5,
+	}
 	wrongHash, wrongData := createTestTorrent(t, dir, "Different.Title.2024.mkv", 22)
 	dataByHash := map[string][]byte{
 		validHash: validData,
@@ -717,11 +732,15 @@ func TestSearchPathedTorrentsQbitForceRecheckAfterMetadataValidation(t *testing.
 			hashes := r.URL.Query().Get("hashes")
 			if hashes != "" {
 				record("info:" + hashes)
-				_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{{Hash: hashes}})
+				if hashes != validHash {
+					_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{})
+					return
+				}
+				_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{older})
 				return
 			}
 			record("list")
-			_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{
+			torrents := []qbittorrent.Torrent{
 				{
 					Hash:        wrongHash,
 					Name:        "Movie.Title.2024",
@@ -729,20 +748,18 @@ func TestSearchPathedTorrentsQbitForceRecheckAfterMetadataValidation(t *testing.
 					Comment:     "https://beyond-hd.me/details/6666",
 					NumComplete: 9,
 				},
-				{
-					Hash:        validHash,
-					Name:        "Movie.Title.2024",
-					ContentPath: sourcePath,
-					Progress:    1,
-					AmountLeft:  0,
-					Size:        5 * 1024 * 1024,
-					TotalSize:   5 * 1024 * 1024,
-					State:       qbittorrent.TorrentStateStalledUp,
-					Tracker:     "https://blutopia.cc/announce/redacted",
-					Comment:     "https://blutopia.cc/torrents/7777",
-					NumComplete: 5,
-				},
-			})
+			}
+			for i := range 100 {
+				torrents = append(torrents, qbittorrent.Torrent{
+					Hash: fmt.Sprintf("%040x", i+1),
+					Name: fmt.Sprintf("Unrelated.Movie.%d", i),
+				})
+			}
+			torrents = append(torrents, older)
+			if limit, _ := strconv.Atoi(r.URL.Query().Get("limit")); limit > 0 && limit < len(torrents) {
+				torrents = torrents[:limit]
+			}
+			_ = json.NewEncoder(w).Encode(torrents)
 		case "/api/v2/torrents/properties":
 			hash := r.URL.Query().Get("hash")
 			record("properties:" + hash)
@@ -822,6 +839,10 @@ func TestSearchPathedTorrentsQbitForceRecheckAfterMetadataValidation(t *testing.
 	gotCalls := append([]string(nil), calls...)
 	mu.Unlock()
 
+	firstList := slices.Index(gotCalls, "list")
+	if firstList < 0 || slices.Contains(gotCalls[firstList+1:], "list") {
+		t.Fatalf("expected one complete native list request, got %v", gotCalls)
+	}
 	if containsString(gotCalls, "recheck:"+wrongHash) {
 		t.Fatalf("did not expect invalid metadata candidate to be rechecked; calls=%v", gotCalls)
 	}
@@ -832,6 +853,65 @@ func TestSearchPathedTorrentsQbitForceRecheckAfterMetadataValidation(t *testing.
 	}
 	if validRecheckIdx < validExportIdx {
 		t.Fatalf("expected valid candidate recheck after metadata export, got %v", gotCalls)
+	}
+
+	result, err = svc.SearchPathedTorrents(t.Context(), api.ClientSubject{
+		SourcePath: sourcePath,
+		FileList:   []string{sourcePath},
+		InfoHash:   validHash,
+	})
+	if err != nil || result.InfoHash != validHash {
+		t.Fatalf("expected exact lookup to find the older artifact, got hash=%q err=%v", result.InfoHash, err)
+	}
+	mu.Lock()
+	exactCalls := append([]string(nil), calls[len(gotCalls):]...)
+	mu.Unlock()
+	if !slices.Contains(exactCalls, "info:"+validHash) || slices.Contains(exactCalls, "list") {
+		t.Fatalf("exact lookup must filter by hash rather than list all torrents: %v", exactCalls)
+	}
+}
+
+func TestSearchQbitClientCancelsDuringNativeList(t *testing.T) {
+	t.Parallel()
+
+	started := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/info":
+			_, _ = w.Write([]byte("["))
+			if err := http.NewResponseController(w).Flush(); err != nil {
+				t.Errorf("flush partial list: %v", err)
+			}
+			close(started)
+			<-r.Context().Done()
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	svc := NewService(config.Config{}, api.NopLogger{})
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.mkv")
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := svc.searchQbitClient(ctx, "qbit", config.TorrentClientConfig{Type: "qbit", URL: server.URL},
+			api.ClientSubject{SourcePath: sourcePath})
+		result <- err
+	}()
+
+	select {
+	case <-started:
+		cancel()
+	case err := <-result:
+		t.Fatalf("search stopped before receiving the list: %v", err)
+	}
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("search error = %v, want canceled", err)
 	}
 }
 
