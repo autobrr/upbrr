@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
@@ -405,6 +406,53 @@ func TestHistoryDeletionPreservesSharedArtifactsUntilLastReference(t *testing.T)
 				}
 			}
 		})
+	}
+}
+
+func TestHistoryDeletionRemovesComparisonsFromRetainedReleaseRoot(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	repo, err := db.Open(filepath.Join(root, "history.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(root, "Example.A.mkv")
+	otherSource := filepath.Join(root, "Example.B.mkv")
+	now := time.Now().UTC()
+	for _, path := range []string{source, otherSource} {
+		if err := os.WriteFile(path, []byte("source"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.Save(t.Context(), api.FileMetadata{Path: path, UpdatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	builder := workflowMediaBuilder{config: config.Config{MainSettings: config.MainSettingsConfig{DBPath: repo.DBPath()}}}
+	comparison, err := builder.writeComparisonImage(api.ReleaseRef{SourcePath: source}, "cell", []byte("comparison"), ".png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := filepath.Join(filepath.Dir(filepath.Dir(comparison)), "shared.png")
+	if err := os.WriteFile(shared, []byte("shared screenshot"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	insertHistoryReusableArtifact(t, repo, otherSource, shared, now)
+
+	history := newHistoryModule(repo, repo.DBPath(), api.NopLogger{})
+	if err := history.Delete(t.Context(), source); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(comparison); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("deleted input's comparison was retained: %v", err)
+	}
+	for _, path := range []string{source, otherSource, shared} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("unrelated file was removed: %v", err)
+		}
 	}
 }
 

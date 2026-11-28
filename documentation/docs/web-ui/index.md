@@ -232,7 +232,7 @@ Use [Appearance](./settings/appearance.md) to choose a bundled theme and light o
 
 ## History
 
-**History** shows retained releases and lets you reopen their overview. Deleting a release from History removes its stored release state; it does not delete the source media.
+**History** shows retained releases and lets you reopen their overview. Deleting a release from History removes its stored release state and local comparison images that are not retained by another input. It does not delete the source media.
 
 Opening a historical input checks its local source before adopting reusable content. Deleting an idle active release closes its input automatically; running work still prevents deletion. Deletion removes associated workflow, effect, reusable-media, and submission records, plus generated files managed by upbrr, even if the original source folder is missing. Local repeat-submission protection is removed with those records. Shared generated files and their directories are kept while another retained release still references them. Remote uploads and source media are unchanged.
 
