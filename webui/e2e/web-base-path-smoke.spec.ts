@@ -6,6 +6,7 @@ import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { crc32 } from "node:zlib";
 import {
   createE2EAPIToken,
   createE2EWorkspace,
@@ -76,6 +77,14 @@ test("embedded web serves UI, API, assets, manifest, and events under a base pat
     const iconBytes = await iconFile.body();
     expect(iconBytes.readUInt32BE(16)).toBe(1); // PNG width
     expect(iconBytes.readUInt32BE(20)).toBe(1); // PNG height
+    // Each chunk's checksum covers its type and data.
+    for (let offset = 8; offset < iconBytes.length; ) {
+      const checksumOffset = offset + 8 + iconBytes.readUInt32BE(offset);
+      expect(crc32(iconBytes.subarray(offset + 4, checksumOffset))).toBe(
+        iconBytes.readUInt32BE(checksumOffset),
+      );
+      offset = checksumOffset + 4;
+    }
     expect(await iconData.json()).toBe("data:image/png;base64," + iconBytes.toString("base64"));
 
     const manifest = await request.get(`${origin}/upbrr/site.webmanifest`);

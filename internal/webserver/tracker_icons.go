@@ -35,7 +35,7 @@ func resolveTrackerIconTarget(trackerName string, faviconURL string) (string, st
 
 func trackerIconDataURL(ctx context.Context, dbPath, domain, target string) (string, error) {
 	if core.E2EFakesEnabled() {
-		return "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=", nil
+		return "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAAD0lEQVR4nAACAP3/Av8DAAEFAQJnLD7dAAAAAElFTkSuQmCC", nil
 	}
 	return trackericon.GetTrackerIcon(ctx, dbPath, domain, target) //nolint:wrapcheck // Keep the existing error text returned by both icon endpoints.
 }

@@ -11,6 +11,8 @@ export default defineConfig({
     timeout: 10_000,
   },
   fullyParallel: true,
+  // Playwright can fetch the PR base for diff metadata in a shallow CI checkout.
+  captureGitInfo: { diff: false },
   reporter: [["list"], ["html", { open: "never", outputFolder: "playwright-report" }]],
   use: {
     baseURL: "http://localhost:7480",

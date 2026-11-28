@@ -28,7 +28,7 @@ export const releaseWorkflowParityFixture = {
 } as const;
 
 const png1x1 = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAAD0lEQVR4nAACAP3/Av8DAAEFAQJnLD7dAAAAAElFTkSuQmCC",
   "base64",
 );
 
@@ -169,6 +169,14 @@ export async function createE2EWorkspace(options: E2EWorkspaceOptions = {}): Pro
   if (options.preparedMediaInfo) {
     await writeFile(mediaInfoPath, "General\nUnique ID : e2e-unique-id\nVideo\nFormat : AVC\n");
   }
+  // Preflight reads a fresh banned-group cache before refreshing from AITHER.
+  const bannedGroupCache = path.join(root, "cache", "banned");
+  await mkdir(bannedGroupCache, { recursive: true });
+  await writeFile(
+    path.join(bannedGroupCache, "AITHER_banned_groups.json"),
+    JSON.stringify({ banned_groups: "" }),
+    { mode: 0o600 },
+  );
   const fake = await startFakeServer();
   await writeFile(
     configPath,
