@@ -1238,6 +1238,10 @@ func resolveBTNURLAddrs(ctx context.Context, parsed *url.URL, lookup btnLookupIP
 		return []netip.Addr{addr.Unmap()}, nil
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("resolve host %q: %w", host, err)
+	}
+
 	resolved, err := lookup(ctx, host)
 	if err != nil {
 		return nil, fmt.Errorf("resolve host %q: %w", host, err)

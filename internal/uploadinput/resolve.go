@@ -314,6 +314,9 @@ func validateDescriptionURL(ctx context.Context, value string) (*url.URL, error)
 	if err != nil || parsed.Hostname() == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil {
 		return nil, errors.New("description URL must be a public http or https URL without userinfo")
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("description URL host resolution canceled: %w", err)
+	}
 	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, parsed.Hostname())
 	if err != nil || len(addresses) == 0 {
 		return nil, errors.New("description URL host could not be resolved")
@@ -332,6 +335,9 @@ func dialPublicDescriptionAddress(ctx context.Context, network string, address s
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
 		return nil, fmt.Errorf("description URL address: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("description URL host resolution canceled: %w", err)
 	}
 	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
 	if err != nil {
