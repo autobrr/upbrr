@@ -9,6 +9,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -49,4 +50,21 @@ func buildUnit3DDescription(
 
 func ensureUnit3DDVDVOBDescription(description string, meta api.UploadSubject) string {
 	return descriptionunit3d.AppendDVDVOBMediaInfoBlock(description, api.NewDescriptionSubject(meta))
+}
+
+// DescriptionLayout lists the movable groups owned by the Unit3D composer.
+func (*Definition) DescriptionLayout() []trackers.DescriptionLayoutItem {
+	return trackers.SharedDescriptionLayout()
+}
+
+// RenderDescriptionSample uses the site's production composer and formatting
+// callbacks with synthetic media already in memory.
+func (d *Definition) RenderDescriptionSample(
+	ctx context.Context,
+	sample trackers.DescriptionSample,
+	defaults config.DescriptionSettingsConfig,
+	site config.TrackerConfig,
+) (string, error) {
+	return buildUnit3DDescription(ctx, d.profile.Name, sample.Subject, config.Config{Description: defaults}, site, nil,
+		sample.Assets.Description, sample.Assets.MenuImages, sample.Assets.Screenshots, d.profile.Site)
 }

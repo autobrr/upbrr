@@ -19,14 +19,16 @@ func Profile() standalone.Profile {
 		ConnectionProbe: trackers.ConnectionProbe{
 			UnverifiedReason: "TVC uses a custom tracker API. A compatible authenticated read has not been verified for this version; no credentials or upload request were sent.",
 		},
-		Name:                    "TVC",
-		BaseURL:                 "https://tvchaosuk.com",
-		DescriptionGroup:        "tvc",
-		UploadContentMode:       trackers.UploadContentModeDescription,
-		AuthCapability:          authcontract.APIKeyCapability("TVC"),
-		PrepareDescription:      prepareDescription,
-		PrepareUpload:           prepareUpload,
-		ProjectionQuestionnaire: projectionQuestionnaire,
+		Name:                      "TVC",
+		BaseURL:                   "https://tvchaosuk.com",
+		DescriptionGroup:          "tvc",
+		UploadContentMode:         trackers.UploadContentModeDescription,
+		AuthCapability:            authcontract.APIKeyCapability("TVC"),
+		PrepareDescription:        prepareDescription,
+		DescriptionDefaultsLayout: descriptionDefaultsLayout,
+		DescriptionSample:         renderDescriptionSample,
+		PrepareUpload:             prepareUpload,
+		ProjectionQuestionnaire:   projectionQuestionnaire,
 		ReleaseNamePolicy: trackers.NewReleaseNamePolicy("standalone/tvc/v5", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
 			if input.RequestedName != nil {
 				return trackers.ResolvedReleaseNames{Upload: strings.TrimSpace(*input.RequestedName)}, nil

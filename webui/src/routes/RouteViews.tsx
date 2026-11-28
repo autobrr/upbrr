@@ -359,6 +359,11 @@ function HistoryRoute() {
 const SettingsRoute = lazy(() =>
   import("./SettingsRoutes").then(({ SettingsRoute }) => ({ default: SettingsRoute })),
 );
+const DescriptionDefaultsRoute = lazy(() =>
+  import("./SettingsRoutes").then(({ DescriptionDefaultsRoute }) => ({
+    default: DescriptionDefaultsRoute,
+  })),
+);
 const LoggingRoute = lazy(() =>
   import("./SettingsRoutes").then(({ LoggingRoute }) => ({ default: LoggingRoute })),
 );
@@ -395,4 +400,5 @@ export const routeComponents: Record<ScreenId, () => ReactNode> = {
   history: withLoading(HistoryRoute),
   settings: withLoading(() => <SettingsRoute />),
   logging: withLoading(() => <LoggingRoute />),
+  description_defaults: withLoading(() => <DescriptionDefaultsRoute />),
 };

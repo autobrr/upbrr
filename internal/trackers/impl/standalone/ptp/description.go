@@ -31,42 +31,57 @@ import (
 )
 
 func buildDescription(meta api.UploadSubject, trackerConfig config.TrackerConfig, appConfig config.Config, assets trackers.DescriptionAssets) (string, error) {
-	baseDescription := strings.TrimSpace(assets.Description)
 	if assets.Final {
-		return baseDescription, nil
+		return strings.TrimSpace(assets.Description), nil
 	}
-	baseDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(baseDescription)
+	multiDisc := meta.ExactMedia != nil && len(meta.Discs) > 1
+	var mediaSection string
+	var reports map[string]string
+	if multiDisc {
+		var err error
+		reports, err = ptpDiscMediaBlocks(meta, appConfig.MainSettings.DBPath)
+		if err != nil {
+			return "", err
+		}
+	} else if media, err := buildMediaSection(meta, appConfig.MainSettings.DBPath); err == nil {
+		mediaSection = media
+	}
+	return composeDescription(meta, trackerConfig, assets, appConfig.Description, mediaSection, reports), nil
+}
+
+// composeDescription renders prepared report text and images without reading media artifacts.
+func composeDescription(
+	meta api.UploadSubject,
+	trackerConfig config.TrackerConfig,
+	assets trackers.DescriptionAssets,
+	defaults config.DescriptionSettingsConfig,
+	mediaSection string,
+	reports map[string]string,
+) string {
+	baseDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(strings.TrimSpace(assets.Description))
+	audioAnalysis = description.RelabelAnalysis(audioAnalysis, defaults.AudioPlotsLabel, defaults.HDRPlotsLabel)
+	baseDescription, comparisonBlock := description.SeparateGeneratedComparison(baseDescription, defaults)
 	if baseDescription != "" {
 		baseDescription = trackers.StripDescriptionSignatures(baseDescription)
 		report := CleanDescription(baseDescription, meta.DiscType)
 		baseDescription = strings.TrimSpace(report.Description)
 	}
 
-	var sections []string
-	multiDisc := meta.ExactMedia != nil && len(meta.Discs) > 1
-	if !multiDisc {
-		if mediaSection, err := buildMediaSection(meta, appConfig.MainSettings.DBPath); err == nil && mediaSection != "" {
-			sections = append(sections, mediaSection)
-		}
-	}
-	if strings.TrimSpace(baseDescription) != "" {
-		sections = append(sections, comparison.MapOutsideBlocks(baseDescription, convertDescription))
+	sections := []description.Section{
+		{ID: "mediainfo", Text: mediaSection},
+		{ID: "kept", Text: comparison.MapOutsideBlocks(baseDescription, convertDescription)},
+		{ID: "comparison", Text: comparison.MapOutsideBlocks(comparisonBlock, convertDescription)},
 	}
 	if strings.EqualFold(strings.TrimSpace(meta.Type), "WEBDL") && strings.TrimSpace(meta.ServiceLongName) != "" && trackerConfig.AddWebSourceToDesc {
-		sections = append(
-			sections,
-			fmt.Sprintf("[quote][align=center]This release is sourced from %s[/align][/quote]", strings.TrimSpace(meta.ServiceLongName)),
-		)
+		sections = append(sections, description.Section{ID: "web_source", Text: fmt.Sprintf(
+			"[quote][align=center]This release is sourced from %s[/align][/quote]", strings.TrimSpace(meta.ServiceLongName),
+		)})
 	}
 	if audioAnalysis != "" {
-		sections = append(sections, convertDescription(audioAnalysis))
+		sections = append(sections, description.Section{ID: "audio_analysis", Text: convertDescription(audioAnalysis)})
 	}
 	blankLine := trackerConfig.ScreenshotBlankLineEnabled()
-	if multiDisc {
-		reports, err := ptpDiscMediaBlocks(meta, appConfig.MainSettings.DBPath)
-		if err != nil {
-			return "", err
-		}
+	if meta.ExactMedia != nil && len(meta.Discs) > 1 {
 		galleries := ptpDiscScreenshotGroups(meta.Discs, assets.Screenshots, screenshotSeparator(blankLine))
 		if len(galleries) > 0 {
 			for index, disc := range meta.Discs {
@@ -74,12 +89,12 @@ func buildDescription(meta api.UploadSubject, trackerConfig config.TrackerConfig
 					galleries[index] = report + "\n" + galleries[index]
 				}
 			}
-			sections = append(sections, strings.Join(galleries, "\n\n\n"))
+			sections = append(sections, description.Section{ID: "screenshots", Text: strings.Join(galleries, "\n\n\n")})
 		}
 	} else if shots := buildScreenshotSection(meta, assets.Screenshots, blankLine); shots != "" {
-		sections = append(sections, shots)
+		sections = append(sections, description.Section{ID: "screenshots", Text: shots})
 	}
-	return strings.TrimSpace(strings.Join(sections, "\n\n")), nil
+	return strings.TrimSpace(description.FormatSections(sections, defaults))
 }
 
 const (
@@ -481,4 +496,49 @@ func resolveDirectors(meta api.UploadSubject) []string {
 		return names
 	}
 	return nil
+}
+
+// DescriptionLayout exposes PTP's groups without exposing controls for breaking
+// up the required MediaInfo and screenshot pair for each disc in a pack.
+func (*Definition) DescriptionLayout() []trackers.DescriptionLayoutItem {
+	return []trackers.DescriptionLayoutItem{
+		{
+			ID:         "mediainfo",
+			Label:      "MediaInfo",
+			CanCompact: true,
+		},
+		{
+			ID:         "kept",
+			Label:      "Imported or custom text",
+			CanCompact: true,
+		},
+		trackers.ComparisonLayoutItem(),
+		{
+			ID:         "web_source",
+			Label:      "Web source notice",
+			CanCompact: true,
+		},
+		{
+			ID:         "audio_analysis",
+			Label:      "Audio and HDR analysis",
+			CanCompact: true,
+			Fields:     []string{"AudioPlotsLabel", "HDRPlotsLabel"},
+		},
+		{
+			ID:         "screenshots",
+			Label:      "Screenshots and disc reports",
+			CanCompact: true,
+		},
+	}
+}
+
+// RenderDescriptionSample composes PTP markup using the same layout and
+// screenshot policy as production, without any release-file lookups.
+func (*Definition) RenderDescriptionSample(
+	_ context.Context,
+	sample trackers.DescriptionSample,
+	defaults config.DescriptionSettingsConfig,
+	site config.TrackerConfig,
+) (string, error) {
+	return composeDescription(sample.Subject, site, sample.Assets, defaults, "[mediainfo]"+sample.Report+"[/mediainfo]", nil), nil
 }

@@ -14,6 +14,6 @@ func prepareDescription(_ context.Context, req trackers.PreparationInput) (track
 	if err != nil {
 		assets = trackers.DescriptionAssets{}
 	}
-	description := buildDescription(req.Meta, assets)
+	description := buildDescription(req.Meta, assets, req.Runtime.Description)
 	return trackers.DescriptionResult{Group: "pts", Description: description}, nil
 }

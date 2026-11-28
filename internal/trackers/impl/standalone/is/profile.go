@@ -12,20 +12,22 @@ import (
 // Profile returns IS identity, preparation, dupe, auth, and artifact behavior.
 func Profile() standalone.Profile {
 	return standalone.Profile{
-		ConnectionProbe:       trackers.ConnectionProbe{Test: testConnection, StoredCookies: true},
-		UsesMenuImages:        true,
-		Name:                  "IS",
-		BaseURL:               baseURL,
-		DescriptionGroup:      "is",
-		UploadContentMode:     trackers.UploadContentModeDescription,
-		PrepareDescription:    prepareDescription,
-		PrepareUpload:         prepareUpload,
-		ValidationPolicy:      validationPolicy(),
-		ReleaseNamePolicy:     namePolicy(),
-		NewDuplicateAdapter:   newDuplicateAdapter,
-		AuthCapability:        authcontract.CookieCapability("IS"),
-		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: sourceFlag, RequireAnnounce: true},
-		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{baseURL}},
+		ConnectionProbe:           trackers.ConnectionProbe{Test: testConnection, StoredCookies: true},
+		UsesMenuImages:            true,
+		Name:                      "IS",
+		BaseURL:                   baseURL,
+		DescriptionGroup:          "is",
+		UploadContentMode:         trackers.UploadContentModeDescription,
+		PrepareDescription:        prepareDescription,
+		DescriptionDefaultsLayout: descriptionDefaultsLayout,
+		DescriptionSample:         renderDescriptionSample,
+		PrepareUpload:             prepareUpload,
+		ValidationPolicy:          validationPolicy(),
+		ReleaseNamePolicy:         namePolicy(),
+		NewDuplicateAdapter:       newDuplicateAdapter,
+		AuthCapability:            authcontract.CookieCapability("IS"),
+		UploadArtifactPolicy:      &trackers.UploadArtifactPolicy{Source: sourceFlag, RequireAnnounce: true},
+		TorrentIdentityPolicy:     &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{baseURL}},
 	}
 }
 

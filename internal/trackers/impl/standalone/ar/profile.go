@@ -24,12 +24,14 @@ func Profile() standalone.Profile {
 			StoredCookies:              true,
 			CredentialsOverrideCookies: true,
 		},
-		Name:               "AR",
-		BaseURL:            arBaseURL,
-		DescriptionGroup:   "ar",
-		UploadContentMode:  trackers.UploadContentModeDescription,
-		PrepareDescription: prepareDescription,
-		PrepareUpload:      prepareUpload,
+		Name:                      "AR",
+		BaseURL:                   arBaseURL,
+		DescriptionGroup:          "ar",
+		UploadContentMode:         trackers.UploadContentModeDescription,
+		PrepareDescription:        prepareDescription,
+		DescriptionDefaultsLayout: descriptionDefaultsLayout,
+		DescriptionSample:         renderDescriptionSample,
+		PrepareUpload:             prepareUpload,
 		ReleaseNamePolicy: trackers.WithNonSceneReleaseNameConfirmation(
 			trackers.NewReleaseNamePolicy("standalone/ar/v4", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
 				name := resolveARName(input.Subject)

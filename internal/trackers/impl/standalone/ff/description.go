@@ -6,6 +6,8 @@ package ff
 import (
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/config"
+
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 
@@ -39,4 +41,8 @@ func prepareDescription(_ context.Context, req trackers.PreparationInput) (track
 		assets = trackers.DescriptionAssets{}
 	}
 	return trackers.DescriptionResult{Group: "ff", Description: buildDescription(assets)}, nil
+}
+
+func renderDescriptionSample(_ context.Context, sample trackers.DescriptionSample, _ config.DescriptionSettingsConfig, _ config.TrackerConfig) (string, error) {
+	return buildDescription(sample.Assets), nil
 }

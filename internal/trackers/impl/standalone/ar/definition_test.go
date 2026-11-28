@@ -26,7 +26,7 @@ func prepareDryRun(ctx context.Context, input trackers.PreparationInput) (api.Tr
 
 func TestAudioAnalysisPrecedesScreenshots(t *testing.T) {
 	t.Parallel()
-	got := buildDescription(api.UploadSubject{ReleaseName: "Example.Release.2026"}, "", trackers.DescriptionAssets{
+	got := buildDescription(config.DescriptionSettingsConfig{}, api.UploadSubject{ReleaseName: "Example.Release.2026"}, "", trackers.DescriptionAssets{
 		Description: "Notes\n\n[spoiler=Audio Plots]\n[img]https://images.example.invalid/audio.png[/img]\n[/spoiler]",
 		Screenshots: []api.ScreenshotImage{{RawURL: "https://images.example.invalid/shot.png", ImgURL: "https://images.example.invalid/shot-thumb.png"}},
 	})
@@ -39,11 +39,11 @@ func TestBuildDescriptionRemovesKnownSignatures(t *testing.T) {
 	for _, footer := range []string{"[right]Created by Upload Assistant[/right]", "[img]https://files.catbox.moe/5izwmx.svg[/img]"} {
 		for _, notes := range []string{"", "[b]Release notes[/b]\n"} {
 			input := notes + footer
-			got := buildDescription(api.UploadSubject{ReleaseName: "Example"}, "", trackers.DescriptionAssets{Description: input})
+			got := buildDescription(config.DescriptionSettingsConfig{}, api.UploadSubject{ReleaseName: "Example"}, "", trackers.DescriptionAssets{Description: input})
 			if strings.Contains(got, "Upload Assistant") || strings.Contains(got, "5izwmx.svg") || notes != "" && !strings.Contains(got, "[b]Release notes[/b]") {
 				t.Fatalf("unexpected cleaned description %q", got)
 			}
-			if final := buildDescription(api.UploadSubject{}, "", trackers.DescriptionAssets{Description: input, Final: true}); final != input {
+			if final := buildDescription(config.DescriptionSettingsConfig{}, api.UploadSubject{}, "", trackers.DescriptionAssets{Description: input, Final: true}); final != input {
 				t.Fatalf("final description changed: %q", final)
 			}
 		}
@@ -88,7 +88,7 @@ func TestBuildDescriptionConvertsCenterTags(t *testing.T) {
 				if !final {
 					want = "[color=green][size=6]Example.Release.2026[/size][/color]\n\n[color=red][size=4]Notes[/size][/color]\n" + want
 				}
-				got := buildDescription(api.UploadSubject{ReleaseName: "Example.Release.2026"}, "", trackers.DescriptionAssets{
+				got := buildDescription(config.DescriptionSettingsConfig{}, api.UploadSubject{ReleaseName: "Example.Release.2026"}, "", trackers.DescriptionAssets{
 					Description: tt.input,
 					Final:       final,
 				})
@@ -108,7 +108,7 @@ func TestBuildDescriptionPreservesLiteralMediaInfo(t *testing.T) {
 	if err := os.WriteFile(mediaPath, []byte(mediaText), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got := buildDescription(api.UploadSubject{
+	got := buildDescription(config.DescriptionSettingsConfig{}, api.UploadSubject{
 		ReleaseName:       "Example.Release.2026",
 		MediaInfoTextPath: mediaPath,
 	}, "", trackers.DescriptionAssets{Description: "[center]Release notes[/center]"})

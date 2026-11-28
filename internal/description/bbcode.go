@@ -532,3 +532,40 @@ func compileQuote(node *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
 	}
 	return out, false
 }
+
+// MarkupLabel reduces a heading to plain text suitable for a BBCode argument.
+func MarkupLabel(value string) string {
+	value = strings.NewReplacer("[", "(", "]", ")", "<", "‹", ">", "›").Replace(value)
+	return strings.Join(strings.Fields(value), " ")
+}
+
+// Heading returns a tracker-owned default unless a plain-text replacement exists.
+func Heading(labels map[string]string, key, standard string) string {
+	if label := MarkupLabel(labels[key]); label != "" {
+		return label
+	}
+	return standard
+}
+
+var analysisHeadings = regexp.MustCompile(`\[spoiler=(source_audio|Audio Plots|source_hdr|HDR plots)\]`)
+
+// RelabelAnalysis updates the display headings of isolated analysis spoilers.
+// The report text and image values inside the spoilers are unchanged.
+func RelabelAnalysis(blocks, audio, hdr string) string {
+	audio, hdr = MarkupLabel(audio), MarkupLabel(hdr)
+	if audio == "" && hdr == "" {
+		return blocks
+	}
+	return MapOutsideLiteralBlocks(blocks, func(fragment string) string {
+		return analysisHeadings.ReplaceAllStringFunc(fragment, func(tag string) string {
+			label := hdr
+			if tag == "[spoiler=source_audio]" || tag == "[spoiler=Audio Plots]" {
+				label = audio
+			}
+			if label == "" {
+				return tag
+			}
+			return "[spoiler=" + label + "]"
+		})
+	})
+}

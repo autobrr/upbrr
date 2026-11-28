@@ -519,6 +519,11 @@ func mergeStoredConfigMapWithReport(base map[string]any, overlay map[string]any,
 		}
 		baseValue, exists := base[key]
 		if !exists {
+			// This optional key is intentionally absent from the default config JSON.
+			if isOptionalDescriptionLayoutKey(path, key) {
+				base[key] = overlayValue
+				continue
+			}
 			if allowsStoredDynamicConfigEntry(path) || isStoredTrackerEntryPath(path) {
 				childReport, err := mergeStoredDynamicConfigValue(base, key, overlayValue, path)
 				if err != nil {
@@ -853,6 +858,11 @@ func sortedUniqueStrings(values []string) []string {
 	return sortedStringSet(set)
 }
 
+func isOptionalDescriptionLayoutKey(path []string, key string) bool {
+	return slices.Equal(path, []string{"Description"}) &&
+		slices.Contains([]string{"SectionOrder", "AudioPlotsLabel", "HDRPlotsLabel", "VOBReportLabel", "ScreenshotLabel", "Labels", "ItemOptions"}, key)
+}
+
 // mergeStoredUnknownConfigValues copies stored object keys that are absent from
 // current without overwriting known current values. It recurses using canonical
 // tracker names and fields so selected-section repair saves preserve distinct
@@ -878,6 +888,9 @@ func mergeStoredUnknownConfigValues(current, stored any, path []string) error {
 			return err
 		}
 		if !exists {
+			if isOptionalDescriptionLayoutKey(path, key) {
+				continue // An omitted known preference was cleared, not unknown.
+			}
 			// Missing tracker entries retain distinct extension keys, but no retired fields.
 			if entry, object := storedValue.(map[string]any); object && usesASCIIStoredTrackerKeys(path) {
 				cleaned := maps.Clone(entry)
@@ -886,6 +899,9 @@ func mergeStoredUnknownConfigValues(current, stored any, path []string) error {
 			}
 			currentMap[key] = storedValue
 			continue
+		}
+		if (key == "Labels" || key == "ItemOptions") && slices.Equal(path, []string{"Description"}) {
+			continue // Clearing an individual heading uses an explicit map replacement.
 		}
 		if err := mergeStoredUnknownConfigValues(currentValue, storedValue, append(slices.Clone(path), currentKey)); err != nil {
 			return err

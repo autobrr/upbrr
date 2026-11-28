@@ -4,7 +4,10 @@
 package is
 
 import (
+	"context"
 	"strings"
+
+	"github.com/autobrr/upbrr/internal/config"
 
 	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -16,20 +19,43 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 	if assets.Final {
 		return strings.TrimSpace(assets.Description)
 	}
+	finalDescription := composeDescription(req, assets, trackers.ReadMediaInfoForDescription(req.Runtime.DBPath, req.Meta))
+
+	return finalDescription
+}
+
+func renderDescriptionSample(
+	_ context.Context,
+	sample trackers.DescriptionSample,
+	defaults config.DescriptionSettingsConfig,
+	_ config.TrackerConfig,
+) (string, error) {
+	return composeDescription(trackers.PreparationInput{
+		Meta:    sample.Subject,
+		Runtime: trackers.PreparationRuntime{Description: defaults},
+	}, sample.Assets, sample.Report), nil
+}
+
+func composeDescription(req trackers.PreparationInput, assets trackers.DescriptionAssets, media string) string {
 	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
 	baseDescription, discReports := description.SplitLeadingDiscReports(assets.Description)
 	baseDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(baseDescription)
+	audioAnalysis = description.RelabelAnalysis(audioAnalysis, req.Runtime.Description.AudioPlotsLabel, req.Runtime.Description.HDRPlotsLabel)
 	assets.Description = baseDescription
 	meta := req.Meta
-	parts := make([]string, 0, 8)
-	if strings.TrimSpace(meta.EpisodeOverview) != "" {
-		parts = append(parts, "Title: "+strings.TrimSpace(meta.EpisodeTitle), "Overview: "+strings.TrimSpace(meta.EpisodeOverview))
+	var parts []description.Section
+	appendPart := func(id, text string) {
+		parts = description.AppendSection(parts, id, text)
 	}
-	if media := trackers.ReadMediaInfoForDescription(req.Runtime.DBPath, meta); media != "" {
-		parts = append(parts, media)
+	if strings.TrimSpace(meta.EpisodeOverview) != "" {
+		appendPart("episode_overview", "Title: "+strings.TrimSpace(meta.EpisodeTitle))
+		appendPart("episode_overview", "Overview: "+strings.TrimSpace(meta.EpisodeOverview))
+	}
+	if media != "" {
+		appendPart("mediainfo", media)
 	}
 	if strings.TrimSpace(assets.Description) != "" {
-		parts = append(parts, strings.TrimSpace(assets.Description))
+		appendPart("kept", strings.TrimSpace(assets.Description))
 	}
 	if len(assets.MenuImages) > 0 {
 		var menuLines []string
@@ -42,14 +68,14 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 			}
 		}
 		if len(menuLines) > 0 {
-			parts = append(parts, strings.Join(menuLines, "\n"))
+			appendPart("disc_menu", strings.Join(menuLines, "\n"))
 		}
 	}
 	if audioAnalysis != "" {
-		parts = append(parts, audioAnalysis)
+		appendPart("audio_analysis", audioAnalysis)
 	}
 	if discReports != "" {
-		parts = append(parts, discReports)
+		appendPart("screenshots", discReports)
 	}
 	if len(assets.Screenshots) > 0 {
 		var shotLines []string
@@ -59,10 +85,14 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 			}
 		}
 		if len(shotLines) > 0 {
-			parts = append(parts, "Screenshots:\n"+strings.Join(shotLines, "\n"))
+			label := description.MarkupLabel(req.Runtime.Description.ScreenshotLabel)
+			if label == "" {
+				label = "Screenshots"
+			}
+			appendPart("screenshots", label+":\n"+strings.Join(shotLines, "\n"))
 		}
 	}
-	return finalizeDescription(strings.TrimSpace(strings.Join(parts, "\n\n")))
+	return finalizeDescription(strings.TrimSpace(description.FormatSections(parts, req.Runtime.Description)))
 }
 
 func resolvePoster(meta api.UploadSubject) string {
@@ -88,5 +118,43 @@ func resolveOverview(meta api.UploadSubject) string {
 		return strings.TrimSpace(meta.ProviderMetadata.TVmaze.Summary)
 	default:
 		return strings.TrimSpace(meta.EpisodeOverview)
+	}
+}
+
+func descriptionDefaultsLayout() []trackers.DescriptionLayoutItem {
+	return []trackers.DescriptionLayoutItem{
+		{
+			ID:         "episode_overview",
+			Label:      "Episode overview",
+			CanCompact: true,
+		},
+		{
+			ID:         "mediainfo",
+			Label:      "MediaInfo or BDInfo",
+			CanCompact: true,
+		},
+		{
+			ID:         "kept",
+			Label:      "Imported or custom text",
+			CanCompact: true,
+		},
+		{
+			ID:         "disc_menu",
+			Label:      "Disc menus",
+			CanCompact: true,
+			Fields:     []string{"DiscMenuHeader"},
+		},
+		{
+			ID:         "audio_analysis",
+			Label:      "Audio and HDR analysis",
+			CanCompact: true,
+			Fields:     []string{"AudioPlotsLabel", "HDRPlotsLabel"},
+		},
+		{
+			ID:         "screenshots",
+			Label:      "Screenshots and disc reports",
+			CanCompact: true,
+			Fields:     []string{"ScreenshotLabel"},
+		},
 	}
 }

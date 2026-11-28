@@ -165,7 +165,7 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description := buildDescription(req.Meta, assets)
+	description := buildDescription(req.Meta, assets, req.Runtime.Description)
 	releaseName, err := req.ReviewedUploadName()
 	if err != nil {
 		return uploadState{}, nil, fmt.Errorf("trackers: PTS reviewed upload name: %w", err)

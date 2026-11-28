@@ -4,6 +4,7 @@
 package bhdtv
 
 import (
+	"github.com/autobrr/upbrr/internal/config"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -18,7 +19,7 @@ func TestBuildDescriptionLinksHostedThumbnail(t *testing.T) {
 		WebURL: "https://images.example.invalid/page",
 	}}}
 	want := "[url=https://images.example.invalid/page][img]https://images.example.invalid/thumb.png[/img][/url]"
-	if got := buildDescription(assets); got != want {
+	if got := buildDescription(assets, config.DescriptionSettingsConfig{}); got != want {
 		t.Fatalf("description = %q, want %q", got, want)
 	}
 }

@@ -186,7 +186,7 @@ func prepareUploadState(_ context.Context, req trackers.PreparationInput) (uploa
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description := buildDescription(req.Meta, req.TrackerConfig, req.Runtime.Description.AddLogo, assets)
+	description := buildDescription(req.Meta, req.TrackerConfig, req.Runtime.Description, assets)
 	releaseName, nameErr := req.ReviewedUploadName()
 	if nameErr != nil {
 		return uploadState{}, fmt.Errorf("trackers: TVC release name: %w", nameErr)

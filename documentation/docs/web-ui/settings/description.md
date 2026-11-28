@@ -5,7 +5,11 @@ description: Configure shared description artwork, screenshot layout, headers, e
 
 # Description settings
 
-Use **Settings → Description** to control shared description builders. Trackers can apply their own markup and field rules, so confirm each rendered result on **Descriptions**.
+Open **Descriptions** next to **Logging** in the workspace navigation to edit defaults without opening an input. Pick a configured tracker and a sample release to see how that tracker formats your draft. Samples use built-in content and do not fetch artwork, upload images, or contact the selected tracker.
+
+Drag section names or use the move buttons to reorder supported sections. Use the controls shown for each item to change its heading, visibility, spacing, or supported markup. An empty heading field uses the tracker’s default. **Reset order** restores the order of the displayed items without resetting headings or other edits.
+
+Select **Save** to apply the draft to newly generated descriptions. Existing manual description edits are preserved. Trackers keep required evidence and formatting, including report-and-screenshot groups that must stay together. Technical evidence sent separately from the description, such as file attachments, is not a movable section. The release workflow’s separate **Descriptions** view is where you review or edit the actual output for a specific release.
 
 ## Layout and artwork
 

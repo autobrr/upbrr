@@ -34,6 +34,7 @@ func nonNilAppList[T any](values []T) []T {
 func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 	s.registerReleaseWorkflowAppRoutes(mux)
 	s.registerInputLogRoutes(mux)
+	s.registerDescriptionDefaultsRoutes(mux)
 	mux.HandleFunc("/api/app/SearchProviderCandidates", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})

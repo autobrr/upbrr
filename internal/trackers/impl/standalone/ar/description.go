@@ -4,10 +4,12 @@
 package ar
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/bbcode"
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
@@ -17,60 +19,72 @@ import (
 
 var centerTagReplacer = strings.NewReplacer("[center]", "[align=center]", "[/center]", "[/align]")
 
-func buildDescription(meta api.UploadSubject, dbPath string, assets trackers.DescriptionAssets) string {
+func buildDescription(defaults config.DescriptionSettingsConfig, meta api.UploadSubject, dbPath string, assets trackers.DescriptionAssets) string {
 	if assets.Final {
 		return description.MapOutsideLiteralBlocks(strings.TrimSpace(assets.Description), centerTagReplacer.Replace)
 	}
-	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
-	baseDescription, discReports := description.SplitLeadingDiscReports(assets.Description)
-	baseDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(baseDescription)
 
-	var parts []string
-	title := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.ReleaseName), strings.TrimSpace(meta.Release.Title), pathutil.Base(meta.SourcePath))
-	parts = append(parts, fmt.Sprintf("[color=green][size=6]%s[/size][/color]", title))
-
-	if links := buildDatabaseLinks(meta); links != "" {
-		parts = append(parts, "[color=red][size=4]Links[/size][/color]\n"+links)
-	}
-
-	mediaLabel := "MEDIAINFO"
 	var mediaText string
 	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
 	case "BDMV":
-		mediaLabel = "BDINFO"
 		mediaText, _ = readBDSummary(meta, dbPath)
 	case "DVD":
 		mediaText = metautil.FirstNonEmptyTrimmed(trackers.ReadDVDVOBMediaInfo(meta), readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath)))
 	default:
 		mediaText = readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath))
 	}
+	return composeDescription(defaults, meta, assets, mediaText)
+}
+
+func composeDescription(defaults config.DescriptionSettingsConfig, meta api.UploadSubject, assets trackers.DescriptionAssets, mediaText string) string {
+	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
+	baseDescription, discReports := description.SplitLeadingDiscReports(assets.Description)
+	baseDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(baseDescription)
+	audioAnalysis = description.RelabelAnalysis(audioAnalysis, defaults.AudioPlotsLabel, defaults.HDRPlotsLabel)
+
+	var parts []description.Section
+	appendPart := func(id, text string) { parts = description.AppendSection(parts, id, text) }
+	heading := func(key, text string) string {
+		return "[color=red][size=4]" + description.Heading(defaults.Labels, "ar."+key, text) + "[/size][/color]\n"
+	}
+	title := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.ReleaseName), strings.TrimSpace(meta.Release.Title), pathutil.Base(meta.SourcePath))
+	appendPart("", fmt.Sprintf("[color=green][size=6]%s[/size][/color]", title))
+
+	if links := buildDatabaseLinks(meta); links != "" {
+		appendPart("links", heading("links", "Links")+links)
+	}
+
 	if strings.TrimSpace(mediaText) != "" {
-		parts = append(parts, fmt.Sprintf("[color=red][size=4]%s[/size][/color]\n[hide][code]%s[/code][/hide]", mediaLabel, strings.TrimSpace(mediaText)))
+		reportKey, reportLabel := "mediainfo", "MEDIAINFO"
+		if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
+			reportKey, reportLabel = "bdinfo", "BDINFO"
+		}
+		appendPart("mediainfo", heading(reportKey, reportLabel)+"[hide][code]"+strings.TrimSpace(mediaText)+"[/code][/hide]")
 	}
 
 	if overview := resolveOverview(meta); overview != "" {
-		parts = append(parts, "[color=red][size=4]PLOT[/size][/color]\n"+overview)
+		appendPart("plot", heading("plot", "PLOT")+overview)
 	}
 	if genres := resolveGenres(meta); genres != "" {
-		parts = append(parts, "[color=red][size=4]Genres[/size][/color]\n"+genres)
+		appendPart("genres", heading("genres", "Genres")+genres)
 	}
 	if youtube := resolveYouTube(meta); youtube != "" {
-		parts = append(parts, "[color=red][size=4]Youtube[/size][/color]\n"+youtube)
+		appendPart("trailer", heading("trailer", "Youtube")+youtube)
 	}
 	if notes := cleanNotes(baseDescription); notes != "" {
-		parts = append(parts, "[color=red][size=4]Notes[/size][/color]\n"+notes)
+		appendPart("kept", heading("notes", "Notes")+notes)
 	}
 	if audioAnalysis != "" {
-		parts = append(parts, audioAnalysis)
+		appendPart("audio_analysis", audioAnalysis)
 	}
 	if discReports != "" {
-		parts = append(parts, discReports)
+		appendPart("screenshots", discReports)
 	}
 	if screenshots := buildScreenshotSection(assets.Screenshots); screenshots != "" {
-		parts = append(parts, "[color=red][size=4]Screenshots[/size][/color]\n"+screenshots)
+		appendPart("screenshots", heading("screenshots", "Screenshots")+screenshots)
 	}
 
-	return description.MapOutsideLiteralBlocks(strings.TrimSpace(strings.Join(parts, "\n\n")), func(fragment string) string {
+	return description.MapOutsideLiteralBlocks(strings.TrimSpace(description.FormatSections(parts, defaults)), func(fragment string) string {
 		return centerTagReplacer.Replace(bbcode.ConvertSpoilerToHide(bbcode.ConvertNamedSpoilerToNamedHide(fragment)))
 	})
 }
@@ -121,4 +135,59 @@ func resolveOverview(meta api.UploadSubject) string {
 	default:
 		return strings.TrimSpace(meta.EpisodeOverview)
 	}
+}
+
+func descriptionDefaultsLayout() []trackers.DescriptionLayoutItem {
+	makeItem := func(id, label, key, defaultHeading string) trackers.DescriptionLayoutItem {
+		return trackers.DescriptionLayoutItem{
+			ID:    id,
+			Label: label,
+			Labels: []trackers.DescriptionLabel{{
+				Key:     "ar." + key,
+				Label:   label + " heading",
+				Default: defaultHeading,
+			}},
+		}
+	}
+	return []trackers.DescriptionLayoutItem{
+		{Label: "Required release title"},
+		makeItem("links", "Provider links", "links", "Links"),
+		{
+			ID:         "mediainfo",
+			Label:      "MediaInfo or BDInfo",
+			CanCompact: true,
+			Labels: []trackers.DescriptionLabel{
+				{
+					Key:     "ar.mediainfo",
+					Label:   "MediaInfo heading",
+					Default: "MEDIAINFO",
+				},
+				{
+					Key:     "ar.bdinfo",
+					Label:   "BDInfo heading",
+					Default: "BDINFO",
+				},
+			},
+		},
+		makeItem("plot", "Plot", "plot", "PLOT"),
+		makeItem("genres", "Genres", "genres", "Genres"),
+		makeItem("trailer", "Trailer", "trailer", "Youtube"),
+		makeItem("kept", "Notes", "notes", "Notes"),
+		{
+			ID:         "audio_analysis",
+			Label:      "Audio and HDR analysis",
+			CanCompact: true,
+			Fields:     []string{"AudioPlotsLabel", "HDRPlotsLabel"},
+		},
+		makeItem("screenshots", "Screenshots", "screenshots", "Screenshots"),
+	}
+}
+
+func renderDescriptionSample(
+	_ context.Context,
+	sample trackers.DescriptionSample,
+	defaults config.DescriptionSettingsConfig,
+	_ config.TrackerConfig,
+) (string, error) {
+	return composeDescription(defaults, sample.Subject, sample.Assets, sample.Report), nil
 }

@@ -12,16 +12,18 @@ import (
 // Profile returns HDS identity, preparation, dupe, auth, and policy behavior.
 func Profile() standalone.Profile {
 	return standalone.Profile{
-		ConnectionProbe:     trackers.ConnectionProbe{Test: testConnection, StoredCookies: true},
-		UsesMenuImages:      true,
-		Name:                "HDS",
-		BaseURL:             baseURL,
-		DescriptionGroup:    "hds",
-		UploadContentMode:   trackers.UploadContentModeDescription,
-		PrepareDescription:  prepareDescription,
-		PrepareUpload:       prepareUpload,
-		NewDuplicateAdapter: newDuplicateAdapter,
-		ValidationPolicy:    validationPolicy(),
+		ConnectionProbe:           trackers.ConnectionProbe{Test: testConnection, StoredCookies: true},
+		UsesMenuImages:            true,
+		Name:                      "HDS",
+		BaseURL:                   baseURL,
+		DescriptionGroup:          "hds",
+		UploadContentMode:         trackers.UploadContentModeDescription,
+		PrepareDescription:        prepareDescription,
+		DescriptionDefaultsLayout: trackers.StandaloneGalleryLayout,
+		DescriptionSample:         renderDescriptionSample,
+		PrepareUpload:             prepareUpload,
+		NewDuplicateAdapter:       newDuplicateAdapter,
+		ValidationPolicy:          validationPolicy(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{
 			Source:          sourceFlag,
 			RequireAnnounce: true,

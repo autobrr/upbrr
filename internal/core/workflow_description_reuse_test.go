@@ -600,11 +600,18 @@ func TestWorkflowDescriptionReuseRefreshesLegacyRendererAndKeepsFinalEdits(t *te
 		"description-renderer-v9-comparison-previews",
 		"description-renderer-v10-comparison-previews",
 		"description-renderer-v11-comparison-previews",
+		"section layout change",
 	} {
 		for _, mode := range []string{"generated", "mixed", "final"} {
 			t.Run(renderer+"/"+mode, func(t *testing.T) {
 				f := newWorkflowDescriptionReuseFixture(t)
-				for i, name := range []api.TrackerID{"AITHER", "STC"} {
+				names := []api.TrackerID{"AITHER", "STC"}
+				layoutChange := renderer == "section layout change"
+				if layoutChange {
+					names[1] = "BLU"
+					f.builder.config.Description.CustomDescriptionHeader = "Configured header"
+				}
+				for i, name := range names {
 					f.projections.Projections[i].TrackerID = name
 					f.projections.Projections[i].DescriptionGroup = "unit3d"
 					f.snapshot.Descriptions[i].TrackerIDs = []api.TrackerID{name}
@@ -623,12 +630,12 @@ func TestWorkflowDescriptionReuseRefreshesLegacyRendererAndKeepsFinalEdits(t *te
 					})
 				}
 				if mode == "final" {
-					f.snapshot.Descriptions[1].Source = "Final STC text"
-					f.snapshot.Descriptions[1].Rendered = "<p>Final STC text</p>"
+					f.snapshot.Descriptions[1].Source = "Final " + string(names[1]) + " text"
+					f.snapshot.Descriptions[1].Rendered = "<p>" + f.snapshot.Descriptions[1].Source + "</p>"
 					f.instructions.Overrides = append(f.instructions.Overrides, api.DescriptionOverrideInput{
-						GroupKey:   "unit3d|stc",
-						TrackerIDs: []api.TrackerID{"STC"},
-						Source:     "Final STC text",
+						GroupKey:   "unit3d|" + strings.ToLower(string(names[1])),
+						TrackerIDs: names[1:],
+						Source:     f.snapshot.Descriptions[1].Source,
 						Final:      true,
 					})
 				}
@@ -636,7 +643,11 @@ func TestWorkflowDescriptionReuseRefreshesLegacyRendererAndKeepsFinalEdits(t *te
 					t.Fatal(err)
 				}
 				// Older output must rebuild without discarding final edits.
-				f.repository.value.RendererVersion = renderer
+				if layoutChange {
+					f.builder.config.Description.SectionOrder = config.DescriptionSectionOrder{"custom_header", "template"}
+				} else {
+					f.repository.value.RendererVersion = renderer
+				}
 				f.resolver.subject = reusableDescriptionSubjectForFixture(f.currentRelease, 2)
 				f.resolver.useInputGroups = true
 				f.builder.trackers = trackers.NewServiceWithRegistry(f.builder.config, api.NopLogger{}, nil, trackerimpl.MustNewRegistry())
@@ -654,6 +665,9 @@ func TestWorkflowDescriptionReuseRefreshesLegacyRendererAndKeepsFinalEdits(t *te
 						}
 						if !final && (!strings.Contains(output.Source, "Template v1") || strings.Contains(output.Source, "saved beta source") || strings.Contains(output.Source, "saved alpha source")) {
 							t.Fatalf("generated text not refreshed: %+v", output)
+						}
+						if layoutChange && !final && !strings.HasPrefix(output.Source, "Configured header") {
+							t.Fatalf("generated text did not adopt the new layout: %+v", output)
 						}
 					}
 				}

@@ -13,15 +13,17 @@ import (
 // Profile returns BJS identity, preparation, dupe, auth, and policy behavior.
 func Profile() standalone.Profile {
 	return standalone.Profile{
-		ConnectionProbe:         trackers.ConnectionProbe{Test: testConnection, StoredCookies: true},
-		Name:                    "BJS",
-		BaseURL:                 baseURL,
-		DescriptionGroup:        "bjs",
-		UploadContentMode:       trackers.UploadContentModeDescription,
-		LocalizedMetadataLocale: "pt-BR",
-		PrepareDescription:      prepareDescription,
-		PrepareUpload:           prepareUpload,
-		ProjectionQuestionnaire: projectionQuestionnaire,
+		ConnectionProbe:           trackers.ConnectionProbe{Test: testConnection, StoredCookies: true},
+		Name:                      "BJS",
+		BaseURL:                   baseURL,
+		DescriptionGroup:          "bjs",
+		UploadContentMode:         trackers.UploadContentModeDescription,
+		LocalizedMetadataLocale:   "pt-BR",
+		PrepareDescription:        prepareDescription,
+		DescriptionDefaultsLayout: descriptionDefaultsLayout,
+		DescriptionSample:         renderDescriptionSample,
+		PrepareUpload:             prepareUpload,
+		ProjectionQuestionnaire:   projectionQuestionnaire,
 		ReleaseNamePolicy: trackers.WithMovieYearProvider(
 			trackers.CanonicalReleaseNamePolicy(),
 			api.IdentityProviderTMDB,

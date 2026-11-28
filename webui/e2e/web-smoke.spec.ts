@@ -72,6 +72,96 @@ test("embedded web boots with dev auth, navigates core pages, and reports invali
   }
 });
 
+test("description defaults preview reflects draft order and survives an embedded app restart", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  const outgoing: string[] = [];
+  const localOrigins = new Set<string>();
+  try {
+    app = await startApp(workspace);
+    localOrigins.add(new URL(app.url).origin);
+    await page.route("**/*", async (route) => {
+      if (!localOrigins.has(new URL(route.request().url()).origin)) {
+        outgoing.push(route.request().url());
+        await route.abort();
+        return;
+      }
+      await route.continue();
+    });
+    await page.goto(app.url);
+    await page.getByRole("button", { name: "Description defaults" }).click();
+    const tracker = page.getByRole("combobox", { name: "Preview tracker" });
+    const sample = page.getByRole("region", { name: "Mock description" });
+    await tracker.selectOption("AITHER");
+    const label = page.getByRole("textbox", { name: "Audio plots heading" });
+    await label.fill("Audio tracks");
+    await expect(sample.getByText("Audio tracks", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Move Imported or custom text up" }).click();
+    await expect
+      .poll(async () => {
+        const text = await sample.innerText();
+        const notes = text.indexOf("Sample release notes");
+        return notes >= 0 && notes < text.indexOf("The Lantern Coast");
+      })
+      .toBe(true);
+
+    const showAnalysis = page.getByRole("checkbox", { name: "Show audio and hdr analysis" });
+    await showAnalysis.uncheck();
+    await expect(sample.getByText("Sample release notes.", { exact: false })).toBeVisible();
+    await expect(sample.getByText("Audio tracks", { exact: true })).toHaveCount(0);
+    await showAnalysis.check();
+    await expect(sample.getByText("Audio tracks", { exact: true })).toBeVisible();
+
+    await tracker.selectOption("PTP");
+    await expect(sample).toContainText("Matroska");
+    await expect(sample.getByText("Audio tracks", { exact: true })).toBeVisible();
+    const saved = page.waitForResponse((response) =>
+      response.url().endsWith("/api/app/SaveConfig"),
+    );
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    const result = await saved;
+    expect(result.ok()).toBe(true);
+    const payload = JSON.parse(result.request().postDataJSON().Payload) as {
+      Description: { AudioPlotsLabel?: string; SectionOrder?: string[] };
+    };
+    expect(payload.Description).toMatchObject({ AudioPlotsLabel: "Audio tracks" });
+    expect(payload.Description.SectionOrder?.slice(0, 2)).toEqual(["kept", "template"]);
+
+    await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+    await expect(page.getByRole("region", { name: "Description settings controls" })).toContainText(
+      /saved|active/i,
+    );
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+    expect(outgoing).toEqual([]);
+
+    await page.reload();
+    await tracker.selectOption("AITHER");
+    await expect(label).toHaveValue("Audio tracks");
+    await app.stop();
+    app = await startApp(workspace, { seed: false });
+    // A pending event-stream reconnect may still target the stopped local app.
+    localOrigins.add(new URL(app.url).origin);
+    await page.goto(new URL("description-defaults", app.url).toString());
+    await tracker.selectOption("AITHER");
+    await expect(label).toHaveValue("Audio tracks");
+    await expect(sample.getByText("Audio tracks", { exact: true })).toBeVisible();
+    await expect
+      .poll(async () => {
+        const text = await sample.innerText();
+        const notes = text.indexOf("Sample release notes");
+        return notes >= 0 && notes < text.indexOf("The Lantern Coast");
+      })
+      .toBe(true);
+    expect(outgoing).toEqual([]);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 test("authenticated appearance is applied before login paint and stays in sync across tabs", async ({
   page,
   context,

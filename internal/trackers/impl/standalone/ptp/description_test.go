@@ -136,7 +136,7 @@ func TestMultiBluRayDescriptionRequiresEveryPreparedReport(t *testing.T) {
 			{ID: "second", Reports: []api.DiscReportFacts{{Summary: "SECONDARY REPORT"}}},
 		}},
 	}
-	assets := trackers.DescriptionAssets{Screenshots: []api.ScreenshotImage{
+	assets := trackers.DescriptionAssets{Description: "[b]Kept text[/b]", Screenshots: []api.ScreenshotImage{
 		{
 			DiscID: "first",
 			Host:   "pixhost",
@@ -154,9 +154,13 @@ func TestMultiBluRayDescriptionRequiresEveryPreparedReport(t *testing.T) {
 		},
 	}}
 	req := trackers.PreparationInput{Meta: meta, Assets: &assets}
+	req.Runtime.Description.SectionOrder = config.DescriptionSectionOrder{"screenshots", "kept"}
 	got, err := prepareDescription(t.Context(), req)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.HasPrefix(got.Description, "[mediainfo]") || !strings.HasSuffix(got.Description, "[b]Kept text[/b]") {
+		t.Fatalf("gallery and kept text were not reordered: %q", got.Description)
 	}
 	for _, part := range []string{"PRIMARY REPORT[/mediainfo]\n[img]https://img.pixhost.to/primary.png", "SECONDARY REPORT[/mediainfo]\n[img]https://img.pixhost.to/second-1.png"} {
 		if !strings.Contains(got.Description, part) {

@@ -28,9 +28,11 @@ type Profile struct {
 	UsesMenuImages bool
 	// SourceOnlyImageReusable lets the tracker accept its own source-only URL.
 	// Stored tracker records are available for provenance checks; nil rejects it.
-	SourceOnlyImageReusable func(string, []api.TrackerMetadata) bool
-	PrepareDescription      DescriptionPreparer
-	PrepareUpload           trackers.UploadPreparer
+	SourceOnlyImageReusable   func(string, []api.TrackerMetadata) bool
+	PrepareDescription        DescriptionPreparer
+	DescriptionDefaultsLayout func() []trackers.DescriptionLayoutItem
+	DescriptionSample         trackers.DescriptionSampleFunc
+	PrepareUpload             trackers.UploadPreparer
 	// ProjectionQuestionnaire exposes pure tracker-local controls before duplicate checking.
 	ProjectionQuestionnaire func(trackers.PreparationInput) *api.TrackerQuestionnaire
 	ReleaseNamePolicy       trackers.ReleaseNamePolicyBinding

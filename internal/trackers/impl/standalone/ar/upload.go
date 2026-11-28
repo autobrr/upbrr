@@ -185,7 +185,7 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput, dryR
 			assets = trackers.DescriptionAssets{}
 		}
 	}
-	description := buildDescription(req.Meta, req.Runtime.DBPath, assets)
+	description := buildDescription(req.Runtime.Description, req.Meta, req.Runtime.DBPath, assets)
 	releaseName, err := req.ReviewedUploadName()
 	if err != nil {
 		return uploadState{}, nil, fmt.Errorf("trackers: AR release name: %w", err)

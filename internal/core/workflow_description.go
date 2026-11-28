@@ -61,17 +61,35 @@ func (b workflowDescriptionBuilder) Fingerprints(
 
 // rendererVersion separates generated output from retained input and manual edits.
 func (b workflowDescriptionBuilder) rendererVersion(projections api.TrackerReleaseProjectionSet) string {
+	version := workflowDescriptionRendererVersion
+	if order := b.config.Description.SectionOrder; len(order) > 0 {
+		version += fmt.Sprintf("-layout:%q", []string(order))
+	}
+	if audio, hdr, vob := b.config.Description.AudioPlotsLabel, b.config.Description.HDRPlotsLabel, b.config.Description.VOBReportLabel; audio != "" ||
+		hdr != "" ||
+		vob != "" {
+		version += fmt.Sprintf("-labels:%q:%q:%q", audio, hdr, vob)
+	}
+	if label := b.config.Description.ScreenshotLabel; label != "" {
+		version += fmt.Sprintf("-shots-heading:%q", label)
+	}
+	if labels := b.config.Description.Labels; len(labels) > 0 {
+		version += fmt.Sprintf("-item-labels:%q", labels)
+	}
+	if options := b.config.Description.ItemOptions; len(options) > 0 {
+		version += fmt.Sprintf("-item-options:%v", options)
+	}
 	ptp, _ := config.TrackerConfigByName(b.config.Trackers.Trackers, "PTP")
 	if ptp.ScreenshotBlankLineEnabled() {
-		return workflowDescriptionRendererVersion
+		return version
 	}
 	targets := workflowDescriptionTargets(projections.Projections)
 	if slices.ContainsFunc(targets, func(target api.TrackerReleaseProjection) bool {
 		return strings.EqualFold(string(target.TrackerID), "PTP")
 	}) {
-		return workflowDescriptionRendererVersion + "-compact-ptp-screenshots"
+		return version + "-compact-ptp-screenshots"
 	}
-	return workflowDescriptionRendererVersion
+	return version
 }
 
 func (b workflowDescriptionBuilder) workflowDescriptionFingerprints(

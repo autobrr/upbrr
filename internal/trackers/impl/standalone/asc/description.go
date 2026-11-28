@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/metadata/tmdb"
@@ -220,27 +221,6 @@ func buildDescription(ctx context.Context, meta api.UploadSubject, cfg config.Co
 		return strings.TrimSpace(assets.Description)
 	}
 	layout, _ := fetchLayout(ctx, cfg.MainSettings.DBPath, meta, layoutID)
-	parts := []string{"[center]"}
-
-	for idx := 1; idx <= 3; idx++ {
-		if image := layout.Images[fmt.Sprintf("BARRINHA_CUSTOM_T_%d", idx)]; image != "" {
-			parts = append(parts, formatImage(image))
-		}
-	}
-	if image := layout.Images["BARRINHA_APRESENTA"]; image != "" {
-		parts = append(parts, formatImage(image))
-	}
-	parts = append(parts, "[size=3]"+resolveUploadTitle(meta)+"[/size]")
-
-	appendSection := func(key string, content string) {
-		if strings.TrimSpace(content) == "" {
-			return
-		}
-		if image := layout.Images[key]; image != "" {
-			parts = append(parts, formatImage(image))
-		}
-		parts = append(parts, content)
-	}
 
 	apiKey := strings.TrimSpace(cfg.MainSettings.TMDBAPI)
 	tmdbID := meta.Identity.TMDBID
@@ -274,41 +254,90 @@ func buildDescription(ctx context.Context, meta api.UploadSubject, cfg config.Co
 		}
 	}
 
+	return composeDescription(meta, cfg.Description, assets.Description, descriptionInputs{
+		layout:  layout,
+		media:   richMedia,
+		cast:    richCast,
+		seasons: richSeasons,
+		episode: richEpisode,
+		report:  buildMediaInfo(meta, cfg.MainSettings.DBPath),
+	})
+}
+
+type descriptionInputs struct {
+	layout  layoutData
+	media   *richMediaResponse
+	cast    []richCreditItem
+	seasons []richSeasonItem
+	episode *richEpisodeDetails
+	report  string
+}
+
+func composeDescription(meta api.UploadSubject, defaults config.DescriptionSettingsConfig, text string, inputs descriptionInputs) string {
+	layout, richMedia, richCast, richSeasons, richEpisode := inputs.layout, inputs.media, inputs.cast, inputs.seasons, inputs.episode
+	heading := func(key, text string) string { return description.Heading(defaults.Labels, "asc."+key, text) }
+	parts := []description.Section{{Text: "[center]"}}
+	appendPart := func(id, text string) {
+		if strings.TrimSpace(text) != "" {
+			parts = description.AppendSection(parts, id, text)
+		}
+	}
+
+	for idx := 1; idx <= 3; idx++ {
+		if image := layout.Images[fmt.Sprintf("BARRINHA_CUSTOM_T_%d", idx)]; image != "" {
+			appendPart("", formatImage(image))
+		}
+	}
+	if image := layout.Images["BARRINHA_APRESENTA"]; image != "" {
+		appendPart("", formatImage(image))
+	}
+	appendPart("", "[size=3]"+resolveUploadTitle(meta)+"[/size]")
+
+	appendSection := func(id, key, content string) {
+		if strings.TrimSpace(content) == "" {
+			return
+		}
+		if image := layout.Images[key]; image != "" {
+			appendPart(id, formatImage(image))
+		}
+		appendPart(id, content)
+	}
+
 	// 1. Poster
 	if poster := resolvePoster(meta); poster != "" {
 		poster = strings.ReplaceAll(poster, "/t/p/original/", "/t/p/w500/")
-		appendSection("BARRINHA_CAPA", formatImage(poster))
+		appendSection("poster", "BARRINHA_CAPA", formatImage(poster))
 	}
 
 	// 2. Overview
-	appendSection("BARRINHA_SINOPSE", resolveOverview(meta, standalone.QuestionnaireAnswers(meta, "ASC")))
+	appendSection("plot", "BARRINHA_SINOPSE", resolveOverview(meta, standalone.QuestionnaireAnswers(meta, "ASC")))
 
 	// 3. Episode Specific Section
 	if categoryOf(meta) == "TV" && richEpisode != nil {
 		if richEpisode.Name != "" && richEpisode.Overview != "" {
-			parts = append(parts, fmt.Sprintf("[size=4][b]Episódio:[/b] %s[/size]", richEpisode.Name))
+			appendPart("episode_overview", fmt.Sprintf("[size=4][b]%s:[/b] %s[/size]", heading("episode", "Episódio"), richEpisode.Name))
 			if strings.TrimSpace(richEpisode.StillPath) != "" {
 				stillURL := "https://image.tmdb.org/t/p/w300" + strings.TrimSpace(richEpisode.StillPath)
-				parts = append(parts, formatImage(stillURL))
+				appendPart("episode_overview", formatImage(stillURL))
 			}
-			parts = append(parts, richEpisode.Overview)
+			appendPart("episode_overview", richEpisode.Overview)
 		}
 	}
 
 	// 4. Technical Sheet
-	appendSection("BARRINHA_FICHA_TECNICA", buildTechnicalSheet(meta, richMedia))
+	appendSection("technical", "BARRINHA_FICHA_TECNICA", buildTechnicalSheet(meta, richMedia, defaults.Labels))
 
 	// 5. Production Companies
-	if prodComp := buildProductionCompanies(meta); prodComp != "" {
-		parts = append(parts, prodComp)
+	if prodComp := buildProductionCompanies(meta, defaults.Labels); prodComp != "" {
+		appendPart("production", prodComp)
 	}
 
 	// 6. Cast
-	appendSection("BARRINHA_ELENCO", buildCastSection(meta, richCast))
+	appendSection("cast", "BARRINHA_ELENCO", buildCastSection(meta, richCast))
 
 	// 7. Seasons Section (TV Packs / TV Seasons list)
 	if categoryOf(meta) == "TV" && len(richSeasons) > 0 {
-		var seasonsContent []string
+		seasonsContent := make([]string, 0, len(richSeasons))
 		for _, s := range richSeasons {
 			seasonName := strings.TrimSpace(s.Name)
 			if seasonName == "" {
@@ -320,14 +349,14 @@ func buildDescription(ctx context.Context, meta api.UploadSubject, cfg config.Co
 			}
 			overviewTemp := ""
 			if strings.TrimSpace(s.Overview) != "" {
-				overviewTemp = "\n\nSinopse:\n" + strings.TrimSpace(s.Overview)
+				overviewTemp = "\n\n" + heading("synopsis", "Sinopse") + ":\n" + strings.TrimSpace(s.Overview)
 			}
 			var innerContentParts []string
 			if s.AirDate != "" {
-				innerContentParts = append(innerContentParts, "Data: "+formatDate(s.AirDate))
+				innerContentParts = append(innerContentParts, heading("seasonDate", "Data")+": "+formatDate(s.AirDate))
 			}
 			if s.EpisodeCount != nil {
-				innerContentParts = append(innerContentParts, fmt.Sprintf("Episódios: %d", *s.EpisodeCount))
+				innerContentParts = append(innerContentParts, fmt.Sprintf("%s: %d", heading("episodeCount", "Episódios"), *s.EpisodeCount))
 			}
 			if posterTemp != "" {
 				innerContentParts = append(innerContentParts, posterTemp)
@@ -338,7 +367,7 @@ func buildDescription(ctx context.Context, meta api.UploadSubject, cfg config.Co
 			innerContent := strings.Join(innerContentParts, "\n")
 			seasonsContent = append(seasonsContent, fmt.Sprintf("\n[spoiler=%s]%s[/spoiler]\n", seasonName, innerContent))
 		}
-		appendSection("BARRINHA_EPISODIOS", strings.Join(seasonsContent, ""))
+		appendSection("seasons", "BARRINHA_EPISODIOS", strings.Join(seasonsContent, ""))
 	}
 
 	// 8. Ratings Section
@@ -372,27 +401,27 @@ func buildDescription(ctx context.Context, meta api.UploadSubject, cfg config.Co
 	if categoryOf(meta) == "MOVIE" && layout.Images["BARRINHA_INFORMACOES"] != "" {
 		criticsKey = "BARRINHA_INFORMACOES"
 	}
-	appendSection(criticsKey, buildRatingsBBCode(meta, ratingsList))
+	appendSection("ratings", criticsKey, buildRatingsBBCode(meta, ratingsList))
 
 	// 9. MediaInfo/BDInfo
-	if media := buildMediaInfo(meta, cfg.MainSettings.DBPath); media != "" {
-		parts = append(parts, "[spoiler=Informações do Arquivo]\n[left][font=Courier New]"+media+"[/font][/left][/spoiler]")
+	if media := inputs.report; media != "" {
+		appendPart("mediainfo", "[spoiler="+heading("file", "Informações do Arquivo")+"]\n[left][font=Courier New]"+media+"[/font][/left][/spoiler]")
 	}
-	if notes := sanitizeDescriptionNotes(assets.Description); notes != "" {
-		parts = append(parts, notes)
+	if notes := sanitizeDescriptionNotes(text); notes != "" {
+		appendPart("kept", notes)
 	}
-	if customHeader := strings.TrimSpace(cfg.Description.CustomDescriptionHeader); customHeader != "" {
-		parts = append(parts, customHeader)
+	if customHeader := strings.TrimSpace(defaults.CustomDescriptionHeader); customHeader != "" {
+		appendPart("custom_header", customHeader)
 	}
 
 	for idx := 1; idx <= 3; idx++ {
 		if image := layout.Images[fmt.Sprintf("BARRINHA_CUSTOM_B_%d", idx)]; image != "" {
-			parts = append(parts, formatImage(image))
+			appendPart("", formatImage(image))
 		}
 	}
-	parts = append(parts, "[/center]")
-	parts = append(parts, "[center][url=https://github.com/autobrr/upbrr]Upload realizado via upbrr[/url][/center]")
-	return strings.TrimSpace(strings.Join(filterEmpty(parts), "\n\n"))
+	appendPart("", "[/center]")
+	appendPart("", "[center][url=https://github.com/autobrr/upbrr]Upload realizado via upbrr[/url][/center]")
+	return strings.TrimSpace(description.FormatSections(parts, defaults))
 }
 
 func fetchLayout(ctx context.Context, dbPath string, meta api.UploadSubject, layoutID string) (layoutData, error) {
@@ -501,23 +530,24 @@ func layoutCachePath(dbPath string, layoutID string) string {
 	return filepath.Join(cacheRoot, "asc_layout_"+metautil.FirstNonEmptyTrimmed(strings.TrimSpace(layoutID), "2")+".json")
 }
 
-func buildTechnicalSheet(meta api.UploadSubject, richMedia *richMediaResponse) string {
+func buildTechnicalSheet(meta api.UploadSubject, richMedia *richMediaResponse, labels map[string]string) string {
+	heading := func(key, text string) string { return description.Heading(labels, "asc."+key, text) }
 	items := make([]string, 0, 5)
 	if runtime := resolveRuntime(meta); runtime != "" {
-		items = append(items, "Duração: "+runtime)
+		items = append(items, heading("runtime", "Duração")+": "+runtime)
 	}
 	if countries := resolveCountries(meta); countries != "" {
-		items = append(items, "País de Origem: "+countries)
+		items = append(items, heading("origin", "País de Origem")+": "+countries)
 	}
 	if genres := resolveGenres(meta, standalone.QuestionnaireAnswers(meta, "ASC")); genres != "" {
-		items = append(items, "Gêneros: "+genres)
+		items = append(items, heading("genres", "Gêneros")+": "+genres)
 	}
 	if releaseDate := resolveReleaseDate(meta); releaseDate != "" {
-		items = append(items, "Data de Lançamento: "+formatDate(releaseDate))
+		items = append(items, heading("released", "Data de Lançamento")+": "+formatDate(releaseDate))
 	}
 	if richMedia != nil {
 		if homepageURL := sanitizeHomepageURL(richMedia.Homepage); homepageURL != "" {
-			items = append(items, fmt.Sprintf("Site: [url=%s]Clique aqui[/url]", homepageURL))
+			items = append(items, fmt.Sprintf("%s: [url=%s]%s[/url]", heading("site", "Site"), homepageURL, heading("homepage", "Clique aqui")))
 		}
 	}
 	return strings.Join(items, "\n")
@@ -577,12 +607,12 @@ func hasEscapedBBCodeURLAttributeUnsafeChar(parsed *url.URL) bool {
 	return false
 }
 
-func buildProductionCompanies(meta api.UploadSubject) string {
+func buildProductionCompanies(meta api.UploadSubject, labels map[string]string) string {
 	if meta.ProviderMetadata.TMDB == nil || len(meta.ProviderMetadata.TMDB.ProductionCompanies) == 0 {
 		return ""
 	}
 	var parts []string
-	parts = append(parts, "[size=4][b]Produtoras[/b][/size]")
+	parts = append(parts, "[size=4][b]"+description.Heading(labels, "asc.production", "Produtoras")+"[/b][/size]")
 	for _, comp := range meta.ProviderMetadata.TMDB.ProductionCompanies {
 		if strings.TrimSpace(comp.Name) == "" {
 			continue
@@ -722,17 +752,6 @@ func formatImage(value string) string {
 	return "[img]" + strings.TrimSpace(value) + "[/img]"
 }
 
-func filterEmpty(values []string) []string {
-	out := values[:0]
-	for _, value := range values {
-		if strings.TrimSpace(value) == "" {
-			continue
-		}
-		out = append(out, value)
-	}
-	return out
-}
-
 func prepareDescription(ctx context.Context, req trackers.PreparationInput) (trackers.DescriptionResult, error) {
 	select {
 	case <-ctx.Done():
@@ -749,4 +768,110 @@ func prepareDescription(ctx context.Context, req trackers.PreparationInput) (tra
 		Group:       "asc",
 		Description: strings.TrimSpace(description),
 	}, nil
+}
+
+func descriptionDefaultsLayout() []trackers.DescriptionLayoutItem {
+	label := func(key, name, standard string) trackers.DescriptionLabel {
+		return trackers.DescriptionLabel{
+			Key:     "asc." + key,
+			Label:   name,
+			Default: standard,
+		}
+	}
+	return []trackers.DescriptionLayoutItem{
+		{Label: "Tracker layout banner and release title"},
+		{
+			ID:         "poster",
+			Label:      "Poster",
+			CanCompact: true,
+		},
+		{
+			ID:         "plot",
+			Label:      "Overview",
+			CanCompact: true,
+		},
+		{
+			ID:         "episode_overview",
+			Label:      "Episode overview",
+			CanCompact: true,
+			Labels:     []trackers.DescriptionLabel{label("episode", "Episode heading", "Episódio")},
+		},
+		{
+			ID:         "technical",
+			Label:      "Technical sheet",
+			CanCompact: true,
+			Labels: []trackers.DescriptionLabel{
+				label("runtime", "Runtime label", "Duração"), label("origin", "Country label", "País de Origem"),
+				label("genres", "Genres label", "Gêneros"), label("released", "Release date label", "Data de Lançamento"),
+				label("site", "Website label", "Site"), label("homepage", "Website link text", "Clique aqui"),
+			},
+		},
+		{
+			ID:         "production",
+			Label:      "Production companies",
+			CanCompact: true,
+			Labels:     []trackers.DescriptionLabel{label("production", "Production companies heading", "Produtoras")},
+		},
+		{
+			ID:         "cast",
+			Label:      "Cast",
+			CanCompact: true,
+		},
+		{
+			ID:         "seasons",
+			Label:      "Seasons",
+			CanCompact: true,
+			Labels: []trackers.DescriptionLabel{
+				label("synopsis", "Synopsis heading", "Sinopse"), label("seasonDate", "Season date label", "Data"),
+				label("episodeCount", "Episode count label", "Episódios"),
+			},
+		},
+		{
+			ID:         "ratings",
+			Label:      "Ratings",
+			CanCompact: true,
+		},
+		{
+			ID:         "mediainfo",
+			Label:      "MediaInfo or BDInfo",
+			CanCompact: true,
+			Labels:     []trackers.DescriptionLabel{label("file", "File information heading", "Informações do Arquivo")},
+		},
+		{
+			ID:         "kept",
+			Label:      "Imported or custom text",
+			CanCompact: true,
+		},
+		{
+			ID:         "custom_header",
+			Label:      "Custom text",
+			CanCompact: true,
+			Fields:     []string{"CustomDescriptionHeader"},
+		},
+		{Label: "Signature footer"},
+	}
+}
+
+func renderDescriptionSample(
+	_ context.Context,
+	sample trackers.DescriptionSample,
+	defaults config.DescriptionSettingsConfig,
+	_ config.TrackerConfig,
+) (string, error) {
+	inputs := descriptionInputs{
+		layout: layoutData{Images: map[string]string{"BARRINHA_APRESENTA": sample.Subject.ProviderMetadata.TMDB.Logo}},
+		report: sample.Report,
+		media:  &richMediaResponse{VoteAverage: 7.5, Homepage: "https://description-sample.invalid"},
+	}
+	if sample.Subject.EpisodeTitle != "" {
+		inputs.episode = &richEpisodeDetails{Name: sample.Subject.EpisodeTitle, Overview: sample.Subject.EpisodeOverview}
+		count := 8
+		inputs.seasons = []richSeasonItem{{
+			SeasonNumber: 1,
+			Overview:     "First season",
+			AirDate:      "2026-03-14",
+			EpisodeCount: &count,
+		}}
+	}
+	return composeDescription(sample.Subject, defaults, sample.Assets.Description, inputs), nil
 }

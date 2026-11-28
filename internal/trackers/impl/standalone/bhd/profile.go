@@ -20,14 +20,16 @@ func Profile() standalone.Profile {
 		ConnectionProbe: trackers.ConnectionProbe{Test: testConnection, DraftConfig: func(cfg config.TrackerConfig) config.TrackerConfig {
 			return config.TrackerConfig{APIKey: cfg.APIKey, BhdRSSKey: cfg.BhdRSSKey}
 		}},
-		Name:               "BHD",
-		BaseURL:            bhdBaseURL,
-		DescriptionGroup:   "bhd",
-		UploadContentMode:  trackers.UploadContentModeDescription,
-		UsesMenuImages:     true,
-		AuthCapability:     authcontract.APIKeyCapability("BHD"),
-		PrepareDescription: prepareDescription,
-		PrepareUpload:      prepareUpload,
+		Name:                      "BHD",
+		BaseURL:                   bhdBaseURL,
+		DescriptionGroup:          "bhd",
+		UploadContentMode:         trackers.UploadContentModeDescription,
+		UsesMenuImages:            true,
+		AuthCapability:            authcontract.APIKeyCapability("BHD"),
+		PrepareDescription:        prepareDescription,
+		DescriptionDefaultsLayout: descriptionDefaultsLayout,
+		DescriptionSample:         renderDescriptionSample,
+		PrepareUpload:             prepareUpload,
 		ReleaseNamePolicy: trackers.WithTitleProvider(
 			trackers.WithMovieYearProvider(trackers.StructuredReleaseNamePolicy("standalone/bhd/v12", trackers.StructuredNamePolicy{
 				Defaults: applyBHDNameDefaults,
