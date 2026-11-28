@@ -63,15 +63,16 @@ jobs:
 
       # Each shard retains its own test results. Native platform runs keep a
       # separate cache from Linux race builds; module downloads remain shared.
+      # v3 starts with fresh test results under the Linux network guard.
       - name: Restore Go test results
         id: go-tests
         uses: actions/cache/restore@v4
         with:
           path: ${{ steps.go-cache-paths.outputs.build }}
-          key: go-tests-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ matrix.mode }}-${{ matrix.shard }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          key: go-tests-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ matrix.mode }}-${{ matrix.shard }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
           restore-keys: |
-            go-tests-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ matrix.mode }}-${{ matrix.shard }}-${{ hashFiles('go.sum') }}-
-            go-tests-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ matrix.mode }}-${{ matrix.shard }}-
+            go-tests-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ matrix.mode }}-${{ matrix.shard }}-${{ hashFiles('go.sum') }}-
+            go-tests-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ matrix.mode }}-${{ matrix.shard }}-
 
       - name: Report Go cache restores
         shell: pwsh
@@ -105,6 +106,14 @@ jobs:
           path: ${{ steps.go-cache-paths.outputs.modules }}
           key: ${{ steps.go-modules.outputs.cache-primary-key }}
 
+      - name: Prepare Linux test network isolation
+        if: runner.os == 'Linux'
+        run: |
+          if ! command -v nft >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y nftables
+          fi
+
       - name: Run Go tests
         id: tests
         shell: pwsh
@@ -124,7 +133,11 @@ jobs:
           if ($env:TEST_RUN) { $testFlags += @('-run', $env:TEST_RUN) }
           if ($env:TEST_SKIP) { $testFlags += @('-skip', $env:TEST_SKIP) }
           # Native redirection keeps test events out of PowerShell's pipeline/logger.
-          go test @testFlags @packages > "$env:RUNNER_TEMP/go-tests.jsonl"
+          if ($env:RUNNER_OS -eq 'Linux') {
+            bash scripts/ci/test-loopback.sh go test @testFlags @packages > "$env:RUNNER_TEMP/go-tests.jsonl"
+          } else {
+            go test @testFlags @packages > "$env:RUNNER_TEMP/go-tests.jsonl"
+          }
           exit $LASTEXITCODE
 
       # Go caches successful compile actions even if another package/test fails.
@@ -213,9 +226,15 @@ jobs:
         working-directory: webui
         run: pnpm run typecheck
 
+      - name: Prepare Linux test network isolation
+        run: |
+          if ! command -v nft >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y nftables
+          fi
+
       - name: Run frontend unit tests
-        working-directory: webui
-        run: pnpm run test:unit
+        run: bash scripts/ci/test-loopback.sh pnpm --dir webui run test:unit
 
       - name: Check frontend formatting
         working-directory: webui

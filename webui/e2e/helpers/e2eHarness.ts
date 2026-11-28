@@ -7,7 +7,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test as base, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import type { ActiveInputSnapshot } from "../../src/api/generated/release-workflow";
 import { waitForHTTP } from "./appReadiness";
 
@@ -31,16 +31,6 @@ const png1x1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
   "base64",
 );
-
-/** Browser scenarios use synthetic icons instead of contacting real tracker sites. */
-export const test = base.extend({
-  context: async ({ context }, use) => {
-    await context.route("**/api/app/GetTrackerIcon", (route) =>
-      route.fulfill({ json: `data:image/png;base64,${png1x1.toString("base64")}` }),
-    );
-    await use(context);
-  },
-});
 
 const e2eTorrentFixture =
   "d8:announce13:http://e2e.ee4:infod6:lengthi0e4:name8:test.txt12:piece lengthi16384e6:pieces0:ee";

@@ -6,14 +6,8 @@ import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { expect } from "@playwright/test";
-import {
-  createE2EWorkspace,
-  e2eBinary,
-  startApp,
-  test,
-  type AppServer,
-} from "./helpers/e2eHarness";
+import { expect, test } from "@playwright/test";
+import { createE2EWorkspace, e2eBinary, startApp, type AppServer } from "./helpers/e2eHarness";
 import type { ApplicationInfo } from "../src/types";
 
 test("embedded web boots with dev auth, navigates core pages, and reports invalid paths", async ({

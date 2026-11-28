@@ -18,7 +18,7 @@ import (
 // e2eWaitForWorkflowStage holds a synthetic service at a test-owned HTTP gate.
 // The real mkbrr cancellation and cleanup behavior is exercised in torrent tests.
 func e2eWaitForWorkflowStage(ctx context.Context, stage string) error {
-	if !isE2EEnabled() || os.Getenv("UPBRR_E2E_CANCELLATION_STAGE") != stage {
+	if !E2EFakesEnabled() || os.Getenv("UPBRR_E2E_CANCELLATION_STAGE") != stage {
 		return nil
 	}
 	api.EmitUploadProgress(ctx, api.UploadProgressUpdate{

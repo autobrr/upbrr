@@ -11,7 +11,6 @@ import (
 	"os"
 
 	"github.com/autobrr/upbrr/internal/apitoken"
-	"github.com/autobrr/upbrr/internal/services/trackericon"
 	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -571,7 +570,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := trackericon.GetTrackerIcon(r.Context(), cfg.MainSettings.DBPath, domain, urlToUse)
+		value, err := trackerIconDataURL(r.Context(), cfg.MainSettings.DBPath, domain, urlToUse)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return

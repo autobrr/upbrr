@@ -66,7 +66,7 @@ Use `--grep` to run a focused visual scenario while iterating. The capture suite
 - Web UI E2E uses embedded app as source of truth, not Vite.
 - Use isolated temp workspace per test: config YAML, SQLite DB, media/torrent/screenshot fixtures.
 - Use only local fake tracker/image-host/torrent/metadata services.
-- Browser specs use the harness's `test` fixture to serve synthetic tracker icons without external favicon requests.
+- The embedded E2E server serves synthetic tracker icons from both icon endpoints when fake services are enabled.
 - Fake-service scenarios cover auth-blocked preflight lanes, questionnaire schemas/answers, reviewed upload/search names, WebUI stage controls, CLI/composite post-dupe tracker approval, tracker-lane isolation when one lane is blocked.
 - Exercise explicit login and manual 2FA through dedicated Tracker Auth. Upload preflight may perform shared automatic credential login, configured TOTP and session persistence/deletion; use local fake services for those paths. Upload workflows must not issue or accept auth/2FA continuation feedback.
 - Auth/questionnaire failure blocks only affected tracker; other runnable lanes continue. Across continuation/restart, assert downstream work uses exact approved or stage-controlled tracker subset. Never implement tracker semantics in fake frontend.

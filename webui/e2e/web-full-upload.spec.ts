@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { expect, type Locator, type Page, type Response } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Response } from "@playwright/test";
 import type {
   ActiveInputSnapshot,
   ContinueReleaseWorkflowRequest,
@@ -24,7 +24,6 @@ import {
   readE2EAuthCounters,
   releaseWorkflowParityFixture,
   startApp,
-  test,
   waitForMetadataReady,
   type AppServer,
 } from "./helpers/e2eHarness";

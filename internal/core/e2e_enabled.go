@@ -80,7 +80,7 @@ func maybeApplyE2EServices(
 	registry *trackers.Registry,
 	logger api.Logger,
 ) error {
-	if !isE2EEnabled() {
+	if !E2EFakesEnabled() {
 		return nil
 	}
 	if services == nil {
@@ -143,13 +143,14 @@ func maybeApplyE2EServices(
 	return nil
 }
 
-func isE2EEnabled() bool {
+// E2EFakesEnabled reports whether this E2E build is using fake services.
+func E2EFakesEnabled() bool {
 	value := strings.TrimSpace(os.Getenv(e2eEnabledEnv))
 	return value == "1" || strings.EqualFold(value, "true")
 }
 
 func e2eNamingMode() (trackers.OpaqueNameMode, bool, error) {
-	if !isE2EEnabled() {
+	if !E2EFakesEnabled() {
 		return trackers.OpaqueNameReject, false, nil
 	}
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(e2eNamingModeEnv))) {
@@ -214,7 +215,7 @@ func e2eReleaseWorkflowOptions(repository api.RepositoryOwner) []releaseworkflow
 	if err == nil && offset != 0 {
 		options = append(options, releaseworkflow.WithClock(e2eWorkflowClock{offset: offset}))
 	}
-	if inputs, ok := repository.(api.ActiveInputRepository); ok && isE2EEnabled() && os.Getenv("UPBRR_E2E_CANCELLATION_STAGE") == "verification" {
+	if inputs, ok := repository.(api.ActiveInputRepository); ok && E2EFakesEnabled() && os.Getenv("UPBRR_E2E_CANCELLATION_STAGE") == "verification" {
 		options = append(options, releaseworkflow.WithActiveInputs(inputs, func(ctx context.Context, input api.PrepareInput) (api.InputRecord, error) {
 			if err := e2eWaitForWorkflowStage(ctx, "verification"); err != nil {
 				return api.InputRecord{}, err

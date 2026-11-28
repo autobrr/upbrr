@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { expect } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -12,7 +12,6 @@ import {
   fetchMetadata,
   repoRoot,
   startApp,
-  test,
   type AppServer,
 } from "./helpers/e2eHarness";
 import { ReleaseWorkflowV1Client, type WorkflowV1Current } from "./helpers/releaseWorkflowV1Client";
@@ -58,6 +57,26 @@ test("embedded web serves UI, API, assets, manifest, and events under a base pat
     });
     expect(defaultConfig.ok()).toBe(true);
     expect(await defaultConfig.json()).toBeTruthy();
+
+    const iconOptions = {
+      data: { Domain: "AITHER" },
+      headers: { Origin: origin, "X-CSRF-Token": csrfToken },
+    };
+    const iconData = await request.post(
+      new URL("api/app/GetTrackerIcon", app.url).toString(),
+      iconOptions,
+    );
+    expect(iconData.ok()).toBe(true);
+    const iconFile = await request.post(
+      new URL("api/app/TrackerIcon", app.url).toString(),
+      iconOptions,
+    );
+    expect(iconFile.ok()).toBe(true);
+    expect(iconFile.headers()["content-type"]).toBe("image/png");
+    const iconBytes = await iconFile.body();
+    expect(iconBytes.readUInt32BE(16)).toBe(1); // PNG width
+    expect(iconBytes.readUInt32BE(20)).toBe(1); // PNG height
+    expect(await iconData.json()).toBe("data:image/png;base64," + iconBytes.toString("base64"));
 
     const manifest = await request.get(`${origin}/upbrr/site.webmanifest`);
     expect(manifest.ok()).toBe(true);

@@ -4,11 +4,13 @@
 package webserver
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/core"
 	"github.com/autobrr/upbrr/internal/services/trackericon"
 	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 )
@@ -29,6 +31,13 @@ func resolveTrackerIconTarget(trackerName string, faviconURL string) (string, st
 		urlToUse = descriptor.BaseURL
 	}
 	return descriptor.Name, urlToUse, nil
+}
+
+func trackerIconDataURL(ctx context.Context, dbPath, domain, target string) (string, error) {
+	if core.E2EFakesEnabled() {
+		return "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=", nil
+	}
+	return trackericon.GetTrackerIcon(ctx, dbPath, domain, target) //nolint:wrapcheck // Keep the existing error text returned by both icon endpoints.
 }
 
 // handleTrackerIcon serves decoded tracker icon bytes only for an allowlisted
@@ -64,7 +73,7 @@ func (s *Server) handleTrackerIcon(w http.ResponseWriter, r *http.Request, _ ses
 		return
 	}
 
-	dataURL, err := trackericon.GetTrackerIcon(r.Context(), cfg.MainSettings.DBPath, domain, urlToUse)
+	dataURL, err := trackerIconDataURL(r.Context(), cfg.MainSettings.DBPath, domain, urlToUse)
 	if err != nil {
 		if strings.Contains(err.Error(), "negative cached") || strings.Contains(err.Error(), "failed to fetch") {
 			http.NotFound(w, r)

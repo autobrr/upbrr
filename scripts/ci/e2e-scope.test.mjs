@@ -52,6 +52,8 @@ test("selects runtime, E2E, assets, manifests, and build inputs", () => {
     "webui/knip.ts",
     "scripts/build.sh",
     "scripts/build.ps1",
+    "scripts/ci/test-loopback.sh",
+    "scripts/ci/test-loopback.test.sh",
     "scripts/sync-webui-assets.sh",
     "scripts/sync-webui-assets.ps1",
     "scripts/ci/e2e-scope.mjs",

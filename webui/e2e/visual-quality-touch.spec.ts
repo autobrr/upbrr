@@ -93,7 +93,7 @@ test("touch controls work on dense mobile routes with reduced motion", async ({ 
       records.push(await record(page, theme, mode, "input"));
 
       await page.getByRole("button", { name: "Settings", exact: true }).tap();
-      await toggleByTouch(page.getByRole("switch", { name: "Use favicons" }));
+      await toggleByTouch(page.getByRole("switch", { name: "Show tracker icons" }));
       records.push(await record(page, theme, mode, "settings"));
 
       await page.getByRole("button", { name: "Logging", exact: true }).tap();
