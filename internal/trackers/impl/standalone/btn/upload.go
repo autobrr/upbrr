@@ -227,6 +227,7 @@ func submitPreparedUpload(
 		finalURL = resp.Request.URL.String()
 	}
 	groupID, torrentID, matched := btnUploadIDsFromText(finalURL)
+	var acceptedAt time.Time
 	torrentDownloaded := false
 	if torrentID == "" {
 		resp.Body = http.MaxBytesReader(nil, resp.Body, btnUploadPageMaxBytes)
@@ -248,8 +249,11 @@ func submitPreparedUpload(
 		if pageTorrentID != "" {
 			groupID, torrentID = pageGroupID, pageTorrentID
 		} else if !ambiguous {
+			observedAt := time.Now()
 			intermediate, handled, err := resolveBTNUploadIntermediatePage(ctx, uploadCtx.client, uploadCtx.baseURL, finalURL, responseBody, groupID)
 			if handled {
+				// A recognised post-upload warning is already evidence of success.
+				acceptedAt = observedAt
 				if intermediate.groupID != "" {
 					groupID = intermediate.groupID
 				}
@@ -278,7 +282,9 @@ func submitPreparedUpload(
 			return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("BTN", resp.StatusCode, finalURL, errorBody)
 		}
 	}
-	acceptedAt := time.Now()
+	if acceptedAt.IsZero() {
+		acceptedAt = time.Now()
+	}
 	torrentURL := buildBTNTorrentURL(uploadCtx.baseURL, groupID, torrentID)
 
 	if torrentID == "" {
