@@ -550,15 +550,17 @@ func (s *Service) searchQbitClient(
 		}
 		torrents = items
 	} else {
-		options := qbittorrent.TorrentFilterOptions{
-			Sort:    "added_on",
-			Reverse: true,
-			Limit:   100,
-		}
+		// Native WebAPI cannot filter by release name. Keep the full list so
+		// older compatible candidates can reach the local matching gates.
+		options := qbittorrent.TorrentFilterOptions{Sort: "added_on", Reverse: true}
 		if meta.InfoHash != "" {
 			options.Hashes = []string{meta.InfoHash}
 		}
 		items, err := qbitClient.GetTorrentsCtx(ctx, options)
+		// The client's retry error need not retain the request's cancellation.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return api.ClientSearchResult{}, nil, fmt.Errorf("clients: %s qbit list: %w", name, ctxErr)
+		}
 		if err != nil {
 			return api.ClientSearchResult{}, nil, fmt.Errorf("clients: %s qbit list: %w", name, err)
 		}

@@ -1505,13 +1505,18 @@ func TestWorkflowUploadExecutionInjectsExactRegisteredTrackerTorrent(t *testing.
 				t.Fatal("registered artifact was not retained")
 			}
 			watch := t.TempDir()
-			clients := torrentclient.NewService(config.Config{TorrentClients: map[string]config.TorrentClientConfig{
-				"watch": {Type: "watch", WatchFolder: watch},
-			}}, nil)
+			clients := torrentclient.NewService(config.Config{
+				PostUpload: config.PostUploadConfig{InjectDelay: 60},
+				TorrentClients: map[string]config.TorrentClientConfig{
+					"watch": {Type: "watch", WatchFolder: watch},
+				},
+			}, nil)
+			acceptedAt := time.Now().Add(-2 * time.Minute)
 			execution := &workflowUploadExecution{
 				plan: &workflowRetainedUploadPlanFake{results: []trackers.RetainedTrackerResult{{
 					Tracker: test.tracker,
 					Summary: api.UploadSummary{
+						AcceptedAt: acceptedAt,
 						Uploaded:           1,
 						PendingPublication: test.pending,
 						UploadedTorrents: []api.UploadedTorrent{{
@@ -1523,15 +1528,27 @@ func TestWorkflowUploadExecutionInjectsExactRegisteredTrackerTorrent(t *testing.
 				}}},
 				clients: clients,
 			}
-			results, err := execution.Execute(t.Context(), nil)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			results, err := execution.Execute(ctx, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if len(results) != 1 || !results[0].ClientInjected {
 				t.Fatal("registered tracker torrent was not injected")
 			}
-			if execution.RegisteredArtifactAuthority().Torrents[api.TrackerID(test.tracker)].Path != registeredPath {
-				t.Fatal("registered artifact authority changed")
+			authority := execution.RegisteredArtifactAuthority()
+			id := api.TrackerID(test.tracker)
+			if retained := authority.Torrents[id]; retained.Path != registeredPath || !retained.UploadAcceptedAt.Equal(acceptedAt) {
+				t.Fatal("registered artifact authority lost the exact path or acceptance time")
+			}
+			if err := os.Remove(filepath.Join(watch, filepath.Base(registeredPath))); err != nil {
+				t.Fatal(err)
+			}
+			retry := workflowUploadPlanBuilder{clients: clients}
+			retried, err := retry.RetryClientInjections(ctx, authority, []api.TrackerID{id})
+			if err != nil || len(retried) != 1 || !retried[0].ClientInjected {
+				t.Fatalf("retry did not inject after the already elapsed delay: %#v, %v", retried, err)
 			}
 			retained, err := os.ReadFile(registeredPath)
 			if err != nil {

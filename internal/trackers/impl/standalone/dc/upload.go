@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/logging"
@@ -112,10 +113,12 @@ func submitPreparedUpload(
 	}
 	torrentID := commonhttp.PositiveTorrentID(decoded.ID)
 	if result.Success && torrentID != "" {
+		acceptedAt := time.Now()
 		torrentURL := siteBaseURL + "/torrent/" + torrentID + "/"
 		downloadURL := apiURL + "/download/" + torrentID
 		summary := api.UploadSummary{
-			Uploaded: 1,
+			AcceptedAt: acceptedAt,
+			Uploaded:   1,
 			UploadedTorrents: []api.UploadedTorrent{{
 				Tracker:     "DC",
 				TorrentID:   torrentID,

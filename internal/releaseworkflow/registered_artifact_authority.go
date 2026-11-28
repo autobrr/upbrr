@@ -9,11 +9,19 @@ import (
 	"fmt"
 	"maps"
 	"strings"
+	"time"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 const privateResourceKindRegisteredArtifactAuthority = "releaseworkflow/registered-artifact-authority/v1"
+
+// registeredArtifactAuthorityPayload adds scheduling data to the private wire format
+// without changing TorrentResult JSON outside the vault.
+type registeredArtifactAuthorityPayload struct {
+	RegisteredArtifactAuthority
+	UploadAcceptedAt map[api.TrackerID]time.Time `json:",omitempty"`
+}
 
 // MarshalPrivateResource persists private registered torrent paths and
 // authenticated URLs only inside the owner-scoped private vault.
@@ -21,7 +29,16 @@ func (a RegisteredArtifactAuthority) MarshalPrivateResource() (string, []byte, e
 	if err := a.validate(); err != nil {
 		return "", nil, err
 	}
-	payload, err := json.Marshal(a)
+	wire := registeredArtifactAuthorityPayload{RegisteredArtifactAuthority: a}
+	for tracker, torrent := range a.Torrents {
+		if !torrent.UploadAcceptedAt.IsZero() {
+			if wire.UploadAcceptedAt == nil {
+				wire.UploadAcceptedAt = make(map[api.TrackerID]time.Time)
+			}
+			wire.UploadAcceptedAt[tracker] = torrent.UploadAcceptedAt
+		}
+	}
+	payload, err := json.Marshal(wire)
 	if err != nil {
 		return "", nil, fmt.Errorf("marshal registered artifact authority: %w", err)
 	}
@@ -29,9 +46,14 @@ func (a RegisteredArtifactAuthority) MarshalPrivateResource() (string, []byte, e
 }
 
 func decodeRegisteredArtifactAuthority(payload []byte) (any, error) {
-	var authority RegisteredArtifactAuthority
-	if err := json.Unmarshal(payload, &authority); err != nil {
+	var wire registeredArtifactAuthorityPayload
+	if err := json.Unmarshal(payload, &wire); err != nil {
 		return nil, fmt.Errorf("decode registered artifact authority: %w", err)
+	}
+	authority := wire.RegisteredArtifactAuthority
+	for tracker, torrent := range authority.Torrents {
+		torrent.UploadAcceptedAt = wire.UploadAcceptedAt[tracker]
+		authority.Torrents[tracker] = torrent
 	}
 	if err := authority.validate(); err != nil {
 		return nil, err

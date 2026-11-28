@@ -361,6 +361,10 @@ func validateBTNTVPayloadMetadata(meta api.UploadSubject) (string, error) {
 
 func resolveBTNTVSeasonEpisode(meta api.UploadSubject) (int, int) {
 	season, episode := meta.CanonicalSeasonEpisode()
+	if season == 0 && meta.SeasonStr == "S00" {
+		// Keep the prepared special numbering when providers use regular-season numbering.
+		return season, episode
+	}
 	tvdb := meta.ProviderMetadata.TVDB
 	imdbEpisode := preferredBTNIMDBEpisode(meta)
 	if tvdb != nil && tvdb.EpisodeSeason > 0 {
@@ -385,7 +389,8 @@ func btnTVPayloadMetadataMessage(meta api.UploadSubject) string {
 	missing := make([]string, 0, 2)
 	ignored := make([]string, 0, 2)
 	season, episode := resolveBTNTVSeasonEpisode(meta)
-	if season <= 0 {
+	singleSpecial := season == 0 && meta.SeasonStr == "S00" && episode > 0 && !meta.TVPack && !meta.MultipleEpisodes
+	if season <= 0 && !singleSpecial {
 		missing = append(missing, "season")
 		if meta.Release.Season > 0 {
 			ignored = append(ignored, "season")

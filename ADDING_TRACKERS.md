@@ -1199,6 +1199,8 @@ A registered-artifact download or persistence failure must
 use `trackers.LogRegisteredTorrentUnavailable` and leave the successful remote upload successful.
 Client injection consumes this registered authority; never substitute the pre-upload prepared
 torrent as if it were tracker-registered.
+When confirmed success is followed by a registered torrent download, capture
+`UploadSummary.AcceptedAt` at confirmation so the download counts toward any injection delay.
 
 A successful draft may retain registered authority before publication. BHD returns
 `PendingPublication: true` with an `UploadedTorrents` entry and reconstructs the personalized

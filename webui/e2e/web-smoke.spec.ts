@@ -474,6 +474,10 @@ test("embedded tracker settings use the catalog for entries, reset, and unsuppor
       await expect(bluCard.getByLabel(label, { exact: true })).toBeVisible();
     }
     await bluCard.getByLabel("API key", { exact: true }).fill("e2e-blu-activation");
+    await page.getByLabel("Show advanced", { exact: true }).check();
+    const injectionDelay = bluCard.getByLabel("Client injection delay (seconds)", { exact: true });
+    await expect(injectionDelay).toHaveValue("");
+    await injectionDelay.fill("0.5");
 
     await expectSaveFeedback(1280);
     await page.getByRole("button", { name: "Reload", exact: true }).click();
@@ -482,6 +486,16 @@ test("embedded tracker settings use the catalog for entries, reset, and unsuppor
       .locator("details.settings-card")
       .filter({ has: page.locator("summary", { hasText: "BLU" }) });
     await expect(bluCard).toBeVisible();
+    await expect(injectionDelay).toHaveValue("0.5");
+    for (const value of ["0", ""]) {
+      await injectionDelay.fill(value);
+      await save.click();
+      await expect(
+        page.getByRole("status").filter({ hasText: "Settings saved and applied." }),
+      ).toBeVisible();
+      await page.getByRole("button", { name: "Reload", exact: true }).click();
+      await expect(injectionDelay).toHaveValue(value);
+    }
     await bluCard.getByRole("button", { name: "Remove" }).click();
     await expect(bluCard).toHaveCount(0);
     await expect(trackerSelector.locator('option[value="BLU"]')).toHaveCount(1);

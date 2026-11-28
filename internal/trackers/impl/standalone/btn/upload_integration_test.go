@@ -836,6 +836,10 @@ func TestBTNExplicitDryRunRetriesExplicitTVDBAutofillFailureWithReleaseName(t *t
 	req.Intent = trackers.PreparationIntentDryRun
 	req.Logger = logger
 	req.Meta.MediaInfoTextPath = writeBTNTestMediaInfo(t, filepath.Dir(req.Meta.SourcePath), "General\nFormat: Matroska")
+	req.Meta.ReleaseName = "Example.Show.S00E80.1080p.WEB-DL.x265-GRP"
+	req.Meta.SeasonInt, req.Meta.SeasonStr = 0, "S00"
+	req.Meta.EpisodeInt, req.Meta.EpisodeStr = 80, "E80"
+	req.Meta.Release.Season, req.Meta.Release.Episode = 0, 80
 	req.Meta.Identity.TVDBID = 12345
 	req.Meta.ProviderMetadata.TVDB = &api.TVDBMetadata{
 		TVDBID:           12345,
@@ -855,8 +859,15 @@ func TestBTNExplicitDryRunRetriesExplicitTVDBAutofillFailureWithReleaseName(t *t
 	if entry.Status != "ready" || len(entry.RequiredActions) != 0 || entry.Payload["artist"] != "Expected Show" {
 		t.Fatalf("fallback dry-run entry = %#v", entry)
 	}
+	if !strings.Contains(entry.ReleaseName, "S00E80") {
+		t.Fatalf("release name lost the special numbering: %q", entry.ReleaseName)
+	}
+	if desc := entry.Payload["album_desc"]; !strings.Contains(desc, "\n[b]Season:[/b] 0\n[b]Episode:[/b] 80\n") {
+		t.Fatalf("fallback album description lost the special numbering: %q", desc)
+	}
 	if autofillCalls.Load() != 2 || uploadCalls.Load() != 0 || len(gotForms) != 2 ||
 		gotForms[0].Get("scene_yesno") != "No" || gotForms[0].Get("auto_series") != "12345" ||
+		gotForms[0].Get("type") != "Episode" || gotForms[0].Get("auto_title") != "S00E80" ||
 		gotForms[1].Get("scene_yesno") != "Yes" || gotForms[1].Get("autofill") != entry.ReleaseName || gotForms[1].Get("auto_series") != "" {
 		t.Fatalf("autofills=%d uploads=%d forms=%#v", autofillCalls.Load(), uploadCalls.Load(), gotForms)
 	}
@@ -2813,6 +2824,7 @@ func TestBTNUploadFollowsIntermediateDetailPage(t *testing.T) {
 
 	var downloadCalls atomic.Int32
 	var detailCalls atomic.Int32
+	var detailStarted atomic.Pointer[time.Time]
 	var apiCalls atomic.Int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2850,7 +2862,9 @@ func TestBTNUploadFollowsIntermediateDetailPage(t *testing.T) {
 			downloadCalls.Add(1)
 			_, _ = w.Write(btnRegisteredTorrentFixture())
 		case r.URL.Path == "/torrents.php" && r.URL.Query().Get("id") == "123":
-			detailCalls.Add(1)
+			if detailCalls.Add(1) == 1 {
+				detailStarted.Store(new(time.Now()))
+			}
 			if r.URL.Query().Get("torrentid") == "" {
 				http.Redirect(w, r, "/torrents.php?id=123&torrentid=456", http.StatusFound)
 				return
@@ -2869,6 +2883,9 @@ func TestBTNUploadFollowsIntermediateDetailPage(t *testing.T) {
 	summary, err := uploadAt(context.Background(), req, server.URL)
 	if err != nil {
 		t.Fatalf("upload failed: %v", err)
+	}
+	if started := detailStarted.Load(); started == nil || summary.AcceptedAt.IsZero() || summary.AcceptedAt.After(*started) {
+		t.Fatalf("acceptance was not recorded before the detail page fetch: %v, %v", summary.AcceptedAt, started)
 	}
 	if got := summary.UploadedTorrents[0].TorrentID; got != "456" {
 		t.Fatalf("expected intermediate torrent id 456, got %q", got)

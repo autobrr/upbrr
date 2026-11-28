@@ -132,6 +132,7 @@ func submitPreparedUpload(
 		return api.UploadSummary{}, err
 	}
 
+	acceptedAt := time.Now()
 	viewURL := antString(payload["view"])
 	if viewURL == "" {
 		viewURL = strings.TrimSpace(stringValue(payload["link"]))
@@ -169,7 +170,8 @@ func submitPreparedUpload(
 	}
 
 	return api.UploadSummary{
-		Uploaded: 1,
+		AcceptedAt: acceptedAt,
+		Uploaded:   1,
 		UploadedTorrents: []api.UploadedTorrent{{
 			Tracker:     "ANT",
 			TorrentID:   torrentID,

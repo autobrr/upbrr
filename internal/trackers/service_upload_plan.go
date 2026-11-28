@@ -900,6 +900,9 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 			knownFailure := outcome == submission.NotSent || outcome == submission.Rejected
 			if err == nil {
 				// Receipt persistence failure must not erase established acceptance.
+				if summary.AcceptedAt.IsZero() {
+					summary.AcceptedAt = time.Now()
+				}
 				slot.summary = summary
 			}
 			// Only adapter-owned evidence can release a failed submission fence.

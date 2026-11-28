@@ -227,6 +227,7 @@ func submitPreparedUpload(
 		finalURL = resp.Request.URL.String()
 	}
 	groupID, torrentID, matched := btnUploadIDsFromText(finalURL)
+	var acceptedAt time.Time
 	torrentDownloaded := false
 	if torrentID == "" {
 		resp.Body = http.MaxBytesReader(nil, resp.Body, btnUploadPageMaxBytes)
@@ -248,8 +249,11 @@ func submitPreparedUpload(
 		if pageTorrentID != "" {
 			groupID, torrentID = pageGroupID, pageTorrentID
 		} else if !ambiguous {
+			observedAt := time.Now()
 			intermediate, handled, err := resolveBTNUploadIntermediatePage(ctx, uploadCtx.client, uploadCtx.baseURL, finalURL, responseBody, groupID)
 			if handled {
+				// A recognised post-upload warning is already evidence of success.
+				acceptedAt = observedAt
 				if intermediate.groupID != "" {
 					groupID = intermediate.groupID
 				}
@@ -277,6 +281,9 @@ func submitPreparedUpload(
 			}
 			return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("BTN", resp.StatusCode, finalURL, errorBody)
 		}
+	}
+	if acceptedAt.IsZero() {
+		acceptedAt = time.Now()
 	}
 	torrentURL := buildBTNTorrentURL(uploadCtx.baseURL, groupID, torrentID)
 
@@ -320,7 +327,8 @@ func submitPreparedUpload(
 		persistedPath = trackerTorrentPath
 	}
 	return api.UploadSummary{
-		Uploaded: 1,
+		AcceptedAt: acceptedAt,
+		Uploaded:   1,
 		UploadedTorrents: []api.UploadedTorrent{{
 			Tracker:     "BTN",
 			TorrentID:   torrentID,
@@ -637,9 +645,9 @@ func resolveBTNImage(meta api.UploadSubject, fields map[string]string) string {
 // data is missing.
 
 // resolveBTNTVSeasonEpisode returns the season and episode numbers BTN should
-// use for generated request and description fields. TVDB episode numbers win
-// over IMDb episode data, then metadata ints; missing values fall back
-// independently.
+// use for generated request and description fields. Explicit season zero keeps
+// the prepared coordinates. Otherwise, TVDB episode numbers win over IMDb
+// episode data, then metadata ints; missing values fall back independently.
 
 // btnTVPayloadMetadataMessage explains when BTN cannot build TV season or
 // episode fields because canonical metadata is absent. Parsed release values are

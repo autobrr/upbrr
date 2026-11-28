@@ -2879,6 +2879,8 @@ type TagOverride struct {
 
 // UploadSummary records completed tracker submissions and any returned registered-torrent authority.
 type UploadSummary struct {
+	// AcceptedAt is when the adapter confirmed success, before post-acceptance work.
+	AcceptedAt       time.Time `json:"-"`
 	Uploaded         int
 	UploadedTorrents []UploadedTorrent
 	// PendingPublication reports a successful submission awaiting tracker publication.
@@ -2940,6 +2942,8 @@ type TorrentResult struct {
 	// URL-only qBittorrent adds cannot provide that proof. Workflow callers set
 	// this explicitly; false preserves legacy qBittorrent add behavior.
 	VerifyInjection bool
+	// UploadAcceptedAt anchors the injection delay for a newly accepted upload.
+	UploadAcceptedAt time.Time `json:"-"`
 	// PendingPublication owns an unpublished generated file, never a reused artifact.
 	PendingPublication TorrentPublication `json:"-"`
 	// RehashedTrackers lists selected trackers whose preparation required the

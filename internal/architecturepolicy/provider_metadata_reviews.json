@@ -624,8 +624,8 @@
     "sha256": "a4a7e1f398099bbaea96ccd78ec05e09ebf04a22925a1d1b3ca212e5aa38789f"
   },
   "internal/trackers/impl/standalone/btn/description.go:buildTVDBAlbumDesc": {
-    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
-    "sha256": "323ccc8322ba3088c7aa61f0ef1f201513e0c7458f071bf8da7a4d19c876fc9c"
+    "reason": "Formats TVDB episode details using the BTN resolver's coordinates, which preserve an explicit canonical S00. Matching episodes and season packs still use their selected TVDB entries.",
+    "sha256": "e7c86d5043b28a88c8d66c37dc4e1eb095e4698b5c3229e7e5fc58c6190cf41f"
   },
   "internal/trackers/impl/standalone/btn/description.go:formatBTNEpisodeAlbumDesc": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -664,8 +664,8 @@
     "sha256": "f7a708c987f74b5180e828bae2b0fbca659fc549cf595cf643f6108ea0b373c9"
   },
   "internal/trackers/impl/standalone/btn/media.go:btnTVPayloadMetadataMessage": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "d8d94e0b5ca07fbd4a312c4e88bbf7b33415f44bf554f4c27f156ccade3087b5"
+    "reason": "Accepts season zero only for explicit canonical S00 with a positive episode and single-episode scope. Provider numbers cannot make an explicit S00 pack eligible.",
+    "sha256": "e41ecd3613c7bde5f936f12d2ff272a1e05a06c9b150117fba86db4eef76fc3f"
   },
   "internal/trackers/impl/standalone/btn/media.go:buildBTNAutofillPayload": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -684,8 +684,8 @@
     "sha256": "2c2923796927fdf8b9eea7e7cc4c49370190236b75224e52be9ccf3ca0497eb6"
   },
   "internal/trackers/impl/standalone/btn/media.go:resolveBTNTVSeasonEpisode": {
-    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
-    "sha256": "d9249c14d989c7b984137c0c3e2fef6e9a3949b80a10327146c9451efdc1557b"
+    "reason": "Preserves explicit canonical S00 coordinates, including manual corrections, for validation, requests, and descriptions. Other releases retain TVDB, IMDb, and prepared coordinate precedence.",
+    "sha256": "8ca69d467691ce59d23034aca3613d7e7faf8cf780c894e03ef855c78e524420"
   },
   "internal/trackers/impl/standalone/btn/media.go:validateBTNTVPayloadMetadata": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -788,8 +788,8 @@
     "sha256": "66b2caee30f282136c2528aaac181412fc0a1bde9c9010652478205df686780e"
   },
   "internal/trackers/impl/standalone/btn/validation.go:validationPolicy": {
-    "reason": "Reviewed declarative BTN validation binding: only the version advances to v9 so country majorities retain co-production evidence in their denominator. The Check callback and metadata precedence remain unchanged.",
-    "sha256": "6f35f9ff588fbc7ade614886687899c51f4bf5d3fb947832b2989a7766f768b3"
+    "reason": "Advances the BTN validation policy to v10 for explicit single-episode specials. The binding continues to delegate to checkRequirements.",
+    "sha256": "6d413f22253063c9089f77c37fc887120eccf3871e4c29b820083e307f5f2390"
   },
   "internal/trackers/impl/standalone/czt/dupe.go:cztHandler.Search": {
     "reason": "TRACE request logging review: cztSearchQuery continues to apply manual title authority before the unchanged text request.",

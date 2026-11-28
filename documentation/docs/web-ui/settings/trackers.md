@@ -30,17 +30,19 @@ Defaults do not bypass workflow eligibility, auth, duplicate checks, validation,
 
 Each tracker shows a different subset.
 
-| Field family                                                             | Purpose                                                                                      |
-| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
-| API key, passkey, announce URL                                           | Authenticates tracker API, upload, or announce operations as required by that tracker.       |
-| Username, password, OTP URI                                              | Supports tracker-owned login or automatic relogin. Managed cookie state is shown separately. |
-| **Anonymous upload**, **Opt into moderation queue**, **Upload as draft** | Sets tracker-specific upload flags where supported.                                          |
-| **Preferred image host for this tracker**                                | Chooses an eligible host for that tracker instead of relying only on global priority.        |
-| **Client receiving this tracker's torrents**                             | Overrides global client handling for torrents registered by that tracker.                    |
-| **Link staging subfolder**                                               | Names the tracker staging directory when torrent-client linking is enabled.                  |
-| **Custom tracker icon URL**                                              | Overrides the tracker icon source used by the Web UI.                                        |
-| **Skip when torrent regeneration is needed**                             | Omits the tracker when preparation must generate new torrent data.                           |
-| **Client injection delay (seconds)**                                     | Overrides the global post-upload client-injection delay for that tracker.                    |
+| Field family                                                             | Purpose                                                                                                                        |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| API key, passkey, announce URL                                           | Authenticates tracker API, upload, or announce operations as required by that tracker.                                         |
+| Username, password, OTP URI                                              | Supports tracker-owned login or automatic relogin. Managed cookie state is shown separately.                                   |
+| **Anonymous upload**, **Opt into moderation queue**, **Upload as draft** | Sets tracker-specific upload flags where supported.                                                                            |
+| **Preferred image host for this tracker**                                | Chooses an eligible host for that tracker instead of relying only on global priority.                                          |
+| **Client receiving this tracker's torrents**                             | Overrides global client handling for torrents registered by that tracker.                                                      |
+| **Link staging subfolder**                                               | Names the tracker staging directory when torrent-client linking is enabled.                                                    |
+| **Custom tracker icon URL**                                              | Overrides the tracker icon source used by the Web UI.                                                                          |
+| **Skip when torrent regeneration is needed**                             | Omits the tracker when preparation must generate new torrent data.                                                             |
+| **Client injection delay (seconds)**                                     | Set seconds for this tracker (for example, `0.5`). Leave blank to inherit the global delay or set `0` for immediate injection. |
+
+In YAML, set `inject_delay: 0.5` inside the tracker's entry. Omit the key to inherit the global delay. The same setting applies to CLI and Web UI uploads.
 
 Other fields are tracker-owned. Their labels and defaults come from the running backend, not a universal schema. See [Trackers](../../trackers/index.md) for support boundaries.
 
