@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/autobrr/rls"
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
@@ -111,10 +112,9 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 
 	info.Year = getInt(titleData, "releaseYear", "year")
 	info.EndYear = getInt(titleData, "releaseYear", "endYear")
-	originalTitle := getString(titleData, "originalTitleText", "text")
-	if originalTitle != "" && originalTitle != info.Title {
-		info.AKA = originalTitle
-	} else {
+	info.AKA = getString(titleData, "originalTitleText", "text")
+	isOriginalTitle, _ := getMap(titleData, "titleText")["isOriginalTitle"].(bool)
+	if info.AKA == "" && isOriginalTitle {
 		info.AKA = info.Title
 	}
 	info.Type = getString(titleData, "titleType", "id")
@@ -309,15 +309,27 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 	return info, nil
 }
 
+type titleSearchScope uint8
+
+const (
+	titleSearchConstrained titleSearchScope = iota
+	titleSearchWide
+	titleSearchAlternate
+)
+
+type titleSearchHit struct {
+	edge          map[string]any
+	fromAlternate bool
+}
+
 // Search tries increasingly broad title variants in order, pausing one second
 // between remote attempts. Individual request failures are treated as no results.
+// Context cancellation stops the search and returns the context error.
 // A sufficiently confident result is selected. Weak matches, including a lone
 // weak result, remain tentative candidates. Quickie validates only the first result.
 func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, error) {
 	logger := logging.FromContext(ctx, c.logger)
 
-	results := []map[string]any{}
-	imdbID := 0
 	attempted := 0
 
 	input = applyReleaseHints(input)
@@ -332,62 +344,86 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 	}
 
 	searchYear := input.SearchYear
-	secondary := strings.TrimSpace(input.SecondaryTitle)
+	alternate := strings.TrimSpace(input.AlternateTitle)
+	subtitle := strings.TrimSpace(input.Subtitle)
+	secondary := metautil.FirstNonEmpty(alternate, subtitle)
 	parsedTitle := strings.TrimSpace(input.ParsedTitle)
 	if parsedTitle == "" {
 		parsedTitle = fallbackParsedTitle(input.UntouchedFilename)
 	}
 
-	run := func(name string, year int, wide bool) []map[string]any {
-		if attempted > 0 {
-			time.Sleep(1 * time.Second)
+	run := func(name string, scope titleSearchScope) []titleSearchHit {
+		if attempted > 0 && ctx.Err() == nil {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(time.Second):
+			}
+		}
+		if ctx.Err() != nil {
+			return nil
 		}
 		attempted++
-		results := c.runSearch(ctx, name, year, category, input.DurationMinutes, wide)
-		return slices.DeleteFunc(results, func(result map[string]any) bool {
-			return !typeMatches(category, getStringFromMap(result, "node", "title", "titleType", "text"))
-		})
+		edges := c.runSearch(ctx, name, searchYear, category, input.DurationMinutes, scope != titleSearchConstrained)
+		hits := make([]titleSearchHit, 0, len(edges))
+		for _, edge := range edges {
+			if typeMatches(category, getStringFromMap(edge, "node", "title", "titleType", "text")) {
+				hits = append(hits, titleSearchHit{edge: edge, fromAlternate: scope == titleSearchAlternate})
+			}
+		}
+		return hits
 	}
 
-	if len(results) == 0 {
-		results = run(filename, searchYear, false)
+	primary := filename
+	if input.ParsedTitle == "" && strings.EqualFold(primary, subtitle) {
+		primary = ""
 	}
-	if len(results) == 0 && secondary != "" {
-		results = run(secondary, searchYear, true)
+	results := run(filename, titleSearchConstrained)
+	searchedSecondary := len(results) == 0 && secondary != "" && !strings.EqualFold(secondary, filename)
+	if searchedSecondary {
+		scope := titleSearchWide
+		if alternate != "" {
+			scope = titleSearchAlternate
+		}
+		results = run(secondary, scope)
 	}
 	if len(results) == 0 {
 		if trimmed := trimLeadingThe(filename); trimmed != "" && trimmed != filename {
-			results = run(trimmed, searchYear, false)
+			results = run(trimmed, titleSearchConstrained)
 		}
 	}
 	if len(results) == 0 {
-		results = run(filename, searchYear, true)
+		results = run(filename, titleSearchWide)
 	}
 	if len(results) == 0 && parsedTitle != "" {
-		results = run(parsedTitle, searchYear, true)
+		results = run(parsedTitle, titleSearchWide)
 	}
 	if len(results) == 0 {
 		if reduced := metautil.ReduceTitle(filename, 1); reduced != "" {
-			results = run(reduced, searchYear, true)
+			results = run(reduced, titleSearchWide)
 		}
 	}
 	if len(results) == 0 {
 		if reduced := metautil.ReduceTitle(filename, 2); reduced != "" {
-			results = run(reduced, searchYear, true)
+			results = run(reduced, titleSearchWide)
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return SearchResult{}, fmt.Errorf("imdb: title search canceled: %w", err)
 	}
 
 	if input.Quickie {
 		if len(results) == 0 {
 			return SearchResult{}, nil
 		}
-		first := results[0]
+		first := results[0].edge
 		node := getMapFromMap(first, "node")
 		title := getMapFromMap(node, "title")
 		typeInfo := strings.ToLower(getStringFromMap(title, "titleType", "text"))
 		year := getIntFromMap(title, "releaseYear", "year")
 		id := getStringFromMap(title, "id")
 		titleText := getStringFromMap(title, "titleText", "text")
+		imdbID := 0
 		if typeMatches(category, typeInfo) {
 			if searchYear > 0 && year != 0 && year != searchYear {
 				return SearchResult{}, nil
@@ -401,33 +437,42 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 		return SearchResult{}, nil
 	}
 
-	if len(results) > 0 {
-		candidates := rankCandidates(results, filename, searchYear)
-		if len(candidates) == 0 {
-			return SearchResult{}, nil
+	candidates := rankCandidates(results, primary, alternate, searchYear)
+	if !searchedSecondary && alternate != "" && !strings.EqualFold(alternate, filename) && !confidentIMDbCandidate(candidates) {
+		results = append(results, run(alternate, titleSearchAlternate)...)
+		if err := ctx.Err(); err != nil {
+			return SearchResult{}, fmt.Errorf("imdb: title search canceled: %w", err)
 		}
-		best := candidates[0]
-		if best.IMDbID != 0 && best.Confidence >= 0.85 {
-			second := 0.0
-			for _, candidate := range candidates[1:] {
-				second = max(second, candidate.Confidence)
-			}
-			if best.Confidence-second >= 0.10 {
-				logger.Infof("imdb: search auto-selected id=%d similarity=%.2f", best.IMDbID, best.Similarity)
-				if len(results) == 1 {
-					return SearchResult{IMDbID: best.IMDbID, AutoSelected: true}, nil
-				}
-				return SearchResult{
-					IMDbID:       best.IMDbID,
-					Candidates:   candidates,
-					AutoSelected: true,
-				}, nil
-			}
-		}
-		return SearchResult{Candidates: candidates, Tentative: true}, nil
+		candidates = rankCandidates(results, primary, alternate, searchYear)
 	}
+	if len(candidates) == 0 {
+		return SearchResult{}, nil
+	}
+	if confidentIMDbCandidate(candidates) {
+		best := candidates[0]
+		logger.Infof("imdb: search auto-selected id=%d similarity=%.2f", best.IMDbID, best.Similarity)
+		if len(candidates) == 1 && len(results) == 1 {
+			return SearchResult{IMDbID: best.IMDbID, AutoSelected: true}, nil
+		}
+		return SearchResult{
+			IMDbID:       best.IMDbID,
+			Candidates:   candidates,
+			AutoSelected: true,
+		}, nil
+	}
+	return SearchResult{Candidates: candidates, Tentative: true}, nil
+}
 
-	return SearchResult{}, nil
+func confidentIMDbCandidate(candidates []Candidate) bool {
+	if len(candidates) == 0 || candidates[0].IMDbID == 0 || candidates[0].Confidence < 0.85 {
+		return false
+	}
+	for _, other := range candidates[1:] {
+		if candidates[0].Confidence-other.Confidence < 0.10 {
+			return false
+		}
+	}
+	return true
 }
 
 func applyReleaseHints(input SearchInput) SearchInput {
@@ -440,23 +485,14 @@ func applyReleaseHints(input SearchInput) SearchInput {
 	}
 	release := metautil.ParseRelease(base)
 
-	mainTitle := release.Title
-	secondaryTitle := release.Alt
-	if mainTitle == "" {
-		mainTitle = release.Subtitle
+	if title := metautil.FirstNonEmpty(release.Title, release.Subtitle); title != "" {
+		input.Filename = title
 	}
-	if secondaryTitle == "" {
-		secondaryTitle = release.Subtitle
+	if release.Alt != "" && !strings.EqualFold(release.Alt, release.Title) {
+		input.AlternateTitle = release.Alt
 	}
-	if mainTitle != "" && secondaryTitle == mainTitle {
-		secondaryTitle = ""
-	}
-
-	if mainTitle != "" {
-		input.Filename = mainTitle
-	}
-	if secondaryTitle != "" {
-		input.SecondaryTitle = secondaryTitle
+	if release.Subtitle != "" {
+		input.Subtitle = release.Subtitle
 	}
 	if strings.TrimSpace(input.Category) == "" && release.Category != "" {
 		input.Category = release.Category
@@ -465,7 +501,7 @@ func applyReleaseHints(input SearchInput) SearchInput {
 		input.SearchYear = release.Year
 	}
 	if strings.TrimSpace(input.ParsedTitle) == "" {
-		input.ParsedTitle = mainTitle
+		input.ParsedTitle = release.Title
 	}
 	return input
 }
@@ -802,32 +838,42 @@ func collectCredits(data map[string]any, keyword string) []Person {
 	return nil
 }
 
-func rankCandidates(results []map[string]any, filename string, searchYear int) []Candidate {
-	filenameNorm := strings.ToLower(strings.TrimSpace(filename))
-	searchYearInt := searchYear
+func rankCandidates(results []titleSearchHit, primary, alternate string, searchYear int) []Candidate {
+	primary = strings.ToLower(norm.NFC.String(strings.TrimSpace(primary)))
+	alternate = strings.ToLower(norm.NFC.String(strings.TrimSpace(alternate)))
 	candidates := make([]Candidate, 0, len(results))
 
 	for _, result := range results {
-		node := getMapFromMap(result, "node")
+		node := getMapFromMap(result.edge, "node")
 		title := getMapFromMap(node, "title")
 		text := getStringFromMap(title, "titleText", "text")
 		year := getIntFromMap(title, "releaseYear", "year")
 		imdbID := metautil.ParseIMDbNumeric(getStringFromMap(title, "id"))
 		plot := getStringFromMap(title, "plot", "plotText", "plainText")
 		posterURL := getStringFromMap(title, "primaryImage", "url")
-		similarity := metautil.SimilarityRatio(filenameNorm, strings.ToLower(strings.TrimSpace(text)))
+		titleNorm := strings.ToLower(norm.NFC.String(strings.TrimSpace(text)))
+		similarity := metautil.SimilarityRatio(primary, titleNorm)
+		compatibleYear := searchYear == 0 || (year > 0 && metautil.AbsInt(year-searchYear) <= 1)
+		if alternate != "" && compatibleYear {
+			similarity = max(similarity, metautil.SimilarityRatio(alternate, titleNorm))
+		}
 		confidenceScore := similarity
-		if similarity >= 0.99 && searchYearInt > 0 && year > 0 {
+		if similarity >= 0.99 && searchYear > 0 && year > 0 {
 			switch year {
-			case searchYearInt:
+			case searchYear:
 				confidenceScore += 0.1
-			case searchYearInt - 1:
+			case searchYear - 1:
 				similarity += 0.05
 				confidenceScore += 0.05
 			}
 		}
-		if searchYearInt > 0 && year == searchYearInt {
+		if searchYear > 0 && year == searchYear {
 			similarity += 0.2
+		}
+		if result.fromAlternate && searchYear > 0 && !compatibleYear {
+			// Keep wide alternate results discoverable, without ranking them above a compatible match.
+			similarity = min(similarity, 0.75)
+			confidenceScore = min(confidenceScore, 0.75)
 		}
 		candidates = append(candidates, Candidate{
 			IMDbID:     imdbID,
@@ -844,6 +890,15 @@ func rankCandidates(results []map[string]any, filename string, searchYear int) [
 	sort.SliceStable(candidates, func(i, j int) bool {
 		return candidates[i].Similarity > candidates[j].Similarity
 	})
+
+	if len(candidates) > 1 {
+		seen := make(map[int]bool, len(candidates))
+		candidates = slices.DeleteFunc(candidates, func(candidate Candidate) bool {
+			duplicate := candidate.IMDbID > 0 && seen[candidate.IMDbID]
+			seen[candidate.IMDbID] = true
+			return duplicate
+		})
+	}
 
 	if len(candidates) > 0 {
 		best := candidates[0].Confidence
@@ -864,13 +919,14 @@ func rankCandidates(results []map[string]any, filename string, searchYear int) [
 }
 
 func typeMatches(category, titleType string) bool {
-	category = strings.ToLower(category)
-	titleType = strings.ToLower(strings.ReplaceAll(titleType, "-", " "))
-	isSeries := strings.Contains(titleType, "tv series") || strings.Contains(titleType, "tv mini series")
-	if category == "tv" {
-		return isSeries
+	switch strings.ToLower(strings.NewReplacer(" ", "", "-", "").Replace(titleType)) {
+	case "tvseries", "tvminiseries":
+		return strings.EqualFold(category, "TV")
+	case "movie", "tvmovie", "tvspecial", "short", "video", "tvshort":
+		return strings.EqualFold(category, "MOVIE")
+	default:
+		return false
 	}
-	return !isSeries
 }
 
 func trimLeadingThe(value string) string {

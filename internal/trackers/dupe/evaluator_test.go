@@ -756,15 +756,56 @@ func TestEvaluateCompoundDirectionalRule(t *testing.T) {
 		Resolution: "1080p",
 		Provider:   "Example Provider",
 	}}, policy, SearchEvidence{Complete: true})
-	if got := evaluation.Candidates[0].Relation; got != api.DupeRelationProposedTrumps {
-		t.Fatalf("compound relation = %q", got)
+	if got := evaluation.Candidates[0]; got.Relation != api.DupeRelationProposedTrumps || got.Reasons[0].Code != "proposed_webdl_over_webrip" {
+		t.Fatalf("matched compound explanation = %#v", got.Reasons)
 	}
 
 	evaluation = Evaluate(target, []TrackerCandidate{{
 		Type: "WEBRip", Resolution: "1080p",
 	}}, policy, SearchEvidence{Complete: true})
-	if got := evaluation.Candidates[0].Relation; got != api.DupeRelationInsufficientEvidence {
-		t.Fatalf("incomplete compound relation = %q", got)
+	if got := evaluation.Candidates[0]; got.Relation != api.DupeRelationInsufficientEvidence || got.Reasons[0].Code != "proposed_webdl_over_webrip" ||
+		!strings.HasPrefix(got.Reasons[0].Message, "Required comparison evidence is unavailable.") ||
+		!strings.Contains(got.Reasons[0].Message, "candidate provider") {
+		t.Fatalf("incomplete compound explanation = %#v", got.Reasons)
+	}
+}
+
+func TestEvaluateDirectionalHDRConflictIdentifiesRelease(t *testing.T) {
+	t.Parallel()
+
+	policy := trackerspkg.DupePolicy{PrecedenceRules: []trackerspkg.DupeRule{{
+		ID:               "example_hdr_precedence",
+		Relation:         "proposed_trumps",
+		OverridesGeneral: true,
+		Conditions: []trackerspkg.DupeCondition{{
+			Dimension:        trackerspkg.DupeDimensionHDR,
+			RequiresComplete: true,
+		}},
+	}}}
+	conflicting := testHDR(api.HDREvidenceContradictory, api.HDRFormatHDR10)
+	complete := testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10)
+	for _, tc := range []struct {
+		name      string
+		target    api.HDRFacts
+		candidate api.HDRFacts
+		message   string
+	}{
+		{"proposed", conflicting, complete, "Proposed"},
+		{"candidate", complete, conflicting, "Candidate"},
+		{"both", conflicting, conflicting, "Comparison"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := Evaluate(
+				api.TrackerDuplicateTarget{Resolution: "1080p", HDR: tc.target},
+				[]TrackerCandidate{{Resolution: "1080p", HDR: tc.candidate}},
+				policy, SearchEvidence{Complete: true},
+			).Candidates[0]
+			reason := result.Reasons[0]
+			if result.Relation != api.DupeRelationInsufficientEvidence ||
+				reason.Code != "example_hdr_precedence" || !strings.HasPrefix(reason.Message, tc.message) {
+				t.Fatalf("relation = %q, reason = %#v", result.Relation, reason)
+			}
+		})
 	}
 }
 

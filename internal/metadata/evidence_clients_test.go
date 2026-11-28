@@ -99,7 +99,6 @@ func TestTMDBEvidenceReappliesLocalCorrectionsWithoutRequests(t *testing.T) {
 	input.TVDBID = 33
 	input.Poster = "https://images.example.invalid/corrected.jpg"
 	input.OriginalLanguage = "fr"
-	input.AKA = "User alternative"
 	for _, freshness := range []api.ExternalFreshness{api.ExternalFreshnessReuse, api.ExternalFreshnessLoad} {
 		ctx, scope := evidence.WithScope(t.Context(), repo, source, "fingerprint", freshness, nil)
 		got, err := client.FetchMetadata(ctx, input)

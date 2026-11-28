@@ -11639,6 +11639,12 @@
           "Anime": {
             "type": "boolean"
           },
+          "AnimeLookupPending": {
+            "type": "boolean"
+          },
+          "AnimeSeason": {
+            "type": "string"
+          },
           "Backdrop": {
             "type": "string"
           },

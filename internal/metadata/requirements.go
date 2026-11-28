@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -147,7 +148,7 @@ func metadataRequirementFieldPresentForCollection(
 	case "imdb_title":
 		return imdbCurrent && strings.TrimSpace(metadata.IMDB.Title) != ""
 	case "tvdb_title":
-		return tvdbCurrent && (strings.TrimSpace(metadata.TVDB.NameEnglish) != "" || strings.TrimSpace(metadata.TVDB.Name) != "")
+		return tvdbCurrent && metadata.TVDB.DisplayName() != ""
 	case "tvdb_year":
 		return tvdbCurrent && metadata.TVDB.Year > 0
 	case "tvdb_disambiguation":
@@ -165,11 +166,11 @@ func metadataRequirementFieldPresentForCollection(
 		return strings.TrimSpace(meta.Release.Title) != "" ||
 			(tmdbCurrent && strings.TrimSpace(metadata.TMDB.Title) != "") ||
 			(imdbCurrent && strings.TrimSpace(metadata.IMDB.Title) != "") ||
-			(tvdbCurrent && (strings.TrimSpace(metadata.TVDB.NameEnglish) != "" || strings.TrimSpace(metadata.TVDB.Name) != "")) ||
+			(tvdbCurrent && metadata.TVDB.DisplayName() != "") ||
 			(tvmazeCurrent && strings.TrimSpace(metadata.TVmaze.Name) != "")
 	case "original_title":
-		return (tmdbCurrent && strings.TrimSpace(metadata.TMDB.OriginalTitle) != "") ||
-			(tvdbCurrent && strings.TrimSpace(metadata.TVDB.Name) != "") || strings.TrimSpace(meta.Release.Title) != ""
+		return (tmdbCurrent && metautil.FirstNonEmptyTrimmed(metadata.TMDB.OriginalTitle, metadata.TMDB.Title) != "") ||
+			(tvdbCurrent && metadata.TVDB.DisplayName() != "") || strings.TrimSpace(meta.Release.Title) != ""
 	case "year":
 		if identity.Category == api.CanonicalCategoryTV && metadata.TVDBNamingAvailable(meta.SourcePath, identity) {
 			return tvdbNamingYear(metadata.TVDB) > 0

@@ -373,6 +373,13 @@ func (h *historyModule) collectReleaseCleanupTargets(
 		return nil, nil, nil, fmt.Errorf("core: delete history release resolve release root: %w", err)
 	}
 	tmpDirs[fallbackDir] = struct{}{}
+	// A shared screenshot can keep the release directory alive. Clean the
+	// comparison subtree separately, without descending through a linked owner.
+	if info, statErr := h.fs.Lstat(fallbackDir); statErr == nil && info.IsDir() {
+		tmpDirs[filepath.Join(fallbackDir, "comparisons")] = struct{}{}
+	} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return nil, nil, nil, fmt.Errorf("core: delete history release inspect release root: %w", statErr)
+	}
 
 	if snapshot.Metadata != nil {
 		stored := *snapshot.Metadata

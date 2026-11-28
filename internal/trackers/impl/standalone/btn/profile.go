@@ -26,7 +26,7 @@ func Profile() standalone.Profile {
 		PrepareUpload: func(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
 			return prepareUploadAt(ctx, req, btnDefaultBaseURL)
 		},
-		ReleaseNamePolicy: trackers.StructuredReleaseNamePolicy("standalone/btn/v5", trackers.StructuredNamePolicy{
+		ReleaseNamePolicy: trackers.StructuredReleaseNamePolicy("standalone/btn/v6", trackers.StructuredNamePolicy{
 			Defaults:  applyBTNNameDefaults,
 			ExactName: btnExactName,
 			Separator: ".",

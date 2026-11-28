@@ -164,13 +164,21 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 
 func animeSearchTitle(meta api.DuplicateSubject) string {
 	if meta.EffectiveMetadata.TitleProvenance.IsManual() {
-		return strings.TrimSpace(meta.EffectiveMetadata.PreferredTitle(""))
+		title := strings.TrimSpace(meta.EffectiveMetadata.PreferredTitle(""))
+		// The shared projector fills an empty search name with the upload name.
+		// An explicitly cleared title still leaves anime search ineligible.
+		if title == "" || meta.Projection == nil {
+			return title
+		}
+	}
+	if meta.Projection != nil {
+		return dupe.ProjectedSearchName(meta)
 	}
 	tvdbNameEnglish := ""
 	tvdbName := ""
 	if meta.ProviderMetadata.TVDB != nil {
 		tvdbNameEnglish = strings.TrimSpace(meta.ProviderMetadata.TVDB.NameEnglish)
-		tvdbName = strings.TrimSpace(meta.ProviderMetadata.TVDB.Name)
+		tvdbName = meta.ProviderMetadata.TVDB.DisplayName()
 	}
 	tmdbTitle := ""
 	tmdbOriginalTitle := ""

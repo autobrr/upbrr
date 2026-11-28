@@ -757,6 +757,9 @@ func (m *Module) canRetainActiveInput(
 	if !ok || facts.Revision != state.Workflow.FactInstructions.Revision {
 		return false, nil
 	}
+	if !input.RequirePrepared && preparedrelease.NeedsProviderLookupRetry(release.Release, facts.Instructions.Identity) {
+		return false, nil
+	}
 	if !continuationPreparationSatisfied(&release, &input) {
 		if request.CorrectionPatch == nil {
 			return false, nil

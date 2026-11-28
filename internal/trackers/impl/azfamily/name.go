@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -34,11 +35,11 @@ var (
 )
 
 func releaseNamePolicy(site siteDefinition) trackers.ReleaseNamePolicyBinding {
-	version := "v4"
+	version := "v5"
 	movieYearProvider := api.IdentityProviderTMDB
 	switch site.Name {
 	case "CZ":
-		version = "v9"
+		version = "v10"
 		movieYearProvider = api.IdentityProviderIMDB
 	case "PHD":
 		version = "v6"
@@ -113,9 +114,9 @@ func applyCinemaZNameDefaults(editor *trackers.NameEditor, meta api.UploadSubjec
 	title := cinemaZTitle(meta)
 	if title == "" {
 		return &trackers.NameRuleError{
-			Rule:   "azfamily/cz/v9",
+			Rule:   "azfamily/cz/v10",
 			Role:   api.NameRoleTitle,
-			Reason: "no Latin-safe title is available; set a Latin-safe manual original title and reprepare",
+			Reason: "no Latin-safe title is available; check the selected provider records and refresh metadata",
 		}
 	}
 	if err := setNameComponent(editor, api.NameRoleTitle, title); err != nil {
@@ -430,6 +431,7 @@ func avistaZEnglishTitle(meta api.UploadSubject) string {
 func cinemaZTitle(meta api.UploadSubject) string {
 	metadata := currentAZFamilyProviderMetadata(meta)
 	original := cinemaZOriginalTitle(meta, metadata)
+	fallback := trackers.PreferredOriginalTitle(meta, "")
 	if meta.EffectiveMetadata.OriginalTitleProvenance.IsManual() {
 		if original == "" || !containsNonLatinLetter(original) {
 			return original
@@ -439,11 +441,11 @@ func cinemaZTitle(meta api.UploadSubject) string {
 		}
 		return ""
 	}
-	originalUsesNonLatin := containsNonLatinLetter(original)
+	originalUsesNonLatin := containsNonLatinLetter(metautil.FirstNonEmptyTrimmed(original, fallback))
 	if title := cinemaZEnglishCountryAKA(metadata.IMDB, originalUsesNonLatin); title != "" {
 		return title
 	}
-	if original == "" || !containsNonLatinLetter(original) {
+	if original != "" && !originalUsesNonLatin {
 		return original
 	}
 	for _, candidate := range cinemaZRomanizedCandidates(meta, metadata) {
@@ -451,7 +453,10 @@ func cinemaZTitle(meta api.UploadSubject) string {
 			return candidate
 		}
 	}
-	if transliterated := transliterateCinemaZTitle(original); transliterated != "" && !containsNonLatinLetter(transliterated) {
+	if transliterated := transliterateCinemaZTitle(
+		metautil.FirstNonEmptyTrimmed(original, fallback),
+	); transliterated != "" &&
+		!containsNonLatinLetter(transliterated) {
 		return transliterated
 	}
 	return ""
@@ -504,6 +509,9 @@ func isEnglishName(language string) bool {
 }
 
 func cinemaZOriginalTitle(meta api.UploadSubject, metadata api.SourceScopedMetadata) string {
+	if meta.EffectiveMetadata.OriginalTitleProvenance.IsManual() {
+		return strings.TrimSpace(meta.EffectiveMetadata.OriginalTitle)
+	}
 	provider := ""
 	if metadata.IMDB != nil {
 		provider = strings.TrimSpace(metadata.IMDB.AKA)
@@ -514,14 +522,11 @@ func cinemaZOriginalTitle(meta api.UploadSubject, metadata api.SourceScopedMetad
 	if provider == "" && isTV(meta) && metadata.TVDB != nil {
 		provider = strings.TrimSpace(metadata.TVDB.Name)
 	}
-	return trackers.PreferredOriginalTitle(meta, provider)
+	return provider
 }
 
 func cinemaZRomanizedCandidates(meta api.UploadSubject, metadata api.SourceScopedMetadata) []string {
-	candidates := make([]string, 0, 5)
-	if metadata.TMDB != nil {
-		candidates = append(candidates, trimAKAPrefix(metadata.TMDB.RetrievedAKA))
-	}
+	candidates := []string{metautil.AnimeRomanizedTitle(meta.Identity, metadata)}
 	if metadata.IMDB != nil {
 		candidates = append(candidates, strings.TrimSpace(metadata.IMDB.Title))
 	}
@@ -529,17 +534,9 @@ func cinemaZRomanizedCandidates(meta api.UploadSubject, metadata api.SourceScope
 		candidates = append(candidates, strings.TrimSpace(metadata.TMDB.Title))
 	}
 	if isTV(meta) && metadata.TVDB != nil {
-		candidates = append(candidates, strings.TrimSpace(metadata.TVDB.NameEnglish))
+		candidates = append(candidates, strings.TrimSpace(metadata.TVDB.NameEnglish), metadata.TVDB.DisplayName())
 	}
-	return append(candidates, strings.TrimSpace(meta.Release.Title))
-}
-
-func trimAKAPrefix(value string) string {
-	value = strings.TrimSpace(value)
-	if after, ok := strings.CutPrefix(value, "AKA "); ok {
-		return strings.TrimSpace(after)
-	}
-	return value
+	return append(candidates, trackers.PreferredOriginalTitle(meta, ""), strings.TrimSpace(meta.Release.Title))
 }
 
 func cinemaZDVDVideo(value string) string {

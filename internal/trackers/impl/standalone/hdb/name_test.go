@@ -88,6 +88,21 @@ func TestHDBReleaseNamePolicyBuildsStructuredOriginalIMDbName(t *testing.T) {
 			}
 		})
 	}
+	for _, test := range []struct {
+		original string
+		want     string
+	}{
+		{original: "AKA Example", want: "AKA Example 2026 "},
+		{want: "Example Release 2026 "},
+	} {
+		imdb := *meta.ProviderMetadata.IMDB
+		imdb.AKA = test.original
+		meta.ProviderMetadata.IMDB = &imdb
+		resolved, err := Profile().ReleaseNamePolicy.Resolver(trackers.ReleaseNameInput{Subject: meta})
+		if err != nil || !strings.HasPrefix(resolved.Upload, test.want) {
+			t.Errorf("original %q: name = %q, err = %v, want prefix %q", test.original, resolved.Upload, err, test.want)
+		}
+	}
 }
 
 func TestHDBVideoCodecUsesResolvedMediaFact(t *testing.T) {

@@ -303,6 +303,53 @@ func TestRestartHydrationRestoresPrivateVerifiedIdentity(t *testing.T) {
 	}
 }
 
+func TestPrepareWithoutVerificationCannotReuseVerifiedGeneration(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "release.mkv")
+	writeSourceIdentityFile(t, path, "first")
+	modified := time.Date(2026, time.September, 19, 1, 2, 3, 0, time.UTC)
+	if err := os.Chtimes(path, modified, modified); err != nil {
+		t.Fatal(err)
+	}
+	input := api.PrepareInput{SourcePath: path}
+	verified, err := VerifyInputSource(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newMemoryStore()
+	initial := newTestModule(t, store, &recordingCollector{})
+	verifiedInput := input
+	verifiedInput.VerifiedSource = &verified
+	first, err := initial.Prepare(t.Context(), verifiedInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSourceIdentityFile(t, path, "other")
+	if err := os.Chtimes(path, modified, modified); err != nil {
+		t.Fatal(err)
+	}
+	required := input
+	required.RequirePrepared = true
+	var incompatible *IncompatiblePreparationError
+	if _, err := initial.Prepare(t.Context(), required); !errors.As(err, &incompatible) {
+		t.Fatalf("RequirePrepared accepted an unverified source: %v", err)
+	}
+	// Simulate a restart without the private verification, as with a SQLite row.
+	persisted := store.current[canonicalSourceKey(path)]
+	persisted.SourceIdentity = api.SourceContentIdentity{}
+	store.current[canonicalSourceKey(path)] = persisted
+	restarted := newTestModule(t, store, &recordingCollector{})
+	second, err := restarted.Prepare(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Release.Compatibility.SourceFingerprint != first.Release.Compatibility.SourceFingerprint ||
+		second.Release.Generation <= first.Release.Generation || second.Release.SourceIdentity.Digest != "" {
+		t.Fatalf("same-stat replacement reused the verified generation: previous=%d current=%d",
+			first.Release.Generation, second.Release.Generation)
+	}
+}
+
 func writeSourceIdentityFile(t *testing.T, path string, content string) {
 	t.Helper()
 	writeSourceIdentityBytes(t, path, []byte(content))

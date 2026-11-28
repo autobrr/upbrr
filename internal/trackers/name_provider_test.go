@@ -244,3 +244,53 @@ func TestTitleProviderTVParentheticalYear(t *testing.T) {
 		})
 	}
 }
+
+func TestTitleProviderRecoversBoundAnimeRomanization(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		malID int
+		omit  bool
+		want  bool
+	}{
+		{
+name: "matching romanization",
+ malID: 33,
+ want: true,
+},
+		{name: "different MAL ID", malID: 34},
+		{
+name: "explicit omission",
+ malID: 33,
+ omit: true,
+},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := titleProviderSubject(t)
+			subject.Identity.MALID = test.malID
+			subject.ProviderMetadata.TMDB.Title = "Aoi Umi"
+			subject.ProviderMetadata.TMDB.Anime = true
+			subject.ProviderMetadata.AniList = &api.AniListMetadata{MALID: 33, TitleRomaji: "Aoi Umi"}
+			subject.ProviderMetadata.IMDB.Title = "The Quiet Sky"
+			subject.NamePresentation.OmitAlternateTitle = test.omit
+			for i := range subject.GeneratedName.Components {
+				component := &subject.GeneratedName.Components[i]
+				if component.Role == api.NameRoleTitle {
+					component.Value = "Aoi Umi"
+				}
+				if component.Role == api.NameRoleAlternateTitle {
+					component.Value = ""
+					component.Present = false
+				}
+			}
+			subject.ReleaseName = subject.GeneratedName.Render().Name
+			binding := WithTitleProvider(StructuredReleaseNamePolicy("test/provider-romanization/v1", StructuredNamePolicy{}), api.IdentityProviderIMDB)
+			resolved, err := resolveReleaseNames(PreparationInput{Meta: subject}, binding)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(resolved.Upload, "The Quiet Sky ") || strings.Contains(resolved.Upload, "AKA Aoi Umi") != test.want {
+				t.Fatalf("projected name = %q, want romanization %t", resolved.Upload, test.want)
+			}
+		})
+	}
+}

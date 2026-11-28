@@ -8,6 +8,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/metadata"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -104,6 +105,40 @@ func TestLocalizedReleaseNamePolicyPreservesManualAndOpaqueNames(t *testing.T) {
 	override := "Opaque Localized Name-GRP"
 	if got := localizedReviewedName(t, subject, config.TrackerConfig{}, &override); got != override {
 		t.Fatalf("opaque name = %q, want %q", got, override)
+	}
+}
+
+func TestLocalizedReleaseNamePolicyKeepsAliasAvailableForTrackerFormatting(t *testing.T) {
+	t.Parallel()
+	meta := preparationstate.State{
+		Release: api.ReleaseInfo{
+			Title:      "Example Sky",
+			Alt:        "Foreign Sky",
+			Category:   "MOVIE",
+			Year:       2024,
+			Resolution: "1080p",
+		},
+		ReleaseNameOverrides: api.ReleaseNameOverrides{NoAKA: new(false)},
+	}
+	metadata.RebuildReleaseName(&meta, api.NopLogger{})
+	subject := api.UploadSubject{
+		ReleaseName:       meta.ReleaseName,
+		GeneratedName:     meta.GeneratedName,
+		NamePresentation:  meta.ReleaseNamePresentation,
+		Release:           meta.Release,
+		EffectiveMetadata: meta.EffectiveMetadata,
+	}
+	if got, want := localizedReviewedName(t, subject, config.TrackerConfig{}, nil), "Example Sky 2024 1080p-NoGroup"; got != want {
+		t.Fatalf("name = %q, want %q", got, want)
+	}
+	meta.MetadataOverrides.AlternateTitle = new("Maré Azul")
+	meta.MetadataOverrides.OriginalLanguage = new("pt")
+	metadata.RebuildReleaseName(&meta, api.NopLogger{})
+	subject.ReleaseName = meta.ReleaseName
+	subject.GeneratedName = meta.GeneratedName
+	subject.EffectiveMetadata = meta.EffectiveMetadata
+	if got, want := localizedReviewedName(t, subject, config.TrackerConfig{}, nil), "Example Sky AKA Maré Azul 2024 1080p-NoGroup"; got != want {
+		t.Fatalf("name with manual AKA = %q, want %q", got, want)
 	}
 }
 

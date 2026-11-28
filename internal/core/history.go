@@ -30,6 +30,7 @@ type historyModule struct {
 }
 
 type historyFilesystem interface {
+	Lstat(name string) (fs.FileInfo, error)
 	Stat(name string) (fs.FileInfo, error)
 	ReadDir(name string) ([]fs.DirEntry, error)
 	Remove(name string) error
@@ -37,6 +38,11 @@ type historyFilesystem interface {
 }
 
 type osHistoryFilesystem struct{}
+
+func (osHistoryFilesystem) Lstat(name string) (fs.FileInfo, error) {
+	//nolint:wrapcheck // Adapter preserves OS error identity for existing cleanup policy.
+	return os.Lstat(name)
+}
 
 func (osHistoryFilesystem) Stat(name string) (fs.FileInfo, error) {
 	//nolint:wrapcheck // Adapter preserves OS error identity for existing cleanup policy.

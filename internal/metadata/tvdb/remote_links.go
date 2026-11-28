@@ -9,26 +9,62 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // GetSeriesRemoteLinks refreshes only series identity evidence, leaving kept naming metadata untouched.
-// Its separate wire projection cannot replay legacy snapshots that discarded remoteIds.
 func (c *Client) GetSeriesRemoteLinks(ctx context.Context, seriesID int) (api.TVDBRemoteLinks, error) {
-	var response struct {
-		Data struct {
-			ID        int              `json:"id"`
-			RemoteIDs *[]remoteIDEntry `json:"remoteIds"`
-		} `json:"data"`
-	}
-	if err := c.getJSON(ctx, fmt.Sprintf("/series/%d/extended", seriesID), nil, &response); err != nil {
+	response, err := c.getSeriesExtended(ctx, seriesID, nil, nil)
+	if err != nil {
 		return api.TVDBRemoteLinks{Status: api.MetadataEvidenceStatusUnavailable}, err
 	}
 	if response.Data.ID != seriesID {
 		return api.TVDBRemoteLinks{Status: api.MetadataEvidenceStatusContradictory}, errors.New("tvdb: series identity mismatch")
 	}
 	return parseSeriesRemoteLinks(response.Data.RemoteIDs), nil
+}
+
+func (c *Client) getSeriesExtended(
+	ctx context.Context,
+	seriesID int,
+	params map[string]string,
+	legacyNaming *seriesExtendedResponse,
+) (seriesExtendedResponse, error) {
+	path := fmt.Sprintf("/series/%d/extended", seriesID)
+	var response seriesExtendedResponse
+	if len(params) > 0 || !evidence.Enabled(ctx) {
+		err := c.getJSON(ctx, path, params, &response)
+		return response, err
+	}
+	// Default-language readers share one observation. Earlier links-only and
+	// full projections could each contain a different version of the links.
+	query := []any{c.baseURL, c.apiKey, path, map[string]string{}}
+	fetched := false
+	err := evidence.JSON(ctx, "tvdb.series.extended.v2", query, &response, errNotFound, nil, func() error {
+		fetched = true
+		return c.uncachedJSON(ctx, path, nil, &response)
+	})
+	if legacyNaming != nil && (fetched || err != nil) && ctx.Err() == nil {
+		retainLegacySeriesNaming(ctx, query, seriesID, legacyNaming)
+	}
+	if err != nil {
+		return seriesExtendedResponse{}, fmt.Errorf("metadata evidence response: %w", err)
+	}
+	return response, nil
+}
+
+// A legacy title without remoteIds can still supply naming on the first link
+// repair. Its fields never replace the shared provider response in the cache.
+func retainLegacySeriesNaming(ctx context.Context, query []any, seriesID int, naming *seriesExtendedResponse) {
+	const domain = "tvdb.response.v1"
+	legacyKey := []any{query, fmt.Sprintf("%T", naming)}
+	var cached struct{ Data seriesExtendedResponse }
+	if evidence.Reusable(ctx, domain, legacyKey) && evidence.Retained(ctx, domain, legacyKey, &cached) &&
+		cached.Data.Data.ID == seriesID && cached.Data.Data.RemoteIDs == nil {
+		*naming = cached.Data
+	}
 }
 
 // parseSeriesRemoteLinks accepts links only from the series extended resource.

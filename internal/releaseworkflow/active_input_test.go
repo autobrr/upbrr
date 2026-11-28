@@ -344,6 +344,7 @@ func TestRetainActiveInputRequiresUnchangedCurrentAuthority(t *testing.T) {
 	for _, name := range []string{
 		"unchanged", "changed source", "changed facts", "changed corrections", "correction patch", "unchanged correction patch", "correction confirmation", "force", "provider refresh",
 		"provider load", "client recheck", "HDR capture", "BDMV rescan", "expired duplicates", "missing evidence", "stale generation", "successful upload",
+		"pending anime lookup", "kept MAL with pending anime lookup", "stored MAL selection", "stored MAL clear", "pending logo lookup",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -401,6 +402,33 @@ func TestRetainActiveInputRequiresUnchangedCurrentAuthority(t *testing.T) {
 				request.Input.ExternalFreshness = api.ExternalFreshnessLoad
 			case "client recheck":
 				request.Input.Controls.ForceRecheck = new(true)
+			case "pending anime lookup", "kept MAL with pending anime lookup", "stored MAL selection", "stored MAL clear", "pending logo lookup":
+				request.CorrectionPatch = &api.ReleaseCorrectionPatch{}
+				preparer.CorrectionsUnchangedFunc = func(context.Context, api.PrepareInput, api.ReleaseCorrectionUpdate, uint64) (bool, error) {
+					return true, nil
+				}
+				module.preparer = preparer
+				current := state.Releases[state.Workflow.Release.ID]
+				current.Release.ProviderMetadata.TMDB = &api.TMDBMetadata{
+					Anime:              true,
+					AnimeSeason:        "S01",
+					AnimeLookupPending: name != "pending logo lookup",
+					LogoLookupPending:  name == "pending logo lookup",
+				}
+				if name == "kept MAL with pending anime lookup" {
+					current.Release.Identity.MALID = 444
+					current.Release.Identity.Provenance.MAL = api.IdentityProvenanceRetained
+				}
+				switch name {
+				case "stored MAL selection":
+					current.Release.Identity.MALID = 444
+					current.Release.Identity.Overrides.MAL = api.OverrideStateValue
+					current.Release.ProviderMetadata.TMDB = &api.TMDBMetadata{Anime: true}
+				case "stored MAL clear":
+					current.Release.Identity.Overrides.MAL = api.OverrideStateClear
+					current.Release.ProviderMetadata.TMDB = &api.TMDBMetadata{Anime: true}
+				}
+				state.Releases[current.ID] = current
 			case "HDR capture":
 				request.Input.Controls.CaptureHDRMetadata = true
 			case "BDMV rescan":
@@ -418,7 +446,8 @@ func TestRetainActiveInputRequiresUnchangedCurrentAuthority(t *testing.T) {
 				state.Workflow.SubmissionExclusions = []api.SubmissionExclusion{{TrackerID: "ALPHA", Reason: "already_uploaded"}}
 			}
 			retained, err := module.canRetainActiveInput(t.Context(), testOwnerID, state, prior, record, request)
-			want := name == "unchanged" || name == "successful upload" || name == "unchanged correction patch"
+			want := name == "unchanged" || name == "successful upload" || name == "unchanged correction patch" ||
+				name == "kept MAL with pending anime lookup" || name == "stored MAL selection" || name == "stored MAL clear"
 			if err != nil || retained != want {
 				t.Fatalf("retained=%t want=%t err=%v", retained, want, err)
 			}

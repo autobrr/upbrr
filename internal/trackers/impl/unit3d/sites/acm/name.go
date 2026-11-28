@@ -11,6 +11,7 @@ import (
 	"golang.org/x/text/language"
 
 	"github.com/autobrr/upbrr/internal/languageutil"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -19,7 +20,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/acm/v5", trackers.StructuredNamePolicy{Defaults: applyACMNameDefaults})
+	return trackers.StructuredReleaseNamePolicy("unit3d/acm/v6", trackers.StructuredNamePolicy{Defaults: applyACMNameDefaults})
 }
 
 func applyACMNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
@@ -70,23 +71,24 @@ func applyACMAlternateTitle(editor *trackers.NameEditor, meta api.UploadSubject)
 
 func acmOriginalTitle(meta api.UploadSubject) string {
 	if meta.EffectiveMetadata.OriginalTitleProvenance.IsManual() {
-		return strings.TrimPrefix(strings.TrimSpace(trackers.PreferredOriginalTitle(meta, "")), "AKA ")
+		return strings.TrimSpace(trackers.PreferredOriginalTitle(meta, ""))
 	}
 	if meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) {
 		if tmdb := meta.ProviderMetadata.TMDB; tmdb != nil {
-			for _, value := range []string{tmdb.OriginalTitle, tmdb.RetrievedAKA} {
-				if value = strings.TrimSpace(value); value != "" {
-					return strings.TrimPrefix(value, "AKA ")
-				}
+			if value := strings.TrimSpace(tmdb.OriginalTitle); value != "" {
+				return value
+			}
+			if value := metautil.TrimAKAPrefix(tmdb.RetrievedAKA); value != "" {
+				return value
 			}
 		}
 		if imdb := meta.ProviderMetadata.IMDB; imdb != nil {
 			if value := strings.TrimSpace(imdb.AKA); value != "" {
-				return strings.TrimPrefix(value, "AKA ")
+				return value
 			}
 		}
 	}
-	return strings.TrimPrefix(strings.TrimSpace(meta.AlternateTitle), "AKA ")
+	return metautil.TrimAKAPrefix(meta.AlternateTitle)
 }
 
 func normalizeACMTechnicalComponents(editor *trackers.NameEditor, meta api.UploadSubject) error {

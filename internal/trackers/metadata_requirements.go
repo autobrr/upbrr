@@ -317,8 +317,7 @@ func matchingIMDBTitle(meta api.RuleSubject) bool {
 }
 
 func matchingTVDBTitle(meta api.RuleSubject) bool {
-	return matchingTVDBMetadata(meta) &&
-		(strings.TrimSpace(meta.ProviderMetadata.TVDB.NameEnglish) != "" || strings.TrimSpace(meta.ProviderMetadata.TVDB.Name) != "")
+	return matchingTVDBMetadata(meta) && meta.ProviderMetadata.TVDB.DisplayName() != ""
 }
 
 func matchingTVDBDisambiguation(meta api.RuleSubject) bool {
