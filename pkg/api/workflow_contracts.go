@@ -270,6 +270,8 @@ type TrackerQuestionnaireRequirement struct {
 	HDRGradeComparison bool `json:"hdrGradeComparison,omitempty"`
 	// NeedsReview requests correction without making an optional value mandatory.
 	NeedsReview bool `json:"needsReview,omitempty"`
+	// DuplicateOverrideInput marks a confirmation or follow-up for an explicit duplicate override.
+	DuplicateOverrideInput bool `json:"duplicateOverrideInput,omitempty"`
 	// Kind identifies the renderer; multiselect values use comma-separated option labels.
 	Kind string `json:"kind,omitempty"`
 	// Value is the current answer or display default for this field; QuestionnaireAnswers owns exact answer intent.

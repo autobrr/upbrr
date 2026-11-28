@@ -86,24 +86,26 @@ type cliReleaseWorkflowCore interface {
 }
 
 type cliWorkflowSession struct {
-	core                     cliReleaseWorkflowCore
-	logger                   api.Logger
-	current                  releaseworkflow.CommandResult
-	intent                   cliWorkflowIntent
-	preparationPolicy        api.PreparationPolicy
-	clientSearch             api.ClientSearchPolicy
-	uploadRequest            api.Request
-	screenshotCountIsDefault bool
-	idempotencyRun           string
-	intentSequence           uint64
-	printedProgress          map[api.OperationKind]struct{}
-	projectionsPrinted       bool
-	submissionSuppressed     bool
-	eventLogState            cliWorkflowEventLogState
-	progressWriter           io.Writer
-	streams                  cliIO
-	inputBaseline            cliInputSlotBaseline
-	inputClaim               cliInputSlotClaim
+	core                      cliReleaseWorkflowCore
+	logger                    api.Logger
+	current                   releaseworkflow.CommandResult
+	intent                    cliWorkflowIntent
+	preparationPolicy         api.PreparationPolicy
+	clientSearch              api.ClientSearchPolicy
+	uploadRequest             api.Request
+	screenshotCountIsDefault  bool
+	idempotencyRun            string
+	intentSequence            uint64
+	printedProgress           map[api.OperationKind]struct{}
+	projectionsPrinted        bool
+	submissionSuppressed      bool
+	eventLogState             cliWorkflowEventLogState
+	progressWriter            io.Writer
+	streams                   cliIO
+	inputBaseline             cliInputSlotBaseline
+	inputClaim                cliInputSlotClaim
+	dupeReviews               map[api.TrackerID]cliDupeReviewContext
+	dupeOverrideConfirmations map[api.TrackerID]cliDupeOverrideConfirmation
 }
 
 type cliInputSlotBaseline struct {
@@ -1341,6 +1343,22 @@ func collectCLIWorkflowQuestionnaires(
 	projections *api.TrackerReleaseProjectionSet,
 	instructions map[api.TrackerID]api.TrackerProjectionInstructions,
 ) (bool, error) {
+	evidence := ""
+	if writer, ok := output.(*cliPresentationWriter); ok {
+		evidence = writer.question.Evidence
+	}
+	return collectCLIWorkflowQuestionnairesWithEvidence(reader, output, interaction, projections, instructions, evidence, evidence)
+}
+
+func collectCLIWorkflowQuestionnairesWithEvidence(
+	reader *bufio.Reader,
+	output io.Writer,
+	interaction api.InteractionMode,
+	projections *api.TrackerReleaseProjectionSet,
+	instructions map[api.TrackerID]api.TrackerProjectionInstructions,
+	evidence string,
+	followingEvidence string,
+) (bool, error) {
 	if projections == nil {
 		return false, errors.New("upbrr: tracker workflow produced no projections")
 	}
@@ -1370,11 +1388,16 @@ func collectCLIWorkflowQuestionnaires(
 			if instruction.Questionnaire == nil {
 				instruction.Questionnaire = make(map[string]*string)
 			}
-			yesNo := field.Kind == "select" && len(field.Options) == 2 && slices.Contains(field.Options, "yes") && slices.Contains(field.Options, "no")
+			yesNo := cliQuestionnaireIsYesNo(field)
 			prompt := cliQuestionnairePrompt(projection, field, yesNo)
-			if writer, ok := output.(*cliPresentationWriter); ok && writer.question.Evidence != "" {
-				prompt.Evidence = writer.question.Evidence + "\n" + prompt.Evidence
+			if evidence != "" {
+				if prompt.Evidence == "" {
+					prompt.Evidence = evidence
+				} else {
+					prompt.Evidence = evidence + "\n" + prompt.Evidence
+				}
 			}
+			evidence = followingEvidence
 			answer, err := askCLIField(reader, output, prompt)
 			if err != nil {
 				return false, err
@@ -1420,33 +1443,46 @@ func collectCLIWorkflowQuestionnaires(
 	return changed, nil
 }
 
+func cliQuestionnaireIsYesNo(field api.TrackerQuestionnaireRequirement) bool {
+	return field.Kind == "select" && len(field.Options) == 2 && slices.Contains(field.Options, "yes") && slices.Contains(field.Options, "no")
+}
+
 func cliQuestionnairePrompt(projection api.TrackerReleaseProjection, field api.TrackerQuestionnaireRequirement, yesNo bool) cliPrompt {
 	label := strings.TrimSpace(field.Label)
 	if label == "" {
 		label = strings.ReplaceAll(field.Key, "_", " ")
 	}
-	var help strings.Builder
-	if field.Help != "" {
-		fmt.Fprintln(&help, field.Help)
+	prompt := cliPrompt{Kind: cliPromptText, Required: field.Required}
+	questionLabel := label
+	if field.DuplicateOverrideInput {
+		if yesNo {
+			prompt.Help = field.Help + " Yes also acknowledges the duplicate evidence shown."
+			prompt.HidePlainOptions = true
+		} else {
+			prompt.Evidence = "Question: " + label
+			prompt.Help = field.Help + "\nLeave blank to skip."
+		}
+	} else {
+		questionLabel = fmt.Sprintf("%s %s", projection.TrackerID, label)
+		prompt.Evidence = fmt.Sprintf("Tracker: %s (%s)\nReviewed upload name: %s\nQuestion: %s\nDisplayed value (answer or default): %s",
+			cliPromptDetail(projection.DisplayName), projection.TrackerID, cliPromptDetail(projection.UploadReleaseName), label, emptyCLIValue(field.Value))
+		var help strings.Builder
+		if field.Help != "" {
+			fmt.Fprintln(&help, field.Help)
+		}
+		fmt.Fprintln(&help, "This answer updates only this tracker's assessment; it does not correct source metadata or approve an upload.")
+		switch {
+		case field.Required:
+			fmt.Fprintln(&help, "An answer is required. Review the displayed value, which may be a default, and submit a verified answer.")
+		case len(field.Options) == 0 || field.Kind == "multiselect":
+			fmt.Fprintln(&help, "Submit a verified answer. In plain mode or a text field, leave blank to clear this optional answer.")
+		default:
+			fmt.Fprintln(&help, "Choose a listed answer for this review; blank is not an accepted option.")
+		}
+		fmt.Fprintf(&help, "To supply this answer on a later run, use --tracker-input %q.", string(projection.TrackerID)+":"+field.Key+"=ANSWER")
+		prompt.Help = help.String()
 	}
-	fmt.Fprintln(&help, "This answer updates only this tracker's assessment; it does not correct source metadata or approve an upload.")
-	switch {
-	case field.Required:
-		fmt.Fprintln(&help, "An answer is required. Review the displayed value, which may be a default, and submit a verified answer.")
-	case len(field.Options) == 0 || field.Kind == "multiselect":
-		fmt.Fprintln(&help, "Submit a verified answer. In plain mode or a text field, leave blank to clear this optional answer.")
-	default:
-		fmt.Fprintln(&help, "Choose a listed answer for this review; blank is not an accepted option.")
-	}
-	fmt.Fprintf(&help, "To supply this answer on a later run, use --tracker-input %q.", string(projection.TrackerID)+":"+field.Key+"=ANSWER")
-	prompt := cliPrompt{
-		Kind:     cliPromptText,
-		Question: fmt.Sprintf("%s %s: ", projection.TrackerID, label),
-		Evidence: fmt.Sprintf("Tracker: %s (%s)\nReviewed upload name: %s\nQuestion: %s\nDisplayed value (answer or default): %s",
-			cliPromptDetail(projection.DisplayName), projection.TrackerID, cliPromptDetail(projection.UploadReleaseName), label, emptyCLIValue(field.Value)),
-		Help:     help.String(),
-		Required: field.Required,
-	}
+	prompt.Question = questionLabel + ": "
 	if len(field.Options) > 0 {
 		prompt.Kind = cliPromptSelect
 		switch {
@@ -1454,8 +1490,10 @@ func cliQuestionnairePrompt(projection api.TrackerReleaseProjection, field api.T
 			prompt.Kind = cliPromptMultiSelect
 			prompt.Help += "\nChoose comma-separated numbers or option labels."
 		case yesNo:
-			prompt.Question = fmt.Sprintf("%s %s [y/n]: ", projection.TrackerID, label)
-			prompt.Help += "\nEnter yes or no (y/n accepted)."
+			prompt.Question = questionLabel + " [y/n]: "
+			if !prompt.HidePlainOptions {
+				prompt.Help += "\nEnter yes or no (y/n accepted)."
+			}
 		default:
 			prompt.Help += "\nEnter one of the listed option labels."
 		}

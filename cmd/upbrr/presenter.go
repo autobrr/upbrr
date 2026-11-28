@@ -34,17 +34,18 @@ const (
 // cliPrompt carries detached evidence and the identities needed to correlate an
 // answer. The workflow driver retains authority and validates returned identities.
 type cliPrompt struct {
-	ID         uint64
-	WorkflowID api.WorkflowID
-	Revision   api.WorkflowRevision
-	ActionID   api.RequiredActionID
-	Kind       cliPromptKind
-	Question   string
-	Evidence   string
-	Help       string
-	DefaultYes bool
-	Required   bool
-	Options    []cliPromptOption
+	ID               uint64
+	WorkflowID       api.WorkflowID
+	Revision         api.WorkflowRevision
+	ActionID         api.RequiredActionID
+	Kind             cliPromptKind
+	Question         string
+	Evidence         string
+	Help             string
+	DefaultYes       bool
+	Required         bool
+	Options          []cliPromptOption
+	HidePlainOptions bool
 }
 
 // cliPromptOption separates a display label from the exact value returned to
@@ -203,11 +204,13 @@ func cliPlainPromptText(prompt cliPrompt) string {
 			text.WriteByte('\n')
 		}
 	}
-	for _, option := range prompt.Options {
-		if option.Label == option.Value {
-			fmt.Fprintf(&text, "  %s\n", safeTerminalText(option.Label))
-		} else {
-			fmt.Fprintf(&text, "  %s. %s\n", safeTerminalText(option.Value), safeTerminalText(option.Label))
+	if !prompt.HidePlainOptions {
+		for _, option := range prompt.Options {
+			if option.Label == option.Value {
+				fmt.Fprintf(&text, "  %s\n", safeTerminalText(option.Label))
+			} else {
+				fmt.Fprintf(&text, "  %s. %s\n", safeTerminalText(option.Value), safeTerminalText(option.Label))
+			}
 		}
 	}
 	text.WriteString(safeTerminalText(prompt.Question))

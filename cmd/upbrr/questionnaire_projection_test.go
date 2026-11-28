@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/metadata"
@@ -24,11 +26,58 @@ import (
 
 func TestCLIANTTrumpReviewReachesDuplicateApproval(t *testing.T) {
 	for _, test := range []struct {
-		name, input, choice, reason string
+		name, input, choice, reason                                  string
+		changedEvidence, changedSearchCount, changedApprovalEvidence bool
+		debug, exact, terminal                                       bool
 	}{
-		{"intended trump", "y\nverified improvement\n", "yes", "verified improvement"},
-		{"optional reason", "y\n\n", "yes", ""},
-		{"ordinary upload", "n\n\n", "no", ""},
+		{
+			name:   "intended trump",
+			input:  "y\n",
+			choice: "yes",
+			reason: "verified improvement",
+		},
+		{
+			name:   "optional reason in debug",
+			input:  "y\n",
+			choice: "yes",
+			debug:  true,
+		},
+		{
+			name:     "terminal retains evidence through the trump reason and approval",
+			input:    "y\n",
+			choice:   "yes",
+			reason:   "verified improvement",
+			terminal: true,
+		},
+		{
+			name:                    "evidence changes before tracker approval",
+			input:                   "y\n",
+			choice:                  "yes",
+			changedApprovalEvidence: true,
+		},
+		{
+			name:            "changed evidence requires review",
+			input:           "y\n",
+			choice:          "yes",
+			changedEvidence: true,
+		},
+		{
+			name:               "changed search count requires review even with identical displayed matches",
+			input:              "y\n",
+			choice:             "yes",
+			changedSearchCount: true,
+		},
+		{
+			name:   "exact duplicate still requires staff token",
+			input:  "y\n",
+			choice: "yes",
+			exact:  true,
+		},
+		{
+			name:   "ordinary upload",
+			input:  "n\n",
+			choice: "no",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			registry := impl.MustNewRegistry()
@@ -41,6 +90,11 @@ func TestCLIANTTrumpReviewReachesDuplicateApproval(t *testing.T) {
 			}
 			subject := nativeCompatibilityProjectionSubject(t)
 			policy, _ := registry.LookupDupePolicy("ANT")
+			candidateName := "Example.Release.2026.1080p.WEB-GRP"
+			relation := api.DupeRelationSameSlot
+			if test.exact {
+				relation = api.DupeRelationExactDuplicate
+			}
 			project := func() releaseworkflow.CommandResult {
 				projection, failure := registry.ProjectRelease(t.Context(), trackers.PreparationInput{
 					Tracker:       "ANT",
@@ -55,18 +109,28 @@ func TestCLIANTTrumpReviewReachesDuplicateApproval(t *testing.T) {
 					Revision:    1,
 					Projections: []api.TrackerReleaseProjection{projection},
 				}
+				if test.debug {
+					projections.ExecutionMode = api.WorkflowExecutionModeDebug
+				}
 				assessment := projector.DuplicateQuestionnaires(subject, projections, api.DupeAssessment{
 					WorkflowID:    "workflow",
+					ReleaseRef:    api.ReleaseRef{SourcePath: subject.SourcePath, Generation: subject.Identity.Generation},
 					ProjectionSet: api.TrackerReleaseProjectionSetRef{ID: projections.ID, Revision: projections.Revision},
 					Results: []api.TrackerDupeAssessment{{
-						TrackerID: "ANT",
-						Decision:  api.DupeDecisionPending,
-						Matches:   []api.DupeMatchProjection{{ID: "123", Relation: api.DupeRelationSameSlot}},
+						TrackerID:         "ANT",
+						Decision:          api.DupeDecisionPending,
+						Search:            api.DupeSearchEvidence{Complete: true, Pages: 1},
+						UploadReleaseName: projection.UploadReleaseName,
+						Matches: []api.DupeMatchProjection{{
+							ID:       "123",
+							Name:     candidateName,
+							Relation: relation,
+						}},
 						RequiresStaffToken: policy.StaffTokenOverrideRequired(trackerConfig, api.DuplicateSubject{
 							SourcePath: subject.SourcePath,
 							Identity:   subject.Identity,
 							Projection: &projection,
-						}, []api.DupeCandidateEvaluation{{Relation: api.DupeRelationSameSlot}}),
+						}, []api.DupeCandidateEvaluation{{Relation: relation}}),
 					}},
 				})
 				return releaseworkflow.CommandResult{
@@ -82,35 +146,150 @@ func TestCLIANTTrumpReviewReachesDuplicateApproval(t *testing.T) {
 				uploadRequest: api.Request{Trackers: []string{"ANT"}},
 				current:       project(),
 			}
+			var terminalPresenter *modelPresenter
+			plainPresenter := &cliPlainPresenter{output: &output}
+			var presenter cliPresenter = plainPresenter
+			if test.terminal {
+				model := newCLITUIModel(t.Context(), newCLITUIBridge(), func() {}, nil, nil, false, false, true)
+				model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+				terminalPresenter = &modelPresenter{
+					model:   model,
+					answers: []string{"y", test.reason, "y"},
+				}
+				presenter = terminalPresenter
+			}
+			session.streams.out = &cliPresentationWriter{
+				Writer:    &output,
+				presenter: presenter,
+				ctx:       t.Context(),
+				terminal:  test.terminal,
+			}
+			setInput := func(input string) {
+				plainPresenter.reader = bufio.NewReader(strings.NewReader(input))
+			}
 			fields := session.current.Dupes.Results[0].Questionnaire
-			if len(fields) != 2 {
-				t.Fatalf("missing trump questions: %+v", fields)
+			if len(fields) != 1 || fields[0].Label != "Intended ANT trump" {
+				t.Fatalf("only intent should be requested initially: %+v", fields)
 			}
 			action := api.RequiredAction{Kind: api.RequiredActionReviewDuplicates, TrackerID: "ANT"}
-			feedback, _, err := session.collectCompositeDuplicateFeedback(bufio.NewReader(strings.NewReader(test.input)), action, api.ReleaseWorkflowUploadFeedback{})
-			if err != nil || feedback.Response.Questionnaire == nil {
-				t.Fatalf("trump input was gated behind comparison review: %+v, %v", feedback, err)
+			collect := func(input string) map[string]*string {
+				t.Helper()
+				setInput(input)
+				feedback, _, err := session.collectCompositeDuplicateFeedback(nil, action, api.ReleaseWorkflowUploadFeedback{})
+				if err != nil || feedback.Response.Questionnaire == nil {
+					t.Fatalf("expected questionnaire feedback: %+v, %v", feedback, err)
+				}
+				answers := make(map[string]string)
+				for key, value := range feedback.Response.Questionnaire.Answers {
+					if value != nil {
+						answers[key] = *value
+					}
+				}
+				subject.TrackerQuestionnaireAnswers = map[string]map[string]string{"ANT": answers}
+				session.current = project()
+				return feedback.Response.Questionnaire.Answers
 			}
-			answers := map[string]string{}
-			for key, value := range feedback.Response.Questionnaire.Answers {
-				if value != nil {
-					answers[key] = *value
+			answers := collect(test.input)
+			requireAnswer := func(key, want string) {
+				t.Helper()
+				if value := answers[key]; value == nil || *value != want {
+					t.Fatalf("answer %q did not retain %q: %+v", key, want, answers)
 				}
 			}
-			if answers[fields[0].Key] != test.choice || answers[fields[1].Key] != test.reason {
-				t.Fatalf("trump intention was not retained: %+v", answers)
+			requireAnswer(fields[0].Key, test.choice)
+			wantEvidenceCount := 1
+			if test.changedEvidence {
+				candidateName = "Updated.Example.Release"
+				session.current = project()
+				wantEvidenceCount++
 			}
-			subject.TrackerQuestionnaireAnswers = map[string]map[string]string{"ANT": answers}
-			session.current = project()
-			if session.current.Dupes.Results[0].RequiresStaffToken != (test.choice == "no") {
+			reasonFields := session.current.Dupes.Results[0].Questionnaire
+			if test.choice == "yes" {
+				if len(reasonFields) != 1 || reasonFields[0].Label != "ANT trump reason" {
+					t.Fatalf("expected only the optional reason after yes: %+v", reasonFields)
+				}
+				answers = collect(test.reason + "\n")
+				requireAnswer(fields[0].Key, "yes")
+				requireAnswer(reasonFields[0].Key, test.reason)
+			} else if len(reasonFields) != 0 {
+				t.Fatalf("declined trump still prompts for reason: %+v", reasonFields)
+			}
+			staffRequired := test.choice == "no" || test.exact
+			if session.current.Dupes.Results[0].RequiresStaffToken != staffRequired {
 				t.Fatal("reviewed trump intention did not reach the duplicate policy")
 			}
-			feedback, _, err = session.collectCompositeDuplicateFeedback(bufio.NewReader(strings.NewReader("y\n")), action, api.ReleaseWorkflowUploadFeedback{})
-			if err != nil || feedback.Response.DuplicateReview == nil || feedback.Response.DuplicateReview.Decision != api.DupeDecisionIgnored {
+			if text := output.String(); !test.terminal && (strings.Contains(text, "Review comparison evidence") ||
+				strings.Contains(text, "Reviewed upload name:") || strings.Contains(text, "Displayed value") ||
+				strings.Contains(text, "--tracker-input") || strings.Contains(text, "\n  no\n") ||
+				!strings.Contains(text, "\nIntended ANT trump [y/n]: ") ||
+				strings.Contains(text, "\nANT trump reason: ") != (test.choice == "yes")) {
+				t.Fatalf("unexpected questionnaire output: %s", text)
+			}
+			if test.changedSearchCount {
+				session.current.Dupes.Results[0].Search.CandidateCount++
+				wantEvidenceCount++
+			}
+			prompted := staffRequired || test.changedEvidence || test.changedSearchCount
+			input := ""
+			if prompted {
+				input = "y\n"
+			}
+			beforeDecision := output.Len()
+			setInput(input)
+			feedback, _, err := session.collectCompositeDuplicateFeedback(nil, action, api.ReleaseWorkflowUploadFeedback{})
+			if err != nil || feedback.Response.DuplicateReview == nil || feedback.Response.DuplicateReview.Decision != api.DupeDecisionIgnored ||
+				feedback.Response.DuplicateReview.StaffTokenConfirmed != staffRequired {
 				t.Fatalf("trump questionnaire repeated instead of reaching duplicate approval: %+v, %v", feedback, err)
 			}
-			if strings.Contains(output.String(), "Review comparison evidence") || strings.Count(output.String(), "Intended ANT trump [y/n]") != 1 {
-				t.Fatalf("unexpected trump prompts: %s", output.String())
+			if text := output.String(); !test.terminal && (strings.Count(text, "Duplicate candidates:") != wantEvidenceCount ||
+				strings.Contains(text, "Updated.Example.Release") != test.changedEvidence ||
+				strings.Contains(text, "staff-issued ANT token") != staffRequired ||
+				strings.Contains(text, "Duplicate evidence changed since the previous review.") != (test.changedEvidence || test.changedSearchCount) ||
+				(prompted && !strings.Contains(text[beforeDecision:], "[y/N]")) || (!prompted && output.Len() != beforeDecision)) {
+				t.Fatalf("unexpected review sequence: %s", text)
+			}
+
+			result := &session.current.Dupes.Results[0]
+			result.Decision = feedback.Response.DuplicateReview.Decision
+			result.Status = api.StageStatusCompleted
+			if test.changedApprovalEvidence {
+				result.Matches[0].Name = "Newly.Found.Example.Release"
+			}
+			beforeApproval := output.Len()
+			setInput("y\n")
+			feedback, declined, err := session.collectCompositeTrackerApproval(nil, nil,
+				api.RequiredAction{Kind: api.RequiredActionApproveTrackers, Options: []api.RequiredActionOption{{Value: "ANT"}}},
+				api.ReleaseWorkflowUploadFeedback{})
+			if err != nil || declined || feedback.Response.TrackerApproval == nil ||
+				!slices.Equal(feedback.Response.TrackerApproval.TrackerIDs, []api.TrackerID{"ANT"}) {
+				t.Fatalf("expected ANT tracker approval: %+v, declined=%t, %v", feedback, declined, err)
+			}
+			if terminalPresenter != nil {
+				if prompts := terminalPresenter.prompts; len(prompts) != 3 || !strings.Contains(prompts[1].Question, "ANT trump reason") ||
+					!strings.Contains(prompts[1].Evidence, candidateName) || !strings.Contains(prompts[2].Evidence, candidateName) {
+					t.Fatalf("terminal did not retain evidence: %+v", prompts)
+				}
+				return
+			}
+			approvalOutput := output.String()[beforeApproval:]
+			for _, heading := range []string{"Tracker: ANT (ANT)", "Upload name:", "Duplicate check:", "Search:", "Duplicate candidates:"} {
+				if strings.Contains(approvalOutput, heading) != test.changedApprovalEvidence {
+					t.Fatalf("unexpected tracker approval evidence for %q: %s", heading, approvalOutput)
+				}
+			}
+			if !strings.Contains(approvalOutput, "Preparation:") || strings.Contains(approvalOutput, "Use ANT as") == test.debug ||
+				strings.Contains(approvalOutput, "Newly.Found.Example.Release") != test.changedApprovalEvidence {
+				t.Fatalf("unexpected tracker approval output: %s", approvalOutput)
+			}
+			if test.debug {
+				session.current.Projections.Projections = append(session.current.Projections.Projections, api.TrackerReleaseProjection{TrackerID: "BETA"})
+				session.current.Dupes.Results = append(session.current.Dupes.Results, api.TrackerDupeAssessment{TrackerID: "BETA", Decision: api.DupeDecisionNoMatch})
+				output.Reset()
+				_, _, err := session.collectCompositeTrackerApproval(nil, nil,
+					api.RequiredAction{Options: []api.RequiredActionOption{{Value: "BETA"}, {Value: "ANT"}}}, api.ReleaseWorkflowUploadFeedback{})
+				if err != nil || !strings.Contains(output.String(), "Tracker: ANT (ANT)\nPreparation:") || strings.Contains(output.String(), candidateName) {
+					t.Fatalf("multi-tracker diagnostic approval lost the tracker label or repeated the candidates: %v\n%s", err, output.String())
+				}
 			}
 		})
 	}

@@ -13577,6 +13577,9 @@
       "TrackerQuestionnaireField": {
         "type": "object",
         "properties": {
+          "DuplicateOverrideInput": {
+            "type": "boolean"
+          },
           "HDRGradeComparison": {
             "type": "boolean"
           },
@@ -13625,6 +13628,9 @@
       "TrackerQuestionnaireRequirement": {
         "type": "object",
         "properties": {
+          "duplicateOverrideInput": {
+            "type": "boolean"
+          },
           "hdrGradeComparison": {
             "type": "boolean"
           },

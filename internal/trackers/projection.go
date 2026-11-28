@@ -356,15 +356,16 @@ func ProjectQuestionnaire(questionnaire *api.TrackerQuestionnaire) []api.Tracker
 	result := make([]api.TrackerQuestionnaireRequirement, len(questionnaire.Fields))
 	for index, field := range questionnaire.Fields {
 		result[index] = api.TrackerQuestionnaireRequirement{
-			HDRGradeComparison: field.HDRGradeComparison,
-			NeedsReview:        field.NeedsReview,
-			Key:                strings.TrimSpace(field.Key),
-			Kind:               field.Kind,
-			Value:              field.Value,
-			Help:               field.Help,
-			Label:              strings.TrimSpace(field.Label),
-			Required:           field.Required,
-			Options:            append([]string(nil), field.Options...),
+			HDRGradeComparison:     field.HDRGradeComparison,
+			NeedsReview:            field.NeedsReview,
+			DuplicateOverrideInput: field.DuplicateOverrideInput,
+			Key:                    strings.TrimSpace(field.Key),
+			Kind:                   field.Kind,
+			Value:                  field.Value,
+			Help:                   field.Help,
+			Label:                  strings.TrimSpace(field.Label),
+			Required:               field.Required,
+			Options:                append([]string(nil), field.Options...),
 		}
 	}
 	return result

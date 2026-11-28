@@ -2914,6 +2914,8 @@ type TrackerQuestionnaireField struct {
 	Placeholder string
 	Help        string
 	Required    bool
+	// DuplicateOverrideInput marks a confirmation or follow-up for an explicit duplicate override.
+	DuplicateOverrideInput bool `json:"DuplicateOverrideInput,omitempty"`
 }
 
 // TorrentArtifact is an exact reusable base metainfo reference.

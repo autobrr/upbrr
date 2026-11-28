@@ -209,6 +209,8 @@ Continuing after an acknowledgement keeps your selected trackers. If their metad
 
 Duplicate search results are evidence, not an automatic upload decision. Review candidate names, metadata, and tracker warnings. Where approval is required, select an explicit non-empty tracker subset after the duplicate stage.
 
+If a tracker asks whether you intend to replace an existing release, a **No** answer skips the optional explanation. In the CLI, **Yes** can also acknowledge the displayed duplicate evidence when it still matches and no staff-token confirmation is required. A fresh decision is required if the evidence changes during that review. Tracker approval remains a separate step. The plain CLI prints the candidate list again when the reviewed evidence changes. The interactive terminal keeps evidence available in its review panel.
+
 Some duplicate overrides require a staff-issued token. Confirm that you have the appropriate token for the current upload; without confirmation, upbrr blocks the upload even when automatic duplicate overrides are enabled. Reprojecting upload inputs or refreshing duplicate evidence requires a new confirmation. Check the tracker's current rules for token conditions.
 
 Before searching, upbrr excludes trackers with a confirmed upload of the same verified submitted content. These appear as **Already uploaded**. Remaining trackers receive compatible retained evidence or fresh duplicate checks; if every selected tracker is excluded, the operation completes successfully without another approval or upload. Changing metadata or a screenshot playlist does not make a full-disc upload new content. A different actual file subset can be different submitted content.

@@ -662,32 +662,24 @@ func TestANTTrumpIntentInvalidatesDuplicateReuse(t *testing.T) {
 	if failure != nil {
 		t.Fatal(failure)
 	}
-	var choice, reason string
+	var choice string
 	for _, field := range first.Questionnaire {
 		if strings.HasPrefix(field.Key, "intended_trump_") {
 			choice = field.Key
 		} else if strings.HasPrefix(field.Key, "trump_reason_") {
-			reason = field.Key
+			t.Fatal("reason is visible before an explicit trump intention")
 		}
 	}
-	if choice == "" || reason == "" {
+	if choice == "" {
 		t.Fatalf("missing source-bound trump choice: %+v", first)
 	}
 	previous, err := reusableDupeProjectionFingerprint(first, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, edit := range []struct {
-		key, value  string
-		invalidates bool
-	}{
-		{choice, "yes", true},
-		{"tags", "drama,mystery", false},
-		{"requestid", "5", false},
-		{reason, "verified improvement", false},
-		{choice, "no", true},
-	} {
-		input.Meta.TrackerQuestionnaireAnswers["ANT"][edit.key] = edit.value
+	reviewEdit := func(key, value string, invalidates bool) api.TrackerReleaseProjection {
+		t.Helper()
+		input.Meta.TrackerQuestionnaireAnswers["ANT"][key] = value
 		projection, failure := registry.ProjectRelease(t.Context(), input, "", "", "")
 		if failure != nil {
 			t.Fatal(failure)
@@ -696,11 +688,23 @@ func TestANTTrumpIntentInvalidatesDuplicateReuse(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if (current != previous) != edit.invalidates {
-			t.Fatalf("editing %s to %q: invalidates duplicate decision = %t, want %t", edit.key, edit.value, current != previous, edit.invalidates)
+		if (current != previous) != invalidates {
+			t.Fatalf("editing %s to %q: invalidates duplicate decision = %t, want %t", key, value, current != previous, invalidates)
 		}
 		previous = current
+		return projection
 	}
+	intended := reviewEdit(choice, "yes", true)
+	reason := slices.IndexFunc(intended.Questionnaire, func(field api.TrackerQuestionnaireRequirement) bool {
+		return strings.HasPrefix(field.Key, "trump_reason_")
+	})
+	if reason < 0 {
+		t.Fatal("missing source-bound reason after an explicit Yes")
+	}
+	reviewEdit("tags", "drama,mystery", false)
+	reviewEdit("requestid", "5", false)
+	reviewEdit(intended.Questionnaire[reason].Key, "verified improvement", false)
+	reviewEdit(choice, "no", true)
 }
 
 func TestQuestionnaireRebindPreservesUnchangedSkippedSibling(t *testing.T) {

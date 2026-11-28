@@ -585,11 +585,13 @@ func TestPlainAndTUIBuildSameExplicitTrackerApproval(t *testing.T) {
 	current.Projections.Projections[1].EditionFeatures = []api.TrackerEditionFeature{{Label: "Remastered", Selected: true}, {Label: "Extended"}}
 	for _, terminal := range []bool{false, true} {
 		var presenter cliPresenter
+		var terminalPresenter *modelPresenter
 		var output strings.Builder
 		if terminal {
 			model := newCLITUIModel(t.Context(), newCLITUIBridge(), func() {}, nil, nil, false, false, true)
 			model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-			presenter = &modelPresenter{model: model, answers: []string{"y", "n"}}
+			terminalPresenter = &modelPresenter{model: model, answers: []string{"y", "n"}}
+			presenter = terminalPresenter
 		} else {
 			presenter = &cliPlainPresenter{reader: bufio.NewReader(strings.NewReader("y\nn\n")), output: &output}
 		}
@@ -610,14 +612,20 @@ func TestPlainAndTUIBuildSameExplicitTrackerApproval(t *testing.T) {
 			t.Fatalf("approval path failed: %v", err)
 		}
 		name := current.Projections.Projections[1].UploadReleaseName
-		if (!terminal && !strings.Contains(output.String(), fmt.Sprintf("Upload name: %q\n", name))) ||
-			!strings.Contains(writer.question.Evidence, fmt.Sprintf("Upload name: %q\n", name)) ||
-			strings.Contains(writer.question.Evidence, "Example.Film.2024.ALPHA-GRP") {
+		evidence := output.String()
+		if terminalPresenter != nil {
+			if len(terminalPresenter.prompts) != 2 {
+				t.Fatalf("expected both tracker prompts: %+v", terminalPresenter.prompts)
+			}
+			evidence = terminalPresenter.prompts[1].Evidence
+			if strings.Contains(evidence, "Example.Film.2024.ALPHA-GRP") {
+				t.Fatal("BETA prompt displayed ALPHA evidence")
+			}
+		}
+		if !strings.Contains(evidence, fmt.Sprintf("Upload name: %q\n", name)) {
 			t.Fatal("tracker approval lost console quoting or current tracker evidence")
 		}
-		if (!terminal && !strings.Contains(output.String(), "BETA edition/features: [Remastered]\n")) ||
-			!strings.Contains(writer.question.Evidence, "BETA edition/features: [Remastered]\n") ||
-			strings.Contains(writer.question.Evidence, "Extended") {
+		if !strings.Contains(evidence, "BETA edition/features: [Remastered]\n") || strings.Contains(evidence, "Extended") {
 			t.Fatal("tracker approval lost selected edition evidence or included an unselected feature")
 		}
 		feedbacks = append(feedbacks, feedback)
@@ -632,11 +640,13 @@ func TestPlainAndTUIPreserveDuplicatePolicyReviewEvidence(t *testing.T) {
 		for _, approval := range []bool{false, true} {
 			t.Run(fmt.Sprintf("terminal=%t/approval=%t", terminal, approval), func(t *testing.T) {
 				var output strings.Builder
+				var terminalPresenter *modelPresenter
 				var presenter cliPresenter = &cliPlainPresenter{reader: bufio.NewReader(strings.NewReader("y\n")), output: &output}
 				if terminal {
 					model := newCLITUIModel(t.Context(), newCLITUIBridge(), func() {}, nil, nil, false, false, true)
 					model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-					presenter = &modelPresenter{model: model, answers: []string{"y"}}
+					terminalPresenter = &modelPresenter{model: model, answers: []string{"y"}}
+					presenter = terminalPresenter
 				}
 				writer := &cliPresentationWriter{
 					Writer:    &output,
@@ -672,19 +682,20 @@ func TestPlainAndTUIPreserveDuplicatePolicyReviewEvidence(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				evidenceTexts := []string{writer.question.Evidence}
-				if !terminal {
-					evidenceTexts = append(evidenceTexts, output.String())
+				evidence := output.String()
+				if terminalPresenter != nil {
+					if len(terminalPresenter.prompts) != 1 {
+						t.Fatalf("expected one review prompt: %+v", terminalPresenter.prompts)
+					}
+					evidence = terminalPresenter.prompts[0].Evidence
 				}
-				for _, evidence := range evidenceTexts {
-					for _, expected := range []string{"Search results require manual review.", "incomplete_search", "manual_review", "Duplicate candidates:", "Synthetic.Film.2026-GRP"} {
-						if !strings.Contains(evidence, expected) {
-							t.Fatalf("review evidence missing %q: %q", expected, evidence)
-						}
+				for _, expected := range []string{"Search results require manual review.", "incomplete_search", "manual_review", "Duplicate candidates:", "Synthetic.Film.2026-GRP"} {
+					if !strings.Contains(evidence, expected) {
+						t.Fatalf("review evidence missing %q: %q", expected, evidence)
 					}
-					if strings.Contains(evidence, "never-print-this") {
-						t.Fatalf("review evidence exposed a passkey: %q", evidence)
-					}
+				}
+				if strings.Contains(evidence, "never-print-this") {
+					t.Fatalf("review evidence exposed a passkey: %q", evidence)
 				}
 			})
 		}
