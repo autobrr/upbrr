@@ -778,52 +778,94 @@ func TestParseUnit3DUploadArtifactRejectsOffOriginDownloadURL(t *testing.T) {
 	}
 }
 
-func TestSubmitUnit3DUploadKeepsLoginPageOutOfRetainedLogs(t *testing.T) {
+func TestSubmitUnit3DUploadRetainedFailureLogs(t *testing.T) {
 	t.Parallel()
 
+	const apiKey = "synthetic-bearer-value"
 	const hiddenValue = "synthetic-hidden-form-value"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/torrents/upload" {
-			http.Redirect(w, r, "/login", http.StatusFound)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = io.WriteString(w, `<html><meta name="csrf-token" content="`+hiddenValue+`"></html>`)
-	}))
-	t.Cleanup(server.Close)
+	const privateUsername = "synthetic-account-name"
+	const cookie = "synthetic-session-value"
+	tests := []struct {
+		name     string
+		response string
+		wantLog  string
+	}{
+		{
+			name:    "login page",
+			wantLog: "failed to parse response JSON",
+		},
+		{
+			name: "validation error with field messages",
+			response: `{"success":false,"message":"Validation Error.","data":{"resolution_id":["Invalid resolution."],` +
+				`"username":"` + privateUsername + `","type_id":["Invalid type for ` + apiKey + `."]}}`,
+			wantLog: "response_reason=resolution_id: Invalid resolution.; type_id: Invalid type for [REDACTED].",
+		},
+		{
+			name:     "validation error with plain message",
+			response: `{"success":false,"message":"Validation Error.","data":"Invalid filename. Cookie: session=` + cookie + `"}`,
+			wantLog:  "response_reason=Invalid filename. Cookie: [REDACTED]",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/torrents/upload" {
+					if test.response != "" {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusNotFound)
+						_, _ = io.WriteString(w, test.response)
+						return
+					}
+					http.Redirect(w, r, "/login", http.StatusFound)
+					return
+				}
+				w.Header().Set("Content-Type", "text/html")
+				_, _ = io.WriteString(w, `<html><meta name="csrf-token" content="`+hiddenValue+`"></html>`)
+			}))
+			t.Cleanup(server.Close)
 
-	database := filepath.Join(t.TempDir(), "upbrr.db")
-	logger, err := logging.New(config.LoggingConfig{Level: "info"}, database)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = logger.Close() })
-	logger.SetConsoleOutput(io.Discard, io.Discard)
-	repo, err := db.OpenWithLoggerContext(t.Context(), database, logger)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.MigrateContext(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	ctx, id, finish := logger.BeginInputLog(t.Context(), repo, "Example.mkv", "upload")
-	if id == "" {
-		t.Fatal("expected active input log capture")
-	}
-	_, err = submitUnit3DUpload(ctx, "EXAMPLE", "Example", "", server.URL, server.URL+"/api/torrents/upload",
-		"application/json", "{}", api.UploadSubject{}, database, logging.FromContext(ctx, logger))
-	finish("", "failed")
-	if err == nil {
-		t.Fatal("expected HTML response to fail upload")
-	}
-	attempts, err := repo.InputLogs(t.Context(), "", id)
-	if err != nil || len(attempts) != 1 {
-		t.Fatalf("input log attempts = %d, error = %v", len(attempts), err)
-	}
-	exported, err := logging.ReadInputLog(t.Context(), logger, database, attempts[0])
-	if err != nil || !strings.Contains(exported.Text, "failed to parse response JSON") || strings.Contains(exported.Text, hiddenValue) {
-		t.Fatalf("expected parse failure without the hidden value, error = %v", err)
+			database := filepath.Join(t.TempDir(), "upbrr.db")
+			logger, err := logging.New(config.LoggingConfig{Level: "info"}, database)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = logger.Close() })
+			logger.SetConsoleOutput(io.Discard, io.Discard)
+			repo, err := db.OpenWithLoggerContext(t.Context(), database, logger)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = repo.Close() })
+			if err := repo.MigrateContext(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			ctx, id, finish := logger.BeginInputLog(t.Context(), repo, "Example.mkv", "upload")
+			if id == "" {
+				t.Fatal("expected active input log capture")
+			}
+			_, err = submitUnit3DUpload(ctx, "AITHER", "Example", apiKey, server.URL, server.URL+"/api/torrents/upload",
+				"application/json", "{}", api.UploadSubject{}, database, logging.FromContext(ctx, logger))
+			finish("", "failed")
+			if err == nil {
+				t.Fatal("expected upload failure")
+			}
+			attempts, err := repo.InputLogs(t.Context(), "", id)
+			if err != nil || len(attempts) != 1 {
+				t.Fatalf("input log attempts = %d, error = %v", len(attempts), err)
+			}
+			exported, err := logging.ReadInputLog(t.Context(), logger, database, attempts[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(exported.Text, test.wantLog) {
+				t.Fatalf("retained log did not contain %q", test.wantLog)
+			}
+			for _, secret := range []string{apiKey, hiddenValue, privateUsername, cookie} {
+				if strings.Contains(exported.Text, secret) {
+					t.Fatal("retained log contained an unredacted secret")
+				}
+			}
+		})
 	}
 }
 

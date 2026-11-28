@@ -98,7 +98,11 @@ func submitUnit3DUpload(
 	decodeErr := json.Unmarshal(body, &result)
 	if !execution.Success {
 		failure := commonhttp.UploadHTTPError(trackerName, execution.StatusCode, bodyPreview)
-		logger.Errorf("trackers: %s upload request failed: %v", trackerName, failure)
+		detail := failure.Error()
+		if reason := unit3dUploadRejectionDetail(body, strings.TrimSpace(apiKey)); reason != "" {
+			detail += " response_reason=" + reason
+		}
+		logger.Errorf("trackers: %s upload request failed: %s", trackerName, detail)
 		if decodeErr == nil && result.Success != nil && !*result.Success {
 			return api.UploadSummary{}, submission.NewError(submission.Rejected, failure)
 		}
@@ -163,6 +167,27 @@ func submitUnit3DUpload(
 		trackerName,
 	)
 	return summary, nil
+}
+
+func unit3dUploadRejectionDetail(body []byte, apiKey string) string {
+	// UNIT3D can return validation errors in data as text or fields with messages.
+	var rejection struct {
+		Success *bool           `json:"success"`
+		Data    json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(body, &rejection); err != nil || rejection.Success == nil || *rejection.Success || len(rejection.Data) == 0 {
+		return ""
+	}
+	data := rejection.Data
+	switch data[0] {
+	case '{', '[':
+		// Preserve the JSON structure during redaction so private fields can be masked.
+		data = []byte(redaction.RedactValue(string(data), nil, apiKey))
+	case '"':
+	default:
+		return ""
+	}
+	return commonhttp.ExtractHTTPErrorDetail(data, apiKey)
 }
 
 // prepareUnit3DUpload builds one preview for every intent. Upload intent
