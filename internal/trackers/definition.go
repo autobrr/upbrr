@@ -535,6 +535,19 @@ type UploadArtifactPolicyProvider interface {
 	UploadArtifactPolicy() *UploadArtifactPolicy
 }
 
+// DupeSlotEvidence describes contradictions and independent differences proved
+// by complete normalized facts for a native slot comparison.
+type DupeSlotEvidence struct {
+	Contradictory      bool
+	ResolutionDistinct bool
+	// ResolutionContradictory distinguishes conflicting resolution evidence from a missing tier.
+	ResolutionContradictory bool
+	MediaClassDistinct      bool
+	// DeclaredTypeDistinct preserves complete structural types when source or
+	// codec evidence disagrees, provided kind and container do not conflict.
+	DeclaredTypeDistinct bool
+}
+
 // DupePolicy declares tracker-specific duplicate comparison semantics.
 type DupePolicy struct {
 	// Questionnaire projects comparison questions only from server-owned duplicate candidates.
@@ -553,7 +566,8 @@ type DupePolicy struct {
 	// CompareSlots compares proposed and existing native evidence. Partial facts
 	// may prove coexistence; unavailable or unsupported comparisons require review.
 	// Resolved target names and the candidate name allow native flag contradiction checks.
-	CompareSlots func(target, candidate string, targetNames []string, candidateName string) api.DupeRelation `json:"-"`
+	// With contradictory evidence, return coexistence only for an independently proved axis.
+	CompareSlots func(target, candidate string, targetNames []string, candidateName string, evidence DupeSlotEvidence) api.DupeRelation `json:"-"`
 	// StaffTokenOverride requires owner attestation of staff-token possession to
 	// override duplicate or incomplete-search evidence. No token value is retained.
 	StaffTokenOverride bool `json:",omitempty"`

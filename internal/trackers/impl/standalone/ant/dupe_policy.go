@@ -18,7 +18,7 @@ import (
 
 func duplicatePolicy() *trackers.DupePolicy {
 	return &trackers.DupePolicy{
-		ID:                         "ant/duplicate/v8",
+		ID:                         "ant/duplicate/v11",
 		EvidenceID:                 "ant-slots-staff-overrides",
 		SearchScope:                trackers.DupeSearchScope{MaxPages: 100},
 		TargetSlot:                 resolveTargetSlot,
@@ -155,20 +155,48 @@ func slotFlags(flags []string) ([]string, bool) {
 // compareSlots lets known native differences coexist and requires review for
 // unresolved or contradictory evidence. An existing encode can close a proposed
 // WEB slot, so comparison is directional.
-func compareSlots(target, candidate string, targetNames []string, candidateName string) api.DupeRelation {
+func compareSlots(target, candidate string, targetNames []string, candidateName string, evidence trackers.DupeSlotEvidence) api.DupeRelation {
 	proposed, existing := strings.Split(target, "/"), strings.Split(candidate, "/")
 	if len(proposed) != 5 || len(existing) != 5 {
 		return api.DupeRelationManualReview
 	}
-	for _, name := range targetNames {
-		if slotContradictsTitle(proposed, name) {
-			return api.DupeRelationManualReview
-		}
+	// Tier differences do not depend on codec, source, HDR or title flags.
+	if evidence.ResolutionDistinct && differentKnownSlotPart(proposed[1], existing[1]) {
+		return api.DupeRelationCoexists
 	}
-	if slotContradictsTitle(existing, candidateName) {
+	kindConflict, editionConflict := slotTitleConflicts(existing, candidateName)
+	for _, name := range targetNames {
+		kind, edition := slotTitleConflicts(proposed, name)
+		kindConflict = kindConflict || kind
+		editionConflict = editionConflict || edition
+	}
+	if kindConflict {
 		return api.DupeRelationManualReview
 	}
-	if proposed[1] != "?" && existing[1] != "?" && proposed[1] != existing[1] {
+	if evidence.Contradictory || editionConflict {
+		// A codec conflict can change an encode's slot but cannot make a
+		// structurally confirmed encode or remux a full disc.
+		discAndRemux := proposed[0] == "FullDisc" && existing[0] == "Remux" || proposed[0] == "Remux" && existing[0] == "FullDisc"
+		discAndEncode := proposed[0] == "FullDisc" && (existing[0] == "Encode" || existing[0] == "AV1") ||
+			(proposed[0] == "Encode" || proposed[0] == "AV1") && existing[0] == "FullDisc"
+		if discAndEncode && evidence.ResolutionContradictory {
+			return api.DupeRelationManualReview
+		}
+		compatibleTier := (proposed[1] != "?" || existing[1] != "?") && !differentKnownSlotPart(proposed[1], existing[1])
+		if discAndRemux || discAndEncode && compatibleTier {
+			if evidence.DeclaredTypeDistinct {
+				return api.DupeRelationCoexists
+			}
+			// The derived media class can still reflect a contradicted declared type.
+			return api.DupeRelationManualReview
+		}
+		if evidence.MediaClassDistinct && differentKnownSlotPart(proposed[0], existing[0]) &&
+			(proposed[0] != "WEB" || existing[0] != "Encode") {
+			return api.DupeRelationCoexists
+		}
+		return api.DupeRelationManualReview
+	}
+	if differentKnownSlotPart(proposed[1], existing[1]) {
 		return api.DupeRelationCoexists
 	}
 	if proposed[0] == "?" || existing[0] == "?" {
@@ -196,17 +224,21 @@ func compareSlots(target, candidate string, targetNames []string, candidateName 
 	return api.DupeRelationSameSlot
 }
 
+func differentKnownSlotPart(proposed, existing string) bool {
+	return proposed != "?" && existing != "?" && proposed != existing
+}
+
 var title4KRemaster = regexp.MustCompile(`(?i)\b4k[ ._-]*remaster(?:ed)?\b`)
 
-// slotContradictsTitle requires positive bounded title markers in complete native flags.
+// slotTitleConflicts separates 3D kind conflicts from independent edition conflicts.
 // Missing title markers and incomplete flags cannot establish a contradiction.
-func slotContradictsTitle(slot []string, name string) bool {
+func slotTitleConflicts(slot []string, name string) (kindConflict, editionConflict bool) {
 	if slot[4] == "?" {
-		return false
+		return false, false
 	}
 	metadata, bounded := dupe.TrackerTitleMetadata(rls.ParseString(name))
 	if !bounded {
-		return false
+		return false, false
 	}
 	tags, _ := rls.ParseTagsString(metadata)
 	var editions []string
@@ -225,14 +257,12 @@ func slotContradictsTitle(slot []string, name string) bool {
 	meta.Edition = strings.Join(editions, " ")
 	for _, flag := range resolveFlags(meta) {
 		if flag == "3D" {
-			if slot[0] != "3D" {
-				return true
-			}
+			kindConflict = slot[0] != "3D"
 		} else if !slices.Contains(strings.Split(slot[4], "+"), strings.ToUpper(flag)) {
-			return true
+			editionConflict = true
 		}
 	}
-	return false
+	return kindConflict, editionConflict
 }
 
 // requiresStaffToken preserves staff attestation for exact matches and ordinary

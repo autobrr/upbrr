@@ -61,6 +61,113 @@ func TestANTNativeSlotsRespectConflictingAndPartialAdapterEvidence(t *testing.T)
 	}
 }
 
+func TestANTNativeSlotsAllowOnlyIndependentlyProvenSeparation(t *testing.T) {
+	t.Parallel()
+	meta := api.UploadSubject{
+		Type:       "DISC",
+		DiscType:   "DVD",
+		Source:     "PAL DVD",
+		VideoCodec: "MPEG2",
+		Region:     "GBR",
+		Release:    api.ReleaseInfo{Resolution: "576i"},
+	}
+	target := api.TrackerDuplicateTarget{
+		TrackerSlot: resolveTargetSlot(meta),
+		Type:        meta.Type,
+		Source:      meta.Source,
+		Resolution:  meta.Release.Resolution,
+		VideoCodec:  meta.VideoCodec,
+		Names:       []string{"Example.Movie.2026.GBR.PAL.DVD9.DD.5.1-GRP"},
+	}
+	for _, tc := range []struct {
+		name, filename, resolution, kind, media, codec, targetName string
+		want                                                       api.DupeRelation
+	}{
+		{"UHD encode with unrelated codec conflict", "Example.Movie.2026.2160p.BluRay.x265-OTHER.mkv", "2160p", "ENCODE", "BluRay", "H264", "", api.DupeRelationCoexists},
+		{"HD remux with unrelated source conflict", "Example.Movie.2026.1080p.BluRay.REMUX.AVC-OTHER.mkv", "1080p", "REMUX", "DVD", "H264", "", api.DupeRelationCoexists},
+		{"same tier encode with unrelated edition conflict", "Example.Movie.2026.Extended.Edition.576i.PAL.DVD.x264-OTHER.mkv", "576i", "ENCODE", "DVD", "H264", "", api.DupeRelationCoexists},
+		{"same tier encode with unrelated codec conflict", "Example.Movie.2026.576i.PAL.DVD.x264-OTHER.mkv", "576i", "ENCODE", "DVD", "H265", "", api.DupeRelationCoexists},
+		{"same tier encode with unrelated HDR conflict", "Example.Movie.2026.576i.PAL.DVD.DV.x264-OTHER.mkv", "576i", "ENCODE", "DVD", "H264", "", api.DupeRelationCoexists},
+		{"target full disc conflicts with reviewed remux title", "Example.Movie.2026.576i.PAL.DVD.DV.x264-OTHER.mkv", "576i", "ENCODE", "DVD", "H264", "Example.Movie.2026.576i.PAL.DVD.REMUX-GRP", api.DupeRelationManualReview},
+		{"native remux kind conflicts with complete disc title", "Example.Movie.2026.576i.PAL.DVD9.DV.x264-OTHER.mkv", "576i", "REMUX", "DVD", "H264", "", api.DupeRelationManualReview},
+		{"tier and native kind not independently established", "Example.Movie.2026.576i.PAL.DVD.x264-OTHER.mkv", "2160p", "ENCODE", "DVD", "H265", "", api.DupeRelationManualReview},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target := target
+			if tc.targetName != "" {
+				target.Names = []string{tc.targetName}
+			}
+			entries := antDupeEntries(map[string]any{"item": []any{map[string]any{
+				"files":      []any{map[string]any{"name": tc.filename}},
+				"resolution": tc.resolution,
+				"type":       tc.kind,
+				"media":      tc.media,
+				"codec":      tc.codec,
+				"container":  "MKV",
+			}}})
+			candidate := dupe.NormalizeCandidate(entries[0], "ANT")
+			result := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate},
+				*duplicatePolicy(), dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID})
+			if got := result.Candidates[0].Relation; got != tc.want {
+				t.Fatalf("slot %q against %q: got %s, want %s", target.TrackerSlot, candidate.TrackerSlot, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestANTFullDiscKindSeparationInBothDirections(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, filename, kind, codec, resolution string
+		want                                    api.DupeRelation
+	}{
+		{"remux", "Example.Movie.2026.576i.PAL.DVD.REMUX.x264-OTHER.mkv", "REMUX", "H265", "576i", api.DupeRelationCoexists},
+		{"AV1 encode", "Example.Movie.2026.576i.PAL.DVD.x264-OTHER.mkv", "ENCODE", "AV1", "576i", api.DupeRelationCoexists},
+		{"AV1 encode without resolution", "Example.Movie.2026.PAL.DVD.x264-OTHER.mkv", "ENCODE", "AV1", "", api.DupeRelationCoexists},
+		{"AV1 encode with conflicting resolution", "Example.Movie.2026.720p.PAL.DVD.x264-OTHER.mkv", "ENCODE", "AV1", "576i", api.DupeRelationManualReview},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entries := antDupeEntries(map[string]any{"item": []any{
+				map[string]any{
+					"files":      []any{map[string]any{"name": "Example.Movie.2026.GBR.PAL.DVD9.DD.5.1-GRP"}},
+					"resolution": "576i",
+					"type":       "DISC",
+					"media":      "PAL DVD",
+					"codec":      "MPEG2",
+					"container":  "VOBIFO",
+				},
+				map[string]any{
+					"files":      []any{map[string]any{"name": tc.filename}},
+					"resolution": tc.resolution,
+					"type":       tc.kind,
+					"media":      "PAL DVD",
+					"codec":      tc.codec,
+					"container":  "MKV",
+				},
+			}})
+			for i, raw := range entries {
+				proposed := dupe.NormalizeCandidate(raw, "ANT")
+				target := api.TrackerDuplicateTarget{
+					TrackerSlot: proposed.TrackerSlot,
+					Names:       []string{proposed.Name},
+					Type:        proposed.CanonicalType,
+					Source:      proposed.Source,
+					Resolution:  proposed.Resolution,
+					VideoCodec:  proposed.Codec,
+					Container:   proposed.Container,
+				}
+				existing := dupe.NormalizeCandidate(entries[1-i], "ANT")
+				result := dupe.Evaluate(target, []dupe.TrackerCandidate{existing},
+					*duplicatePolicy(), dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID})
+				if got := result.Candidates[0].Relation; got != tc.want || result.RequiresAction != (tc.want == api.DupeRelationManualReview) || result.Blocks {
+					t.Errorf("slot %q against %q: got %s, review=%t, blocked=%t, want %s",
+						target.TrackerSlot, existing.TrackerSlot, got, result.RequiresAction, result.Blocks, tc.want)
+				}
+			}
+		})
+	}
+}
+
 func TestHDR10PlusSharesSlotAndPreservesDolbyVisionSlot(t *testing.T) {
 	t.Parallel()
 	for _, withDV := range []bool{false, true} {
